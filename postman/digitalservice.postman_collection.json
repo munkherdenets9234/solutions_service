@@ -34,12 +34,12 @@
   "item": [
     {
       "name": "📖 API Reference",
-      "description": "# Admin API Reference\n\nBase URL: `{{base_url}}` (default `http://localhost:8080/api/v1`) · 43 routes.\n\nThis folder is documentation only — no requests to run. Every route below is a working request somewhere else in this collection; use this as the map. A fuller version with sample bodies for every endpoint is also published at the artifact link the team shares separately.\n\n## Authentication\n\n| Header | Checked by | Required on | Notes |\n|---|---|---|---|\n| `X-API-Key` | TenantMiddleware | everything except `/platform/*` | Identifies the tenant. Format `sk_live_<64 hex>`, shown once at tenant creation / rotate-key, stored server-side as a SHA-256 hash. |\n| `Authorization: Bearer <token>` | AuthMiddleware | `/admin/*` (role `admin`) and `/platform/*` (role `superadmin`) | Carries `user_id`, `role`, `tenant_id` (empty for superadmin). A `superadmin` token is rejected outright if its `tenant_id` is non-empty, on every route — a tenant-scoped token can never be treated as platform-level. An admin token is rejected if its `tenant_id` doesn't match the tenant resolved from `X-API-Key`. Admin/staff tokens come from `POST /login`; superadmin tokens come from `POST /platform/login`. |\n\n## Response format\n\n**Single resource**\n```json\n{ \"success\": true, \"data\": { \"...\": \"resource\" } }\n```\n\n**List**\n```json\n{ \"success\": true, \"data\": [ \"...\" ], \"meta\": { \"total\": 42, \"page\": 1, \"limit\": 20 } }\n```\n\n**Error**\n```json\n{ \"success\": false, \"message\": \"destination not found\" }\n```\n\n## Platform · Login & Admin Users\n_Not tenant-scoped. The first platform user is bootstrapped at server startup from `SUPERADMIN_EMAIL` / `SUPERADMIN_PASSWORD` (see `.env.example`) — it never overwrites an existing account._\n\n| Method | Path | Auth | Notes |\n|---|---|---|---|\n| POST | `/platform/login` | public | `{ email, password }` → `{ token }` (role `superadmin`) |\n| POST | `/platform/admins` | superadmin | Add another platform user. Omit `password` to auto-generate one (returned once). |\n| GET | `/platform/admins` | superadmin | `?page&limit` |\n| PUT | `/platform/admins/:id/status` | superadmin | `{ status: active \\| suspended }`. Refuses to suspend the last active user. |\n\n## Platform · Tenants\n_Not tenant-scoped._\n\n| Method | Path | Notes |\n|---|---|---|\n| POST | `/platform/tenants` | Creates a tenant, returns `api_key` once. If `contact_email` is set, also bootstraps a first `admin` tenant-user login and returns `login.password` once. |\n| GET | `/platform/tenants` | `?page&limit` |\n| GET | `/platform/tenants/:id` | |\n| PUT | `/platform/tenants/:id/status` | `{ status: active \\| suspended }` |\n| POST | `/platform/tenants/:id/rotate-key` | Invalidates the old key immediately. |\n\n## Tenant Users & Login\n_Tenant-scoped via `X-API-Key`. A tenant can have several login profiles — one `admin` plus any number of `staff`._\n\n| Method | Path | Auth | Notes |\n|---|---|---|---|\n| POST | `/login` | api key, public | `{ email, password }` → `{ token }` (role from the tenant user record) |\n| POST | `/admin/users` | api key + admin | Add another login profile to your own tenant. `role` must be `admin` or `staff` (defaults to `staff` if omitted) — any other value, including `superadmin`, returns `400 invalid role`. Omit `password` to auto-generate. |\n| GET | `/admin/users` | api key + admin | `?page&limit` |\n| PUT | `/admin/users/:id/status` | api key + admin | `{ status: active \\| suspended }` |\n\n## Public storefront routes\n_Tenant-scoped via `X-API-Key` only — no user login._\n\n| Method | Path | Notes |\n|---|---|---|\n| GET | `/destinations` | `?category&region&season&page&limit` |\n| GET | `/destinations/:slug` | |\n| GET | `/blogs` | Published only. `?page&limit` |\n| GET | `/blogs/:slug` | |\n| POST | `/bookings` | Customer submits a tour booking |\n| GET | `/cars` | `?type&fuel&page&limit` |\n| GET | `/cars/:slug` | |\n| POST | `/rentals` | Customer requests a car rental |\n| POST | `/airport-transfers` | Customer requests a pickup/drop-off |\n| POST | `/contact` | Contact form submission |\n\n## Tenant admin routes\n_Requires both `X-API-Key` and a Bearer token with role `admin` scoped to that tenant, obtained from `POST /login`._\n\n| Method | Path | Notes |\n|---|---|---|\n| POST | `/admin/destinations` | Full model — unset fields default to zero value |\n| PUT | `/admin/destinations/:id` | Partial update (`$set`) |\n| DELETE | `/admin/destinations/:id` | |\n| POST | `/admin/blogs` | Created as `draft` regardless of body |\n| PUT | `/admin/blogs/:id` | Partial update |\n| POST | `/admin/blogs/:id/publish` | No body |\n| GET | `/admin/bookings` | `?page&limit` |\n| GET | `/admin/bookings/:id` | |\n| PUT | `/admin/bookings/:id/status` | `pending → confirmed → completed`, or `cancelled` |\n| POST | `/admin/cars` | |\n| PUT | `/admin/cars/:id` | Partial update |\n| DELETE | `/admin/cars/:id` | |\n| GET | `/admin/rentals` | `?page&limit` |\n| GET | `/admin/rentals/:id` | |\n| PUT | `/admin/rentals/:id/status` | `pending → confirmed → completed`, or `cancelled` |\n| GET | `/admin/airport-transfers` | `?page&limit` |\n| GET | `/admin/airport-transfers/:id` | |\n| PUT | `/admin/airport-transfers/:id/status` | `pending → confirmed → completed`, or `cancelled` |\n| GET | `/admin/contact-messages` | `?page&limit` |\n| PUT | `/admin/contact-messages/:id/status` | `new → read → responded` |\n\n---\nSourced from `internal/handler/router.go`. Re-check this doc if that file changes — nothing here is hand-maintained separately from the code.",
+      "description": "# Admin API Reference\n\nBase URL: `{{base_url}}` (default `http://localhost:8080/api/v1`) · 47 routes.\n\nThis folder is documentation only — no requests to run. Every route below is a working request somewhere else in this collection; use this as the map. A fuller version with sample bodies for every endpoint is also published at the artifact link the team shares separately.\n\n## Authentication\n\n| Header | Checked by | Required on | Notes |\n|---|---|---|---|\n| `X-API-Key` | TenantMiddleware | everything except `/platform/*` | Identifies the tenant. Format `sk_live_<64 hex>`, shown once at tenant creation / rotate-key, stored server-side as a SHA-256 hash. |\n| `Authorization: Bearer <token>` | AuthMiddleware | `/admin/*` (role `admin`) and `/platform/*` (role `superadmin`) | Carries `user_id`, `role`, `tenant_id` (empty for superadmin). A `superadmin` token is rejected outright if its `tenant_id` is non-empty, on every route — a tenant-scoped token can never be treated as platform-level. An admin token is rejected if its `tenant_id` doesn't match the tenant resolved from `X-API-Key`. Admin/staff tokens come from `POST /login`; superadmin tokens come from `POST /platform/login`. |\n\n## Response format\n\n**Single resource**\n```json\n{ \"success\": true, \"data\": { \"...\": \"resource\" } }\n```\n\n**List**\n```json\n{ \"success\": true, \"data\": [ \"...\" ], \"meta\": { \"total\": 42, \"page\": 1, \"limit\": 20 } }\n```\n\n**Error**\n```json\n{ \"success\": false, \"message\": \"destination not found\" }\n```\n\n## Platform · Login & Admin Users\n_Not tenant-scoped. The first platform user is bootstrapped at server startup from `SUPERADMIN_EMAIL` / `SUPERADMIN_PASSWORD` (see `.env.example`) — it never overwrites an existing account._\n\n| Method | Path | Auth | Notes |\n|---|---|---|---|\n| POST | `/platform/login` | public | `{ email, password }` → `{ token }` (role `superadmin`) |\n| POST | `/platform/admins` | superadmin | Add another platform user. Omit `password` to auto-generate one (returned once). |\n| GET | `/platform/admins` | superadmin | `?page&limit` |\n| PUT | `/platform/admins/:id/status` | superadmin | `{ status: active \\| suspended }`. Refuses to suspend the last active user. |\n\n## Platform · Tenants\n_Not tenant-scoped._\n\n| Method | Path | Notes |\n|---|---|---|\n| POST | `/platform/tenants` | Creates a tenant, returns `api_key` once. If `contact_email` is set, also bootstraps a first `admin` tenant-user login and returns `login.password` once. |\n| GET | `/platform/tenants` | `?page&limit` |\n| GET | `/platform/tenants/:id` | |\n| PUT | `/platform/tenants/:id/status` | `{ status: active \\| suspended }` |\n| POST | `/platform/tenants/:id/rotate-key` | Invalidates the old key immediately. |\n\n## Platform · Tenant Subscriptions\n_Not tenant-scoped. Internal plan/status tracking only — no live payment provider wired in yet._\n\n| Method | Path | Notes |\n|---|---|---|\n| POST | `/platform/tenants/:id/subscription` | `{ plan }` — `free \\| basic \\| pro \\| enterprise`, defaults to `free`. 409 if the tenant already has one. |\n| GET | `/platform/tenants/:id/subscription` | |\n| PUT | `/platform/tenants/:id/subscription/plan` | `{ plan }` — starts a fresh 30-day period. |\n| POST | `/platform/tenants/:id/subscription/cancel` | Sets status to `canceled`; plan/period left intact. |\n\n## Tenant Users & Login\n_Tenant-scoped via `X-API-Key`. A tenant can have several login profiles — one `admin` plus any number of `staff`._\n\n| Method | Path | Auth | Notes |\n|---|---|---|---|\n| POST | `/login` | api key, public | `{ email, password }` → `{ token }` (role from the tenant user record) |\n| POST | `/admin/users` | api key + admin | Add another login profile to your own tenant. `role` must be `admin` or `staff` (defaults to `staff` if omitted) — any other value, including `superadmin`, returns `400 invalid role`. Omit `password` to auto-generate. |\n| GET | `/admin/users` | api key + admin | `?page&limit` |\n| PUT | `/admin/users/:id/status` | api key + admin | `{ status: active \\| suspended }` |\n\n## Public storefront routes\n_Tenant-scoped via `X-API-Key` only — no user login._\n\n| Method | Path | Notes |\n|---|---|---|\n| GET | `/destinations` | `?category&region&season&page&limit` |\n| GET | `/destinations/:slug` | |\n| GET | `/blogs` | Published only. `?page&limit` |\n| GET | `/blogs/:slug` | |\n| POST | `/bookings` | Customer submits a tour booking |\n| GET | `/cars` | `?type&fuel&page&limit` |\n| GET | `/cars/:slug` | |\n| POST | `/rentals` | Customer requests a car rental |\n| POST | `/airport-transfers` | Customer requests a pickup/drop-off |\n| POST | `/contact` | Contact form submission |\n\n## Tenant admin routes\n_Requires both `X-API-Key` and a Bearer token with role `admin` scoped to that tenant, obtained from `POST /login`._\n\n| Method | Path | Notes |\n|---|---|---|\n| POST | `/admin/destinations` | Full model — unset fields default to zero value |\n| PUT | `/admin/destinations/:id` | Partial update (`$set`) |\n| DELETE | `/admin/destinations/:id` | |\n| POST | `/admin/blogs` | Created as `draft` regardless of body |\n| PUT | `/admin/blogs/:id` | Partial update |\n| POST | `/admin/blogs/:id/publish` | No body |\n| GET | `/admin/bookings` | `?page&limit` |\n| GET | `/admin/bookings/:id` | |\n| PUT | `/admin/bookings/:id/status` | `pending → confirmed → completed`, or `cancelled` |\n| POST | `/admin/cars` | |\n| PUT | `/admin/cars/:id` | Partial update |\n| DELETE | `/admin/cars/:id` | |\n| GET | `/admin/rentals` | `?page&limit` |\n| GET | `/admin/rentals/:id` | |\n| PUT | `/admin/rentals/:id/status` | `pending → confirmed → completed`, or `cancelled` |\n| GET | `/admin/airport-transfers` | `?page&limit` |\n| GET | `/admin/airport-transfers/:id` | |\n| PUT | `/admin/airport-transfers/:id/status` | `pending → confirmed → completed`, or `cancelled` |\n| GET | `/admin/contact-messages` | `?page&limit` |\n| PUT | `/admin/contact-messages/:id/status` | `new → read → responded` |\n\n---\nSourced from `internal/handler/router.go`. Re-check this doc if that file changes — nothing here is hand-maintained separately from the code.",
       "item": []
     },
     {
       "name": "Platform (Superadmin)",
-      "description": "Manages tenants themselves. Not tenant-scoped — no X-API-Key needed. Login is public; every other request here requires a Bearer token whose role is \"superadmin\", obtained from Login below. The very first platform user is created automatically on server startup from the SUPERADMIN_EMAIL/SUPERADMIN_PASSWORD env vars (see .env.example) — log in with those to get your first {{superadmin_token}}, then use [Admin Users] to add more platform accounts if needed. Create Tenant returns the tenant's raw api_key exactly once — copy it into the {{tenant_api_key}} collection variable to run every other folder in this collection. If contact_email is set, it also bootstraps an \"admin\" login profile for that email and returns its one-time password under login.password — copy that (and the email) into {{tenant_admin_password}} / {{tenant_admin_email}} so the Auth folder's Login request works.",
+      "description": "Manages tenants themselves. Not tenant-scoped — no X-API-Key needed. Login is public; every other request here requires a Bearer token whose role is \"superadmin\", obtained from Login below. The very first platform user is created automatically on server startup from the SUPERADMIN_EMAIL/SUPERADMIN_PASSWORD env vars (see .env.example) — log in with those to get your first {{superadmin_token}}, then use [Admin Users] to add more platform accounts if needed. Create Tenant returns the tenant's raw api_key exactly once — copy it into the {{tenant_api_key}} collection variable to run every other folder in this collection. If contact_email is set, it also bootstraps an \"admin\" login profile for that email and returns its one-time password under login.password — copy that (and the email) into {{tenant_admin_password}} / {{tenant_admin_email}} so the Auth folder's Login request works. The subscription requests below track a tenant's plan/billing status internally — there's no live payment provider wired in yet, so plan changes are applied directly through these endpoints.",
       "item": [
         {
           "name": "Login",
@@ -212,6 +212,83 @@
               "raw": "{{base_url}}/platform/tenants/{{tenant_id}}/rotate-key",
               "host": ["{{base_url}}"],
               "path": ["platform", "tenants", "{{tenant_id}}", "rotate-key"]
+            }
+          }
+        },
+        {
+          "name": "Create Tenant Subscription",
+          "request": {
+            "description": "Starts a subscription for the tenant. `plan` must be one of `free`, `basic`, `pro`, `enterprise` (defaults to `free` if omitted). A tenant can only have one subscription record — this returns 409 if one already exists. No live payment provider is wired in yet; this only tracks plan/status state.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{superadmin_token}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/platform/tenants/{{tenant_id}}/subscription",
+              "host": ["{{base_url}}"],
+              "path": ["platform", "tenants", "{{tenant_id}}", "subscription"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"plan\": \"pro\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "Get Tenant Subscription",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{superadmin_token}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/platform/tenants/{{tenant_id}}/subscription",
+              "host": ["{{base_url}}"],
+              "path": ["platform", "tenants", "{{tenant_id}}", "subscription"]
+            }
+          }
+        },
+        {
+          "name": "Update Tenant Subscription Plan",
+          "request": {
+            "description": "Changes the tenant's plan and starts a fresh 30-day billing period. `plan` must be one of `free`, `basic`, `pro`, `enterprise` — any other value returns `400 invalid plan`.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{superadmin_token}}", "type": "string" }]
+            },
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/platform/tenants/{{tenant_id}}/subscription/plan",
+              "host": ["{{base_url}}"],
+              "path": ["platform", "tenants", "{{tenant_id}}", "subscription", "plan"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"plan\": \"enterprise\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "Cancel Tenant Subscription",
+          "request": {
+            "description": "Marks the subscription canceled (sets `canceled_at`). Plan and period fields are left intact.",
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{superadmin_token}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/platform/tenants/{{tenant_id}}/subscription/cancel",
+              "host": ["{{base_url}}"],
+              "path": ["platform", "tenants", "{{tenant_id}}", "subscription", "cancel"]
             }
           }
         }
@@ -445,7 +522,7 @@
             },
             "body": {
               "mode": "raw",
-              "raw": "{\n  \"title\": \"Best Time to Visit Mongolia\",\n  \"slug\": \"best-time-to-visit-mongolia\",\n  \"excerpt\": \"When to go depends on whether you want the Naadam festival, empty dunes, or the winter ice festival.\",\n  \"content\": \"<p>Mongolia's travel season runs roughly from May to October...</p>\",\n  \"author\": \"Amina Bat-Erdene\",\n  \"destination_id\": \"{{destination_id}}\",\n  \"cover_image\": { \"url\": \"https://cdn.example.com/blog/season-cover.jpg\", \"caption\": \"Steppe in early summer\" },\n  \"images\": [],\n  \"tags\": [\"travel-tips\", \"seasons\"]\n}",
+              "raw": "{\n  \"title\": \"When is the best time to visit Mongolia?\",\n  \"slug\": \"best-time-to-visit-mongolia\",\n  \"category\": \"guides\",\n  \"read_time\": 8,\n  \"image\": \"/images/nomadic.jpg\",\n  \"featured\": true,\n  \"excerpt\": \"From the green of early summer to the golden light of autumn and the drama of the Naadam season \\u2014 a month-by-month guide to timing your journey.\",\n  \"author\": { \"name\": \"Saraa B.\", \"role\": \"Lead guide\" },\n  \"date\": \"2026-06-12\",\n  \"body\": [\n    { \"heading\": \"Spring \\u00b7 May to June\", \"text\": \"As the snow retreats the steppe turns green and newborn foals appear at every camp. Days are mild, crowds are thin, and the light is soft and long \\u2014 ideal for photography and quiet, unhurried travel before the summer peak.\" },\n    { \"heading\": \"Summer & Naadam \\u00b7 July\", \"text\": \"July brings the warmest weather and the national Naadam festival \\u2014 the busiest and most vivid time to visit. Book early: our festival departures fill months ahead. This is peak season for a reason.\" },\n    { \"heading\": \"Autumn \\u00b7 September\", \"text\": \"Arguably the finest month: golden light, crisp air, fewer travellers and the eagle-hunting season opening in the west. A quiet, cinematic close to the year.\" }\n  ],\n  \"quote\": \"Come in early summer and you'll have the green steppe almost to yourself.\",\n  \"destination_id\": \"{{destination_id}}\",\n  \"cover_image\": { \"url\": \"https://cdn.example.com/blog/season-cover.jpg\", \"caption\": \"Steppe in early summer\" },\n  \"images\": [],\n  \"tags\": [\"seasons\", \"planning\", \"naadam\"]\n}",
               "options": { "raw": { "language": "json" } }
             }
           }

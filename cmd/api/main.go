@@ -65,6 +65,7 @@ func main() {
 	tenantRepo := repository.NewTenantRepo(db)
 	tenantUserRepo := repository.NewTenantUserRepo(db)
 	platformUserRepo := repository.NewPlatformUserRepo(db)
+	subscriptionRepo := repository.NewSubscriptionRepo(db)
 
 	destSvc := service.NewDestinationService(destRepo)
 	bookingSvc := service.NewBookingService(bookingRepo, customerRepo, destRepo)
@@ -76,6 +77,7 @@ func main() {
 	tenantSvc := service.NewTenantService(tenantRepo)
 	tenantUserSvc := service.NewTenantUserService(tenantUserRepo, tokenMaker, cfg.TokenExpiry)
 	platformUserSvc := service.NewPlatformUserService(platformUserRepo, tokenMaker, cfg.TokenExpiry)
+	subscriptionSvc := service.NewSubscriptionService(subscriptionRepo)
 
 	if err := platformUserSvc.EnsureBootstrap(ctx, cfg.SuperadminName, cfg.SuperadminEmail, cfg.SuperadminPassword); err != nil {
 		logger.Log.Fatal("superadmin bootstrap failed", zap.Error(err))
@@ -91,6 +93,7 @@ func main() {
 	tenantHandler := handler.NewTenantHandler(tenantSvc, tenantUserSvc)
 	tenantUserHandler := handler.NewTenantUserHandler(tenantUserSvc)
 	platformUserHandler := handler.NewPlatformUserHandler(platformUserSvc)
+	subscriptionHandler := handler.NewSubscriptionHandler(subscriptionSvc)
 	authMW := middleware.NewAuthMiddleware(tokenMaker)
 	tenantMW := middleware.NewTenantMiddleware(tenantSvc)
 
@@ -105,6 +108,7 @@ func main() {
 		tenantHandler,
 		tenantUserHandler,
 		platformUserHandler,
+		subscriptionHandler,
 		authMW,
 		tenantMW,
 	)

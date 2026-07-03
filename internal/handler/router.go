@@ -16,6 +16,7 @@ type Router struct {
 	tenant          *TenantHandler
 	tenantUser      *TenantUserHandler
 	platformUser    *PlatformUserHandler
+	subscription    *SubscriptionHandler
 	auth            *middleware.AuthMiddleware
 	tenantMW        *middleware.TenantMiddleware
 }
@@ -31,6 +32,7 @@ func NewRouter(
 	tenant *TenantHandler,
 	tenantUser *TenantUserHandler,
 	platformUser *PlatformUserHandler,
+	subscription *SubscriptionHandler,
 	auth *middleware.AuthMiddleware,
 	tenantMW *middleware.TenantMiddleware,
 ) *Router {
@@ -45,6 +47,7 @@ func NewRouter(
 		tenant:          tenant,
 		tenantUser:      tenantUser,
 		platformUser:    platformUser,
+		subscription:    subscription,
 		auth:            auth,
 		tenantMW:        tenantMW,
 	}
@@ -76,6 +79,10 @@ func (r *Router) Register(engine *gin.Engine) {
 			platformTenants.GET("/:id", r.tenant.GetByID)
 			platformTenants.PUT("/:id/status", r.tenant.UpdateStatus)
 			platformTenants.POST("/:id/rotate-key", r.tenant.RotateAPIKey)
+			platformTenants.POST("/:id/subscription", r.subscription.Create)
+			platformTenants.GET("/:id/subscription", r.subscription.Get)
+			platformTenants.PUT("/:id/subscription/plan", r.subscription.UpdatePlan)
+			platformTenants.POST("/:id/subscription/cancel", r.subscription.Cancel)
 
 			platformAdmins := platformAuthed.Group("/admins")
 			platformAdmins.POST("", r.platformUser.Create)
