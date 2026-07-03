@@ -402,17 +402,18 @@
             "auth": { "type": "noauth" },
             "method": "GET",
             "header": [{ "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "description": "All query params are optional and combine as AND filters. `featured` must be a parseable boolean (`true`/`false`, `1`/`0`, etc.) — any other value returns `400 invalid featured value`. Only active destinations are returned.",
             "url": {
               "raw": "{{base_url}}/destinations?category=cultural&region=gobi&season=summer&featured=true&page=1&limit=20",
               "host": ["{{base_url}}"],
               "path": ["destinations"],
               "query": [
-                { "key": "category", "value": "cultural" },
-                { "key": "region", "value": "gobi" },
-                { "key": "season", "value": "summer" },
-                { "key": "featured", "value": "true" },
-                { "key": "page", "value": "1" },
-                { "key": "limit", "value": "20" }
+                { "key": "category", "value": "cultural", "description": "Filter by category tag, e.g. `cultural`, `adventure`, `wildlife`, `scenic`." },
+                { "key": "region", "value": "gobi", "description": "Filter by region, e.g. `gobi`." },
+                { "key": "season", "value": "summer", "description": "Filter by best season, e.g. `spring`, `summer`, `autumn`, `winter`." },
+                { "key": "featured", "value": "true", "description": "Filter to only featured (`true`) or non-featured (`false`) destinations. Omit to include both." },
+                { "key": "page", "value": "1", "description": "Page number, defaults to 1." },
+                { "key": "limit", "value": "20", "description": "Page size, defaults to 20, max 100." }
               ]
             }
           }
