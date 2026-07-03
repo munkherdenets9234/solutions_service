@@ -69,6 +69,46 @@ func TestDestinations(t *testing.T) {
 		}
 	})
 
+	t.Run("featured filter", func(t *testing.T) {
+		featuredSlug := fmt.Sprintf("featured-dest-%d", testutil.Unique())
+		createResp := testutil.Do(t, app, http.MethodPost, "/api/v1/admin/destinations", testutil.ReqOpts{
+			Token: tenant.AdminToken, APIKey: tenant.APIKey,
+			Body: map[string]interface{}{"name": "Featured Dest", "slug": featuredSlug, "featured": true},
+		})
+		if createResp.Status != http.StatusCreated {
+			t.Fatalf("setup: want 201, got %d: %s", createResp.Status, createResp.Raw)
+		}
+		featuredID, _ := createResp.Data()["id"].(string)
+
+		resp := testutil.Do(t, app, http.MethodGet, "/api/v1/destinations?featured=true&page=1&limit=50", testutil.ReqOpts{APIKey: tenant.APIKey})
+		if resp.Status != http.StatusOK {
+			t.Fatalf("want 200, got %d: %s", resp.Status, resp.Raw)
+		}
+		items, _ := resp.Body["data"].([]interface{})
+		var sawFeatured, sawNonFeatured bool
+		for _, it := range items {
+			m, _ := it.(map[string]interface{})
+			id, _ := m["id"].(string)
+			if id == featuredID {
+				sawFeatured = true
+			}
+			if id == destID {
+				sawNonFeatured = true
+			}
+		}
+		if !sawFeatured {
+			t.Error("expected featured=true to include the featured destination")
+		}
+		if sawNonFeatured {
+			t.Error("expected featured=true to exclude the non-featured destination")
+		}
+
+		invalidResp := testutil.Do(t, app, http.MethodGet, "/api/v1/destinations?featured=not-a-bool", testutil.ReqOpts{APIKey: tenant.APIKey})
+		if invalidResp.Status != http.StatusBadRequest {
+			t.Errorf("want 400 for invalid featured value, got %d: %s", invalidResp.Status, invalidResp.Raw)
+		}
+	})
+
 	t.Run("not visible from another tenant", func(t *testing.T) {
 		otherTenant := testutil.NewTenant(t, app, superadmin, "otherdestco")
 		resp := testutil.Do(t, app, http.MethodGet, "/api/v1/destinations/"+slug, testutil.ReqOpts{APIKey: otherTenant.APIKey})

@@ -23,6 +23,7 @@ type ListDestinationsFilter struct {
 	Category string
 	Region   string
 	Season   string
+	Featured *bool
 	Page     int
 	Limit    int
 }
@@ -37,6 +38,9 @@ func (s *DestinationService) List(ctx context.Context, tenantID primitive.Object
 	}
 	if f.Season != "" {
 		filter["best_seasons"] = f.Season
+	}
+	if f.Featured != nil {
+		filter["featured"] = *f.Featured
 	}
 
 	if f.Page < 1 {
