@@ -1,0 +1,803 @@
+{
+  "info": {
+    "name": "E&S Travel — DigitalService API",
+    "description": "Multi-tenant Go/Gin + MongoDB travel API. Every route except /platform/* is tenant-scoped and requires an X-API-Key header identifying the tenant ({{tenant_api_key}}). Admin routes additionally require a Bearer token with the \"admin\" role, scoped to that same tenant ({{admin_token}}) — obtained via the Auth folder's Login request. The Platform folder manages tenants themselves and requires a Bearer token with the \"superadmin\" role ({{superadmin_token}}) instead of an API key, obtained via the Platform folder's own Login request — see that folder for details on how the first platform user gets bootstrapped and how tenants and their API keys get created.",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "auth": {
+    "type": "bearer",
+    "bearer": [{ "key": "token", "value": "{{admin_token}}", "type": "string" }]
+  },
+  "variable": [
+    { "key": "base_url", "value": "http://localhost:8080/api/v1", "type": "string" },
+    { "key": "admin_token", "value": "", "type": "string" },
+    { "key": "superadmin_token", "value": "", "type": "string" },
+    { "key": "tenant_api_key", "value": "", "type": "string" },
+    { "key": "tenant_id", "value": "665f1b2e8f1b2c0012a3b000", "type": "string" },
+    { "key": "destination_id", "value": "665f1b2e8f1b2c0012a3b111", "type": "string" },
+    { "key": "destination_slug", "value": "gobi-desert-classic", "type": "string" },
+    { "key": "blog_id", "value": "665f1b2e8f1b2c0012a3b222", "type": "string" },
+    { "key": "blog_slug", "value": "best-time-to-visit-mongolia", "type": "string" },
+    { "key": "booking_id", "value": "665f1b2e8f1b2c0012a3b333", "type": "string" },
+    { "key": "car_id", "value": "665f1b2e8f1b2c0012a3b444", "type": "string" },
+    { "key": "car_slug", "value": "toyota-land-cruiser-4x4", "type": "string" },
+    { "key": "rental_id", "value": "665f1b2e8f1b2c0012a3b555", "type": "string" },
+    { "key": "transfer_id", "value": "665f1b2e8f1b2c0012a3b666", "type": "string" },
+    { "key": "contact_message_id", "value": "665f1b2e8f1b2c0012a3b777", "type": "string" },
+    { "key": "tenant_user_id", "value": "665f1b2e8f1b2c0012a3b888", "type": "string" },
+    { "key": "tenant_admin_email", "value": "ops@nomadtrails.example.com", "type": "string" },
+    { "key": "tenant_admin_password", "value": "", "type": "string" },
+    { "key": "platform_user_id", "value": "665f1b2e8f1b2c0012a3b999", "type": "string" },
+    { "key": "superadmin_email", "value": "", "type": "string" },
+    { "key": "superadmin_password", "value": "", "type": "string" }
+  ],
+  "item": [
+    {
+      "name": "📖 API Reference",
+      "description": "# Admin API Reference\n\nBase URL: `{{base_url}}` (default `http://localhost:8080/api/v1`) · 43 routes.\n\nThis folder is documentation only — no requests to run. Every route below is a working request somewhere else in this collection; use this as the map. A fuller version with sample bodies for every endpoint is also published at the artifact link the team shares separately.\n\n## Authentication\n\n| Header | Checked by | Required on | Notes |\n|---|---|---|---|\n| `X-API-Key` | TenantMiddleware | everything except `/platform/*` | Identifies the tenant. Format `sk_live_<64 hex>`, shown once at tenant creation / rotate-key, stored server-side as a SHA-256 hash. |\n| `Authorization: Bearer <token>` | AuthMiddleware | `/admin/*` (role `admin`) and `/platform/*` (role `superadmin`) | Carries `user_id`, `role`, `tenant_id` (empty for superadmin). An admin token is rejected if its `tenant_id` doesn't match the tenant resolved from `X-API-Key`. Admin/staff tokens come from `POST /login`; superadmin tokens come from `POST /platform/login`. |\n\n## Response format\n\n**Single resource**\n```json\n{ \"success\": true, \"data\": { \"...\": \"resource\" } }\n```\n\n**List**\n```json\n{ \"success\": true, \"data\": [ \"...\" ], \"meta\": { \"total\": 42, \"page\": 1, \"limit\": 20 } }\n```\n\n**Error**\n```json\n{ \"success\": false, \"message\": \"destination not found\" }\n```\n\n## Platform · Login & Admin Users\n_Not tenant-scoped. The first platform user is bootstrapped at server startup from `SUPERADMIN_EMAIL` / `SUPERADMIN_PASSWORD` (see `.env.example`) — it never overwrites an existing account._\n\n| Method | Path | Auth | Notes |\n|---|---|---|---|\n| POST | `/platform/login` | public | `{ email, password }` → `{ token }` (role `superadmin`) |\n| POST | `/platform/admins` | superadmin | Add another platform user. Omit `password` to auto-generate one (returned once). |\n| GET | `/platform/admins` | superadmin | `?page&limit` |\n| PUT | `/platform/admins/:id/status` | superadmin | `{ status: active \\| suspended }`. Refuses to suspend the last active user. |\n\n## Platform · Tenants\n_Not tenant-scoped._\n\n| Method | Path | Notes |\n|---|---|---|\n| POST | `/platform/tenants` | Creates a tenant, returns `api_key` once. If `contact_email` is set, also bootstraps a first `admin` tenant-user login and returns `login.password` once. |\n| GET | `/platform/tenants` | `?page&limit` |\n| GET | `/platform/tenants/:id` | |\n| PUT | `/platform/tenants/:id/status` | `{ status: active \\| suspended }` |\n| POST | `/platform/tenants/:id/rotate-key` | Invalidates the old key immediately. |\n\n## Tenant Users & Login\n_Tenant-scoped via `X-API-Key`. A tenant can have several login profiles — one `admin` plus any number of `staff`._\n\n| Method | Path | Auth | Notes |\n|---|---|---|---|\n| POST | `/login` | api key, public | `{ email, password }` → `{ token }` (role from the tenant user record) |\n| POST | `/admin/users` | api key + admin | Add another login profile to your own tenant. Omit `password` to auto-generate. |\n| GET | `/admin/users` | api key + admin | `?page&limit` |\n| PUT | `/admin/users/:id/status` | api key + admin | `{ status: active \\| suspended }` |\n\n## Public storefront routes\n_Tenant-scoped via `X-API-Key` only — no user login._\n\n| Method | Path | Notes |\n|---|---|---|\n| GET | `/destinations` | `?category&region&season&page&limit` |\n| GET | `/destinations/:slug` | |\n| GET | `/blogs` | Published only. `?page&limit` |\n| GET | `/blogs/:slug` | |\n| POST | `/bookings` | Customer submits a tour booking |\n| GET | `/cars` | `?type&fuel&page&limit` |\n| GET | `/cars/:slug` | |\n| POST | `/rentals` | Customer requests a car rental |\n| POST | `/airport-transfers` | Customer requests a pickup/drop-off |\n| POST | `/contact` | Contact form submission |\n\n## Tenant admin routes\n_Requires both `X-API-Key` and a Bearer token with role `admin` scoped to that tenant, obtained from `POST /login`._\n\n| Method | Path | Notes |\n|---|---|---|\n| POST | `/admin/destinations` | Full model — unset fields default to zero value |\n| PUT | `/admin/destinations/:id` | Partial update (`$set`) |\n| DELETE | `/admin/destinations/:id` | |\n| POST | `/admin/blogs` | Created as `draft` regardless of body |\n| PUT | `/admin/blogs/:id` | Partial update |\n| POST | `/admin/blogs/:id/publish` | No body |\n| GET | `/admin/bookings` | `?page&limit` |\n| GET | `/admin/bookings/:id` | |\n| PUT | `/admin/bookings/:id/status` | `pending → confirmed → completed`, or `cancelled` |\n| POST | `/admin/cars` | |\n| PUT | `/admin/cars/:id` | Partial update |\n| DELETE | `/admin/cars/:id` | |\n| GET | `/admin/rentals` | `?page&limit` |\n| GET | `/admin/rentals/:id` | |\n| PUT | `/admin/rentals/:id/status` | `pending → confirmed → completed`, or `cancelled` |\n| GET | `/admin/airport-transfers` | `?page&limit` |\n| GET | `/admin/airport-transfers/:id` | |\n| PUT | `/admin/airport-transfers/:id/status` | `pending → confirmed → completed`, or `cancelled` |\n| GET | `/admin/contact-messages` | `?page&limit` |\n| PUT | `/admin/contact-messages/:id/status` | `new → read → responded` |\n\n---\nSourced from `internal/handler/router.go`. Re-check this doc if that file changes — nothing here is hand-maintained separately from the code.",
+      "item": []
+    },
+    {
+      "name": "Platform (Superadmin)",
+      "description": "Manages tenants themselves. Not tenant-scoped — no X-API-Key needed. Login is public; every other request here requires a Bearer token whose role is \"superadmin\", obtained from Login below. The very first platform user is created automatically on server startup from the SUPERADMIN_EMAIL/SUPERADMIN_PASSWORD env vars (see .env.example) — log in with those to get your first {{superadmin_token}}, then use [Admin Users] to add more platform accounts if needed. Create Tenant returns the tenant's raw api_key exactly once — copy it into the {{tenant_api_key}} collection variable to run every other folder in this collection. If contact_email is set, it also bootstraps an \"admin\" login profile for that email and returns its one-time password under login.password — copy that (and the email) into {{tenant_admin_password}} / {{tenant_admin_email}} so the Auth folder's Login request works.",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/platform/login",
+              "host": ["{{base_url}}"],
+              "path": ["platform", "login"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{superadmin_email}}\",\n  \"password\": \"{{superadmin_password}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "[Admin Users] Create Platform User",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{superadmin_token}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/platform/admins",
+              "host": ["{{base_url}}"],
+              "path": ["platform", "admins"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Second Superadmin\",\n  \"email\": \"ops2@eandstravel.example.com\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "[Admin Users] List Platform Users",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{superadmin_token}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/platform/admins?page=1&limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["platform", "admins"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "[Admin Users] Update Platform User Status",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{superadmin_token}}", "type": "string" }]
+            },
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/platform/admins/{{platform_user_id}}/status",
+              "host": ["{{base_url}}"],
+              "path": ["platform", "admins", "{{platform_user_id}}", "status"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"suspended\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "Create Tenant",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{superadmin_token}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/platform/tenants",
+              "host": ["{{base_url}}"],
+              "path": ["platform", "tenants"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Nomad Trails LLC\",\n  \"slug\": \"nomad-trails\",\n  \"contact_email\": \"ops@nomadtrails.example.com\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "List Tenants",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{superadmin_token}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/platform/tenants?page=1&limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["platform", "tenants"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Tenant by ID",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{superadmin_token}}", "type": "string" }]
+            },
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/platform/tenants/{{tenant_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["platform", "tenants", "{{tenant_id}}"]
+            }
+          }
+        },
+        {
+          "name": "Update Tenant Status",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{superadmin_token}}", "type": "string" }]
+            },
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }],
+            "url": {
+              "raw": "{{base_url}}/platform/tenants/{{tenant_id}}/status",
+              "host": ["{{base_url}}"],
+              "path": ["platform", "tenants", "{{tenant_id}}", "status"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"suspended\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "Rotate Tenant API Key",
+          "request": {
+            "auth": {
+              "type": "bearer",
+              "bearer": [{ "key": "token", "value": "{{superadmin_token}}", "type": "string" }]
+            },
+            "method": "POST",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/platform/tenants/{{tenant_id}}/rotate-key",
+              "host": ["{{base_url}}"],
+              "path": ["platform", "tenants", "{{tenant_id}}", "rotate-key"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Auth (Tenant Users)",
+      "description": "Tenant-scoped login profiles — a tenant can have several (e.g. one admin, several staff). Login is public but still requires X-API-Key to identify which tenant to authenticate against; it returns a Bearer token to copy into {{admin_token}}. The [Admin] requests below let an existing admin add or manage more login profiles for their own tenant.",
+      "item": [
+        {
+          "name": "Login",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/login",
+              "host": ["{{base_url}}"],
+              "path": ["login"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"email\": \"{{tenant_admin_email}}\",\n  \"password\": \"{{tenant_admin_password}}\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "[Admin] Create Tenant User",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/users",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "users"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Bataar Ganbold\",\n  \"email\": \"bataar@nomadtrails.example.com\",\n  \"role\": \"staff\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "[Admin] List Tenant Users",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/users?page=1&limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "users"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "[Admin] Update Tenant User Status",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/users/{{tenant_user_id}}/status",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "users", "{{tenant_user_id}}", "status"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"suspended\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Destinations",
+      "item": [
+        {
+          "name": "List Destinations",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/destinations?category=cultural&region=gobi&season=summer&page=1&limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["destinations"],
+              "query": [
+                { "key": "category", "value": "cultural" },
+                { "key": "region", "value": "gobi" },
+                { "key": "season", "value": "summer" },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Destination by Slug",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/destinations/{{destination_slug}}",
+              "host": ["{{base_url}}"],
+              "path": ["destinations", "{{destination_slug}}"]
+            }
+          }
+        },
+        {
+          "name": "[Admin] Create Destination",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/destinations",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "destinations"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Gobi Desert Classic\",\n  \"slug\": \"gobi-desert-classic\",\n  \"overview\": \"A 7-day journey through the dunes, canyons and nomadic camps of the Gobi.\",\n  \"region\": \"gobi\",\n  \"location\": { \"lat\": 43.5, \"lng\": 103.8 },\n  \"duration_days\": 7,\n  \"group_size\": { \"min\": 2, \"max\": 12 },\n  \"prices\": [\n    { \"min_people\": 2, \"max_people\": 4, \"price_usd\": 1250 },\n    { \"min_people\": 5, \"max_people\": 12, \"price_usd\": 990 }\n  ],\n  \"best_seasons\": [\"spring\", \"summer\", \"autumn\"],\n  \"departures\": [\n    { \"start_date\": \"2026-08-10T00:00:00Z\", \"end_date\": \"2026-08-17T00:00:00Z\", \"available\": true }\n  ],\n  \"highlights\": [\"Khongoryn Els singing dunes\", \"Yolyn Am ice canyon\", \"Flaming Cliffs sunset\"],\n  \"activities\": [\"camel trekking\", \"hiking\", \"stargazing\"],\n  \"inclusions\": [\"all meals\", \"ger camp accommodation\", \"driver-guide\", \"4x4 transport\"],\n  \"exclusions\": [\"international flights\", \"travel insurance\", \"alcoholic drinks\"],\n  \"itinerary\": [\n    {\n      \"day\": 1,\n      \"title\": \"Ulaanbaatar to Yolyn Am\",\n      \"description\": \"Fly to Dalanzadgad and drive to the ice canyon.\",\n      \"activities\": [\"hiking\"],\n      \"overnight\": \"Ger Camp\",\n      \"meals\": [\"lunch\", \"dinner\"]\n    }\n  ],\n  \"accommodation\": \"ger camps + 1 hotel night\",\n  \"meal_plan\": \"all meals included\",\n  \"difficulty\": \"moderate\",\n  \"categories\": [\"adventure\", \"scenic\"],\n  \"tags\": [\"desert\", \"camel-trekking\", \"family-friendly\"],\n  \"cover_image\": { \"url\": \"https://cdn.example.com/gobi/cover.jpg\", \"caption\": \"Khongoryn Els dunes at sunset\" },\n  \"images\": [\n    { \"url\": \"https://cdn.example.com/gobi/1.jpg\", \"caption\": \"Camel trek\" }\n  ]\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "[Admin] Update Destination",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/destinations/{{destination_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "destinations", "{{destination_id}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"overview\": \"Updated: A 7-day journey through the dunes, canyons and nomadic camps of the Gobi, now with two extra departures.\",\n  \"is_active\": true\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "[Admin] Delete Destination",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/destinations/{{destination_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "destinations", "{{destination_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Blogs",
+      "item": [
+        {
+          "name": "List Published Blogs",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/blogs?page=1&limit=10",
+              "host": ["{{base_url}}"],
+              "path": ["blogs"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "10" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Blog by Slug",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/blogs/{{blog_slug}}",
+              "host": ["{{base_url}}"],
+              "path": ["blogs", "{{blog_slug}}"]
+            }
+          }
+        },
+        {
+          "name": "[Admin] Create Blog",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/blogs",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "blogs"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Best Time to Visit Mongolia\",\n  \"slug\": \"best-time-to-visit-mongolia\",\n  \"excerpt\": \"When to go depends on whether you want the Naadam festival, empty dunes, or the winter ice festival.\",\n  \"content\": \"<p>Mongolia's travel season runs roughly from May to October...</p>\",\n  \"author\": \"Amina Bat-Erdene\",\n  \"destination_id\": \"{{destination_id}}\",\n  \"cover_image\": { \"url\": \"https://cdn.example.com/blog/season-cover.jpg\", \"caption\": \"Steppe in early summer\" },\n  \"images\": [],\n  \"tags\": [\"travel-tips\", \"seasons\"]\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "[Admin] Update Blog",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/blogs/{{blog_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "blogs", "{{blog_id}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"title\": \"Best Time to Visit Mongolia (Updated 2026)\",\n  \"tags\": [\"travel-tips\", \"seasons\", \"2026\"]\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "[Admin] Publish Blog",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/blogs/{{blog_id}}/publish",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "blogs", "{{blog_id}}", "publish"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Bookings",
+      "item": [
+        {
+          "name": "Create Booking",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/bookings",
+              "host": ["{{base_url}}"],
+              "path": ["bookings"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"destination_id\": \"{{destination_id}}\",\n  \"customer\": {\n    \"name\": \"Sarah Connor\",\n    \"email\": \"sarah.connor@example.com\",\n    \"phone\": \"+1-555-0142\",\n    \"nationality\": \"USA\",\n    \"notes\": \"Vegetarian meals preferred\"\n  },\n  \"booking\": {\n    \"travel_dates\": { \"start\": \"2026-08-10T00:00:00Z\", \"end\": \"2026-08-17T00:00:00Z\" },\n    \"travelers\": { \"adults\": 2, \"children\": 0 },\n    \"total_price_usd\": 2480,\n    \"notes\": \"Celebrating anniversary, would like a room upgrade if available\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "[Admin] List Bookings",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/bookings?page=1&limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "bookings"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "[Admin] Get Booking by ID",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/bookings/{{booking_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "bookings", "{{booking_id}}"]
+            }
+          }
+        },
+        {
+          "name": "[Admin] Update Booking Status",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/bookings/{{booking_id}}/status",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "bookings", "{{booking_id}}", "status"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"confirmed\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Cars",
+      "item": [
+        {
+          "name": "List Cars",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/cars?type=4x4&fuel=diesel&page=1&limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["cars"],
+              "query": [
+                { "key": "type", "value": "4x4" },
+                { "key": "fuel", "value": "diesel" },
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "Get Car by Slug",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/cars/{{car_slug}}",
+              "host": ["{{base_url}}"],
+              "path": ["cars", "{{car_slug}}"]
+            }
+          }
+        },
+        {
+          "name": "[Admin] Create Car",
+          "request": {
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/cars",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "cars"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"slug\": \"toyota-land-cruiser-4x4\",\n  \"name\": \"Toyota Land Cruiser 4x4\",\n  \"type\": \"4x4\",\n  \"seats\": 6,\n  \"fuel\": \"diesel\",\n  \"price_per_day_usd\": 95,\n  \"tags\": [\"off-road\", \"driver-optional\", \"popular\"],\n  \"cover_image\": { \"url\": \"https://cdn.example.com/cars/land-cruiser.jpg\", \"caption\": \"Land Cruiser at Yolyn Am\" },\n  \"images\": []\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "[Admin] Update Car",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/cars/{{car_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "cars", "{{car_id}}"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"price_per_day_usd\": 85\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "[Admin] Delete Car",
+          "request": {
+            "method": "DELETE",
+            "header": [{ "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/cars/{{car_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "cars", "{{car_id}}"]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Rentals",
+      "item": [
+        {
+          "name": "Create Rental",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/rentals",
+              "host": ["{{base_url}}"],
+              "path": ["rentals"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"car_id\": \"{{car_id}}\",\n  \"customer\": {\n    \"name\": \"John Miller\",\n    \"email\": \"john.miller@example.com\",\n    \"phone\": \"+44-7700-900142\",\n    \"nationality\": \"UK\",\n    \"notes\": \"\"\n  },\n  \"rental\": {\n    \"mode\": \"with_driver\",\n    \"pickup_date\": \"2026-09-01T09:00:00Z\",\n    \"return_date\": \"2026-09-05T18:00:00Z\",\n    \"notes\": \"Pickup from Chinggis Khaan Airport\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "[Admin] List Rentals",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/rentals?page=1&limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "rentals"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "[Admin] Get Rental by ID",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/rentals/{{rental_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "rentals", "{{rental_id}}"]
+            }
+          }
+        },
+        {
+          "name": "[Admin] Update Rental Status",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/rentals/{{rental_id}}/status",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "rentals", "{{rental_id}}", "status"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"confirmed\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Airport Transfers",
+      "item": [
+        {
+          "name": "Create Airport Transfer",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/airport-transfers",
+              "host": ["{{base_url}}"],
+              "path": ["airport-transfers"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"customer\": {\n    \"name\": \"Elena Petrova\",\n    \"email\": \"elena.petrova@example.com\",\n    \"phone\": \"+7-916-1234567\",\n    \"nationality\": \"Russia\",\n    \"notes\": \"\"\n  },\n  \"transfer\": {\n    \"tier\": \"premium\",\n    \"flight_number\": \"OM207\",\n    \"arrival_at\": \"2026-09-01T07:45:00Z\",\n    \"passengers\": 3,\n    \"notes\": \"Arriving with 2 large ski bags\"\n  }\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "[Admin] List Airport Transfers",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/airport-transfers?page=1&limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "airport-transfers"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "[Admin] Get Airport Transfer by ID",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/airport-transfers/{{transfer_id}}",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "airport-transfers", "{{transfer_id}}"]
+            }
+          }
+        },
+        {
+          "name": "[Admin] Update Airport Transfer Status",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/airport-transfers/{{transfer_id}}/status",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "airport-transfers", "{{transfer_id}}", "status"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"confirmed\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "Contact Messages",
+      "item": [
+        {
+          "name": "Create Contact Message",
+          "request": {
+            "auth": { "type": "noauth" },
+            "method": "POST",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/contact",
+              "host": ["{{base_url}}"],
+              "path": ["contact"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"name\": \"Tomás Ibarra\",\n  \"email\": \"tomas.ibarra@example.com\",\n  \"subject\": \"Group booking for 15 people\",\n  \"message\": \"Hi, we're a university alumni group looking to book the Gobi Desert Classic for 15 people in July 2027. Can you send a group quote?\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        },
+        {
+          "name": "[Admin] List Contact Messages",
+          "request": {
+            "method": "GET",
+            "header": [{ "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/contact-messages?page=1&limit=20",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "contact-messages"],
+              "query": [
+                { "key": "page", "value": "1" },
+                { "key": "limit", "value": "20" }
+              ]
+            }
+          }
+        },
+        {
+          "name": "[Admin] Update Contact Message Status",
+          "request": {
+            "method": "PUT",
+            "header": [{ "key": "Content-Type", "value": "application/json" }, { "key": "X-API-Key", "value": "{{tenant_api_key}}" }],
+            "url": {
+              "raw": "{{base_url}}/admin/contact-messages/{{contact_message_id}}/status",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "contact-messages", "{{contact_message_id}}", "status"]
+            },
+            "body": {
+              "mode": "raw",
+              "raw": "{\n  \"status\": \"read\"\n}",
+              "options": { "raw": { "language": "json" } }
+            }
+          }
+        }
+      ]
+    }
+  ]
+}

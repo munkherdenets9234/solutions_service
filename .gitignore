@@ -1,0 +1,11 @@
+.env
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+/tmp
+/dist
+/bin
+vendor/
+server_std*.log
