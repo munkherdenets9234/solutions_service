@@ -1,11 +1,15 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/eandstravel/digitalservice/internal/testutil"
+	"go.mongodb.org/mongo-driver/bson"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 func TestDestinations(t *testing.T) {
@@ -263,6 +267,54 @@ func TestCars(t *testing.T) {
 			t.Fatalf("want 201, got %d: %s", resp.Status, resp.Raw)
 		}
 		carID, _ = resp.Data()["id"].(string)
+	})
+
+	t.Run("public list", func(t *testing.T) {
+		resp := testutil.Do(t, app, http.MethodGet, "/api/v1/cars?page=1&limit=20", testutil.ReqOpts{APIKey: tenant.APIKey})
+		if resp.Status != http.StatusOK {
+			t.Fatalf("want 200, got %d: %s", resp.Status, resp.Raw)
+		}
+	})
+
+	t.Run("public list with type and fuel filter", func(t *testing.T) {
+		resp := testutil.Do(t, app, http.MethodGet, "/api/v1/cars?type=4x4&fuel=diesel&page=1&limit=20", testutil.ReqOpts{APIKey: tenant.APIKey})
+		if resp.Status != http.StatusOK {
+			t.Fatalf("want 200, got %d: %s", resp.Status, resp.Raw)
+		}
+	})
+
+	t.Run("public list with no results", func(t *testing.T) {
+		resp := testutil.Do(t, app, http.MethodGet, "/api/v1/cars?type=nonexistent&page=1&limit=20", testutil.ReqOpts{APIKey: tenant.APIKey})
+		if resp.Status != http.StatusOK {
+			t.Fatalf("want 200, got %d: %s", resp.Status, resp.Raw)
+		}
+	})
+
+	t.Run("public list second page", func(t *testing.T) {
+		resp := testutil.Do(t, app, http.MethodGet, "/api/v1/cars?page=2&limit=20", testutil.ReqOpts{APIKey: tenant.APIKey})
+		if resp.Status != http.StatusOK {
+			t.Fatalf("want 200, got %d: %s", resp.Status, resp.Raw)
+		}
+	})
+
+	t.Run("public list with a doc missing optional fields", func(t *testing.T) {
+		tid, _ := primitive.ObjectIDFromHex(tenant.ID)
+		_, err := db.Collection("cars").InsertOne(context.Background(), bson.M{
+			"tenant_id":   tid,
+			"slug":        fmt.Sprintf("legacy-%d", testutil.Unique()),
+			"name":        "Legacy Car",
+			"is_active":   true,
+			"cover_image": nil,
+			"created_at":  time.Now(),
+			"updated_at":  time.Now(),
+		})
+		if err != nil {
+			t.Fatalf("setup insert failed: %v", err)
+		}
+		resp := testutil.Do(t, app, http.MethodGet, "/api/v1/cars?page=1&limit=20", testutil.ReqOpts{APIKey: tenant.APIKey})
+		if resp.Status != http.StatusOK {
+			t.Fatalf("want 200, got %d: %s", resp.Status, resp.Raw)
+		}
 	})
 
 	t.Run("public get by slug", func(t *testing.T) {
