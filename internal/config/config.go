@@ -23,8 +23,10 @@ type Config struct {
 
 func Load() *Config {
 	return &Config{
-		AppEnv:        getEnv("APP_ENV", "development"),
-		AppPort:       getEnv("APP_PORT", "8080"),
+		AppEnv: getEnv("APP_ENV", "development"),
+		// PORT takes precedence over APP_PORT because hosting platforms like
+		// Render inject PORT and require the app to bind to it.
+		AppPort:       getEnv("PORT", getEnv("APP_PORT", "8080")),
 		MongoURI:      getEnv("MONGO_URI", "mongodb://localhost:27017"),
 		MongoDB:       getEnv("MONGO_DB", "eandstravel"),
 		RedisAddr:     getEnv("REDIS_ADDR", "localhost:6379"),

@@ -54,6 +54,10 @@ func (r *Router) Register(engine *gin.Engine) {
 	engine.Use(middleware.Logger())
 	engine.Use(middleware.CORS())
 
+	engine.GET("/healthz", func(c *gin.Context) {
+		c.JSON(200, gin.H{"status": "ok"})
+	})
+
 	api := engine.Group("/api/v1")
 
 	// Platform routes — manage tenants themselves. Not tenant-scoped: no

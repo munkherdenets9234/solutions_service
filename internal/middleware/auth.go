@@ -19,11 +19,14 @@ func NewAuthMiddleware(maker *token.Maker) *AuthMiddleware {
 }
 
 // Require verifies the bearer token and, if roles are given, checks the
-// token's role is one of them. If TenantMiddleware ran earlier in the chain
-// and resolved a tenant from X-API-Key, and this token is tenant-scoped
-// (non-superadmin), the token's tenant must match the resolved tenant —
-// this stops an admin token issued for tenant A from being replayed against
-// tenant B's API key.
+// token's role is one of them. A "superadmin" claim must never carry a
+// tenant scope - that combination would let a tenant-scoped role that got
+// smuggled into a token (e.g. via a bad role value) pass as a superadmin on
+// platform routes, which aren't behind TenantMiddleware. If TenantMiddleware
+// ran earlier in the chain and resolved a tenant from X-API-Key, and this
+// token is tenant-scoped (non-superadmin), the token's tenant must match the
+// resolved tenant - this stops an admin token issued for tenant A from being
+// replayed against tenant B's API key.
 func (a *AuthMiddleware) Require(roles ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
@@ -53,7 +56,12 @@ func (a *AuthMiddleware) Require(roles ...string) gin.HandlerFunc {
 			}
 		}
 
-		if claims.TenantID != "" {
+		if claims.Role == "superadmin" {
+			if claims.TenantID != "" {
+				response.Error(c, http.StatusForbidden, "forbidden")
+				return
+			}
+		} else if claims.TenantID != "" {
 			if resolved, exists := c.Get("tenant_id"); exists {
 				if claims.TenantID != resolved.(primitive.ObjectID).Hex() {
 					response.Error(c, http.StatusForbidden, "token does not belong to this tenant")

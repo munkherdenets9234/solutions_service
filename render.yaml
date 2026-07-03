@@ -1,0 +1,28 @@
+services:
+  - type: web
+    name: digitalservice-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    plan: starter
+    healthCheckPath: /healthz
+    envVars:
+      - key: APP_ENV
+        value: production
+      # PORT is injected automatically by Render — do not set it here.
+      - key: MONGO_URI
+        sync: false # external MongoDB (e.g. MongoDB Atlas) — Render has no managed MongoDB
+      - key: MONGO_DB
+        value: eandstravel
+      - key: TOKEN_SECRET
+        generateValue: true # must be at least 32 characters; Render generates a random one
+      - key: TOKEN_EXPIRY_HOURS
+        value: "24"
+      - key: CLOUDINARY_URL
+        sync: false
+      - key: SUPERADMIN_NAME
+        value: Superadmin
+      - key: SUPERADMIN_EMAIL
+        sync: false
+      - key: SUPERADMIN_PASSWORD
+        sync: false
