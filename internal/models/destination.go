@@ -74,6 +74,7 @@ type Destination struct {
 	CoverImage Image   `bson:"cover_image" json:"cover_image"`
 	Images     []Image `bson:"images" json:"images"`
 
+	Featured  bool      `bson:"featured" json:"featured"`
 	IsActive  bool      `bson:"is_active" json:"is_active"`
 	CreatedAt time.Time `bson:"created_at" json:"created_at"`
 	UpdatedAt time.Time `bson:"updated_at" json:"updated_at"`
