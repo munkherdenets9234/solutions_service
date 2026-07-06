@@ -21,7 +21,10 @@ func NewTenantHandler(svc *service.TenantService, userSvc *service.TenantUserSer
 
 // Create provisions a tenant along with its API key and, when a contact
 // email is given, a bootstrap admin login profile — without it there would
-// be no way for the tenant to ever obtain their first admin token.
+// be no way for the tenant to ever obtain their first admin token. A
+// subscription is a separate, explicit step (see SubscriptionHandler) — a
+// tenant with no subscription record yet is not held to any subscription
+// state by SubscriptionMiddleware.
 func (h *TenantHandler) Create(c *gin.Context) {
 	var t models.Tenant
 	if err := c.ShouldBindJSON(&t); err != nil {

@@ -132,3 +132,61 @@ func (s *PlatformUserService) UpdateStatus(ctx context.Context, idStr string, st
 
 	return s.repo.UpdateStatus(ctx, id, status)
 }
+
+// ChangePassword lets a logged-in platform user change their own password,
+// after verifying the current one.
+func (s *PlatformUserService) ChangePassword(ctx context.Context, userID primitive.ObjectID, currentPassword, newPassword string) error {
+	u, err := s.repo.FindByID(ctx, userID)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return apierr.NotFound("platform user not found")
+		}
+		return apierr.Internal()
+	}
+	if !password.Verify(u.PasswordHash, currentPassword) {
+		return apierr.Unauthorized()
+	}
+	if len(newPassword) < 8 {
+		return apierr.BadRequest("password must be at least 8 characters")
+	}
+
+	hash, err := password.Hash(newPassword)
+	if err != nil {
+		return apierr.Internal()
+	}
+	return s.repo.UpdatePassword(ctx, userID, hash)
+}
+
+// ResetPassword lets a superadmin reset another platform user's password
+// without knowing the current one. If newPassword is empty, one is
+// generated and returned — the only time it is ever available in plaintext.
+func (s *PlatformUserService) ResetPassword(ctx context.Context, idStr, newPassword string) (string, error) {
+	id, err := primitive.ObjectIDFromHex(idStr)
+	if err != nil {
+		return "", apierr.BadRequest("invalid id")
+	}
+	if _, err := s.repo.FindByID(ctx, id); err != nil {
+		if err == mongo.ErrNoDocuments {
+			return "", apierr.NotFound("platform user not found")
+		}
+		return "", apierr.Internal()
+	}
+
+	if newPassword == "" {
+		newPassword, err = password.GenerateRandom()
+		if err != nil {
+			return "", apierr.Internal()
+		}
+	} else if len(newPassword) < 8 {
+		return "", apierr.BadRequest("password must be at least 8 characters")
+	}
+
+	hash, err := password.Hash(newPassword)
+	if err != nil {
+		return "", apierr.Internal()
+	}
+	if err := s.repo.UpdatePassword(ctx, id, hash); err != nil {
+		return "", apierr.Internal()
+	}
+	return newPassword, nil
+}

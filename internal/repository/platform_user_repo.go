@@ -59,6 +59,23 @@ func (r *PlatformUserRepo) FindByEmail(ctx context.Context, email string) (*mode
 	return &u, nil
 }
 
+func (r *PlatformUserRepo) FindByID(ctx context.Context, id primitive.ObjectID) (*models.PlatformUser, error) {
+	var u models.PlatformUser
+	err := r.col.FindOne(ctx, bson.M{"_id": id}).Decode(&u)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func (r *PlatformUserRepo) UpdatePassword(ctx context.Context, id primitive.ObjectID, passwordHash string) error {
+	_, err := r.col.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": bson.M{
+		"password_hash": passwordHash,
+		"updated_at":    time.Now(),
+	}})
+	return err
+}
+
 func (r *PlatformUserRepo) CountActive(ctx context.Context) (int64, error) {
 	return r.col.CountDocuments(ctx, bson.M{"status": models.PlatformUserActive})
 }

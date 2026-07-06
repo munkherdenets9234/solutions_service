@@ -60,6 +60,23 @@ func (r *TenantUserRepo) FindByTenantAndEmail(ctx context.Context, tenantID prim
 	return &u, nil
 }
 
+func (r *TenantUserRepo) FindByID(ctx context.Context, tenantID, id primitive.ObjectID) (*models.TenantUser, error) {
+	var u models.TenantUser
+	err := r.col.FindOne(ctx, bson.M{"_id": id, "tenant_id": tenantID}).Decode(&u)
+	if err != nil {
+		return nil, err
+	}
+	return &u, nil
+}
+
+func (r *TenantUserRepo) UpdatePassword(ctx context.Context, tenantID, id primitive.ObjectID, passwordHash string) error {
+	_, err := r.col.UpdateOne(ctx, bson.M{"_id": id, "tenant_id": tenantID}, bson.M{"$set": bson.M{
+		"password_hash": passwordHash,
+		"updated_at":    time.Now(),
+	}})
+	return err
+}
+
 func (r *TenantUserRepo) UpdateStatus(ctx context.Context, tenantID, id primitive.ObjectID, status models.TenantUserStatus) error {
 	_, err := r.col.UpdateOne(ctx, bson.M{"_id": id, "tenant_id": tenantID}, bson.M{"$set": bson.M{
 		"status":     status,

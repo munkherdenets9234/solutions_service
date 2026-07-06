@@ -94,6 +94,7 @@ func NewApp(t testing.TB, db *mongo.Database) *App {
 		handler.NewSubscriptionHandler(subscriptionSvc),
 		middleware.NewAuthMiddleware(maker),
 		middleware.NewTenantMiddleware(tenantSvc),
+		middleware.NewSubscriptionMiddleware(subscriptionSvc),
 	)
 
 	engine := gin.New()

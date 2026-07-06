@@ -19,6 +19,7 @@ type Router struct {
 	subscription    *SubscriptionHandler
 	auth            *middleware.AuthMiddleware
 	tenantMW        *middleware.TenantMiddleware
+	subscriptionMW  *middleware.SubscriptionMiddleware
 }
 
 func NewRouter(
@@ -35,6 +36,7 @@ func NewRouter(
 	subscription *SubscriptionHandler,
 	auth *middleware.AuthMiddleware,
 	tenantMW *middleware.TenantMiddleware,
+	subscriptionMW *middleware.SubscriptionMiddleware,
 ) *Router {
 	return &Router{
 		destination:     destination,
@@ -50,6 +52,7 @@ func NewRouter(
 		subscription:    subscription,
 		auth:            auth,
 		tenantMW:        tenantMW,
+		subscriptionMW:  subscriptionMW,
 	}
 }
 
@@ -59,6 +62,12 @@ func (r *Router) Register(engine *gin.Engine) {
 
 	engine.GET("/healthz", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})
+	})
+
+	// Self-contained, searchable API reference. Not tenant-scoped — no
+	// X-API-Key required, it just describes the routes below.
+	engine.GET("/docs", func(c *gin.Context) {
+		c.Data(200, "text/html; charset=utf-8", DocsHTML)
 	})
 
 	api := engine.Group("/api/v1")
@@ -88,12 +97,16 @@ func (r *Router) Register(engine *gin.Engine) {
 			platformAdmins.POST("", r.platformUser.Create)
 			platformAdmins.GET("", r.platformUser.List)
 			platformAdmins.PUT("/:id/status", r.platformUser.UpdateStatus)
+			platformAdmins.PUT("/:id/password", r.platformUser.ResetPassword)
+
+			platformAuthed.PUT("/account/password", r.platformUser.ChangePassword)
 		}
 	}
 
 	// Every route below requires X-API-Key and is scoped to that tenant.
 	tenantScoped := api.Group("")
 	tenantScoped.Use(r.tenantMW.Require())
+	tenantScoped.Use(r.subscriptionMW.Require())
 	{
 		// Public routes (tenant-scoped, no user auth)
 		dest := tenantScoped.Group("/destinations")
@@ -136,6 +149,12 @@ func (r *Router) Register(engine *gin.Engine) {
 
 		tenantScoped.POST("/login", r.tenantUser.Login) // public — tenant user login, issues a bearer token
 
+		// Self-service account routes (require a valid token scoped to this
+		// tenant, any role — admin or staff).
+		account := tenantScoped.Group("/account")
+		account.Use(r.auth.Require())
+		account.PUT("/password", r.tenantUser.ChangePassword)
+
 		// Admin routes (require an "admin" token scoped to this tenant)
 		admin := tenantScoped.Group("/admin")
 		admin.Use(r.auth.Require("admin"))
@@ -144,6 +163,7 @@ func (r *Router) Register(engine *gin.Engine) {
 			adminUsers.POST("", r.tenantUser.Create)
 			adminUsers.GET("", r.tenantUser.List)
 			adminUsers.PUT("/:id/status", r.tenantUser.UpdateStatus)
+			adminUsers.PUT("/:id/password", r.tenantUser.ResetPassword)
 
 			adminDest := admin.Group("/destinations")
 			adminDest.POST("", r.destination.Create)

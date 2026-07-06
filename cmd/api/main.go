@@ -96,6 +96,7 @@ func main() {
 	subscriptionHandler := handler.NewSubscriptionHandler(subscriptionSvc)
 	authMW := middleware.NewAuthMiddleware(tokenMaker)
 	tenantMW := middleware.NewTenantMiddleware(tenantSvc)
+	subscriptionMW := middleware.NewSubscriptionMiddleware(subscriptionSvc)
 
 	router := handler.NewRouter(
 		destHandler,
@@ -111,6 +112,7 @@ func main() {
 		subscriptionHandler,
 		authMW,
 		tenantMW,
+		subscriptionMW,
 	)
 
 	if cfg.AppEnv == "production" {

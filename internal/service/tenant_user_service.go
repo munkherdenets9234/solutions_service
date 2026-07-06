@@ -111,3 +111,62 @@ func (s *TenantUserService) UpdateStatus(ctx context.Context, tenantID primitive
 	}
 	return s.repo.UpdateStatus(ctx, tenantID, id, status)
 }
+
+// ChangePassword lets a logged-in tenant user (any role) change their own
+// password, after verifying the current one.
+func (s *TenantUserService) ChangePassword(ctx context.Context, tenantID, userID primitive.ObjectID, currentPassword, newPassword string) error {
+	u, err := s.repo.FindByID(ctx, tenantID, userID)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return apierr.NotFound("login profile not found")
+		}
+		return apierr.Internal()
+	}
+	if !password.Verify(u.PasswordHash, currentPassword) {
+		return apierr.Unauthorized()
+	}
+	if len(newPassword) < 8 {
+		return apierr.BadRequest("password must be at least 8 characters")
+	}
+
+	hash, err := password.Hash(newPassword)
+	if err != nil {
+		return apierr.Internal()
+	}
+	return s.repo.UpdatePassword(ctx, tenantID, userID, hash)
+}
+
+// ResetPassword lets a tenant admin reset another login profile's password
+// in their own tenant (e.g. a staff member who forgot theirs), without
+// knowing the current one. If newPassword is empty, one is generated and
+// returned — the only time it is ever available in plaintext.
+func (s *TenantUserService) ResetPassword(ctx context.Context, tenantID primitive.ObjectID, idStr, newPassword string) (string, error) {
+	id, err := primitive.ObjectIDFromHex(idStr)
+	if err != nil {
+		return "", apierr.BadRequest("invalid id")
+	}
+	if _, err := s.repo.FindByID(ctx, tenantID, id); err != nil {
+		if err == mongo.ErrNoDocuments {
+			return "", apierr.NotFound("login profile not found")
+		}
+		return "", apierr.Internal()
+	}
+
+	if newPassword == "" {
+		newPassword, err = password.GenerateRandom()
+		if err != nil {
+			return "", apierr.Internal()
+		}
+	} else if len(newPassword) < 8 {
+		return "", apierr.BadRequest("password must be at least 8 characters")
+	}
+
+	hash, err := password.Hash(newPassword)
+	if err != nil {
+		return "", apierr.Internal()
+	}
+	if err := s.repo.UpdatePassword(ctx, tenantID, id, hash); err != nil {
+		return "", apierr.Internal()
+	}
+	return newPassword, nil
+}

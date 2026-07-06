@@ -8,6 +8,7 @@ import (
 	"github.com/eandstravel/digitalservice/internal/service"
 	"github.com/eandstravel/digitalservice/pkg/response"
 	"github.com/gin-gonic/gin"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 type TenantUserHandler struct {
@@ -68,6 +69,55 @@ func (h *TenantUserHandler) UpdateStatus(c *gin.Context) {
 		return
 	}
 	response.OK(c, gin.H{"updated": true})
+}
+
+// ChangePassword lets the calling tenant user (any role) change their own
+// password, given the current one.
+func (h *TenantUserHandler) ChangePassword(c *gin.Context) {
+	var body struct {
+		CurrentPassword string `json:"current_password" binding:"required"`
+		NewPassword     string `json:"new_password" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	uid, err := primitive.ObjectIDFromHex(userID(c))
+	if err != nil {
+		response.Error(c, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	if err := h.svc.ChangePassword(c.Request.Context(), tenantID(c), uid, body.CurrentPassword, body.NewPassword); err != nil {
+		handleErr(c, err)
+		return
+	}
+	response.OK(c, gin.H{"updated": true})
+}
+
+// ResetPassword lets a tenant admin reset another login profile's password
+// in their own tenant.
+func (h *TenantUserHandler) ResetPassword(c *gin.Context) {
+	var body struct {
+		NewPassword string `json:"new_password"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	newPassword, err := h.svc.ResetPassword(c.Request.Context(), tenantID(c), c.Param("id"), body.NewPassword)
+	if err != nil {
+		handleErr(c, err)
+		return
+	}
+
+	resp := gin.H{"updated": true}
+	if body.NewPassword == "" {
+		resp["password"] = newPassword
+	}
+	response.OK(c, resp)
 }
 
 func (h *TenantUserHandler) Login(c *gin.Context) {
