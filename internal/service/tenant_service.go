@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"net/http"
+	"strings"
 
 	"github.com/eandstravel/digitalservice/internal/models"
 	"github.com/eandstravel/digitalservice/internal/repository"
@@ -94,6 +95,41 @@ func (s *TenantService) RotateAPIKey(ctx context.Context, idStr string) (string,
 		return "", apierr.Internal()
 	}
 	return raw, nil
+}
+
+// UpdateDomain assigns the browser-facing domain a tenant's API key is bound
+// to (see TenantMiddleware) — e.g. "acme.yourapp.com" or a client's own
+// "www.acmetravel.com". Stored lowercase, without scheme or path, so it can
+// be compared directly against a request's Origin/Referer host.
+func (s *TenantService) UpdateDomain(ctx context.Context, idStr, domain string) error {
+	id, err := primitive.ObjectIDFromHex(idStr)
+	if err != nil {
+		return apierr.BadRequest("invalid id")
+	}
+
+	domain = normalizeDomain(domain)
+	if domain == "" {
+		return apierr.BadRequest("domain is required")
+	}
+
+	if err := s.repo.UpdateDomain(ctx, id, domain); err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			return apierr.New(http.StatusConflict, "domain is already assigned to another tenant")
+		}
+		return apierr.Internal()
+	}
+	return nil
+}
+
+func normalizeDomain(domain string) string {
+	domain = strings.ToLower(strings.TrimSpace(domain))
+	domain = strings.TrimPrefix(domain, "https://")
+	domain = strings.TrimPrefix(domain, "http://")
+	domain = strings.TrimSuffix(domain, "/")
+	if i := strings.IndexAny(domain, "/:"); i != -1 {
+		domain = domain[:i]
+	}
+	return domain
 }
 
 // Resolve looks up an active tenant by its raw API key, for request-time

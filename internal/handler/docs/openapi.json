@@ -3,7 +3,7 @@
   "info": {
     "title": "DigitalService API",
     "version": "1.0.0",
-    "description": "Multi-tenant Go/Gin + MongoDB travel API. All GET requests are open reads: tenant-scoped ones (destinations, blogs, cars, and every `/admin/*` list/get) only need `X-API-Key` to identify the tenant, and platform-level ones (`/platform/tenants`, `/platform/admins`) need no auth at all. Every mutating request (POST/PUT/PATCH/DELETE) still requires the appropriate auth: `X-API-Key` for tenant-scoped writes, additionally a Bearer token with the `admin` role for `/admin/*` writes, and a Bearer token with the `superadmin` role for `/platform/*` writes. Tenant-scoped writes also pass through SubscriptionMiddleware — a tenant with an inactive/expired subscription gets 402 — except the four customer-facing lead forms (`/bookings`, `/rentals`, `/airport-transfers`, `/contact`), which are always accepted regardless of subscription state."
+    "description": "Multi-tenant Go/Gin + MongoDB travel API. All GET requests are open reads: tenant-scoped ones (destinations, blogs, cars, and every `/admin/*` list/get) only need `X-API-Key` to identify the tenant, and platform-level ones (`/platform/tenants`, `/platform/admins`) need no auth at all. Every mutating request (POST/PUT/PATCH/DELETE) still requires the appropriate auth: `X-API-Key` for tenant-scoped writes, additionally a Bearer token with the `admin` role for `/admin/*` writes, and a Bearer token with the `superadmin` role for `/platform/*` writes. Tenant-scoped writes also pass through SubscriptionMiddleware — a tenant with an inactive/expired subscription gets 402 — except the four customer-facing lead forms (`/bookings`, `/rentals`, `/airport-transfers`, `/contact`), which are always accepted regardless of subscription state. If a tenant has a `domain` set (see `PUT /platform/tenants/{id}/domain`), every tenant-scoped request also passes through domain-bound key validation: a request carrying an `Origin` or `Referer` header that doesn't match that domain is rejected with 403, even with a valid `X-API-Key` — this only applies to browser-originated requests, since server-to-server calls send neither header."
   },
   "servers": [ { "url": "/", "description": "Same host that serves this docs page" } ],
   "tags": [
@@ -23,7 +23,7 @@
   ],
   "components": {
     "securitySchemes": {
-      "ApiKeyAuth": { "type": "apiKey", "in": "header", "name": "X-API-Key", "description": "Identifies the tenant. Format sk_live_<64 hex>, shown once at tenant creation / rotate-key." },
+      "ApiKeyAuth": { "type": "apiKey", "in": "header", "name": "X-API-Key", "description": "Identifies the tenant. Format sk_live_<64 hex>, shown once at tenant creation / rotate-key. If the tenant has a domain set, this key is only accepted from requests whose Origin/Referer matches it (see PUT /platform/tenants/{id}/domain)." },
       "BearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "JWT", "description": "Carries user_id, role, tenant_id. Obtained from /login (tenant users) or /platform/login (superadmin)." }
     },
     "schemas": {
@@ -181,6 +181,18 @@
         "responses": {
           "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
           "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/platform/tenants/{id}/domain": {
+      "put": {
+        "tags": ["Platform · Tenants"], "summary": "Set tenant domain", "description": "Binds this tenant's X-API-Key to a domain. Once set, TenantMiddleware rejects requests whose Origin/Referer doesn't match it, even with a valid key. Stored lowercase, without scheme/path/port.",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "domain": "acme.yourapp.com" } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }
         }
       }
     },

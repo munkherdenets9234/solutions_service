@@ -95,6 +95,7 @@ func (r *Router) Register(engine *gin.Engine) {
 			platformTenants.POST("", r.tenant.Create)
 			platformTenants.PUT("/:id/status", r.tenant.UpdateStatus)
 			platformTenants.POST("/:id/rotate-key", r.tenant.RotateAPIKey)
+			platformTenants.PUT("/:id/domain", r.tenant.UpdateDomain)
 			platformTenants.POST("/:id/subscription", r.subscription.Create)
 			platformTenants.PUT("/:id/subscription/plan", r.subscription.UpdatePlan)
 			platformTenants.POST("/:id/subscription/cancel", r.subscription.Cancel)
@@ -115,6 +116,9 @@ func (r *Router) Register(engine *gin.Engine) {
 	// Customer-facing lead forms — exempt from SubscriptionMiddleware so a
 	// tenant's lapsed/expired subscription never blocks an incoming
 	// booking, rental, transfer, or contact request from a customer.
+	// Login and self-service password change are exempt too — a tenant user
+	// must always be able to log in and manage their own account even during
+	// a lapsed subscription, or the admin frontend can never even load.
 	{
 		bookings := tenantBase.Group("/bookings")
 		bookings.POST("", r.booking.Create)
@@ -127,6 +131,14 @@ func (r *Router) Register(engine *gin.Engine) {
 
 		contact := tenantBase.Group("/contact")
 		contact.POST("", r.contactMessage.Create)
+
+		tenantBase.POST("/login", r.tenantUser.Login) // public — tenant user login, issues a bearer token
+
+		// Self-service account routes (require a valid token scoped to this
+		// tenant, any role — admin or staff).
+		account := tenantBase.Group("/account")
+		account.Use(r.auth.Require())
+		account.PUT("/password", r.tenantUser.ChangePassword)
 	}
 
 	tenantScoped := tenantBase.Group("")
@@ -151,14 +163,6 @@ func (r *Router) Register(engine *gin.Engine) {
 			cars.GET("/:slug", r.car.GetBySlug)
 		}
 
-		tenantScoped.POST("/login", r.tenantUser.Login) // public — tenant user login, issues a bearer token
-
-		// Self-service account routes (require a valid token scoped to this
-		// tenant, any role — admin or staff).
-		account := tenantScoped.Group("/account")
-		account.Use(r.auth.Require())
-		account.PUT("/password", r.tenantUser.ChangePassword)
-
 		// Admin reads — X-API-Key required, no admin bearer token needed.
 		tenantScoped.GET("/admin/users", r.tenantUser.List)
 		tenantScoped.GET("/admin/bookings", r.booking.List)
@@ -169,15 +173,22 @@ func (r *Router) Register(engine *gin.Engine) {
 		tenantScoped.GET("/admin/airport-transfers/:id", r.airportTransfer.GetByID)
 		tenantScoped.GET("/admin/contact-messages", r.contactMessage.List)
 
+		// Tenant user management — a platform superadmin can administer any
+		// tenant's admin/staff accounts (e.g. resetting a locked-out admin's
+		// password) without holding that tenant's own admin credentials, so
+		// this accepts either role rather than "admin" only.
+		adminUsers := tenantScoped.Group("/admin/users")
+		adminUsers.Use(r.auth.Require("admin", "superadmin"))
+		{
+			adminUsers.POST("", r.tenantUser.Create)
+			adminUsers.PUT("/:id/status", r.tenantUser.UpdateStatus)
+			adminUsers.PUT("/:id/password", r.tenantUser.ResetPassword)
+		}
+
 		// Admin writes (require an "admin" token scoped to this tenant)
 		admin := tenantScoped.Group("/admin")
 		admin.Use(r.auth.Require("admin"))
 		{
-			adminUsers := admin.Group("/users")
-			adminUsers.POST("", r.tenantUser.Create)
-			adminUsers.PUT("/:id/status", r.tenantUser.UpdateStatus)
-			adminUsers.PUT("/:id/password", r.tenantUser.ResetPassword)
-
 			adminDest := admin.Group("/destinations")
 			adminDest.POST("", r.destination.Create)
 			adminDest.PUT("/:id", r.destination.Update)

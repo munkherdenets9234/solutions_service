@@ -84,3 +84,11 @@ func (r *TenantRepo) RotateAPIKey(ctx context.Context, id primitive.ObjectID, ha
 	}})
 	return err
 }
+
+func (r *TenantRepo) UpdateDomain(ctx context.Context, id primitive.ObjectID, domain string) error {
+	_, err := r.col.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": bson.M{
+		"domain":     domain,
+		"updated_at": time.Now(),
+	}})
+	return err
+}

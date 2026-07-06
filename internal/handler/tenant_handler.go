@@ -95,3 +95,21 @@ func (h *TenantHandler) RotateAPIKey(c *gin.Context) {
 	}
 	response.OK(c, gin.H{"api_key": rawAPIKey})
 }
+
+// UpdateDomain assigns the domain this tenant's X-API-Key is bound to.
+// Once set, TenantMiddleware rejects requests whose Origin/Referer doesn't
+// match it, even with a valid key.
+func (h *TenantHandler) UpdateDomain(c *gin.Context) {
+	var body struct {
+		Domain string `json:"domain" binding:"required"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.svc.UpdateDomain(c.Request.Context(), c.Param("id"), body.Domain); err != nil {
+		handleErr(c, err)
+		return
+	}
+	response.OK(c, gin.H{"updated": true})
+}

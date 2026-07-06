@@ -76,6 +76,7 @@ func (r *BlogRepo) FindByID(ctx context.Context, tenantID primitive.ObjectID, id
 }
 
 func (r *BlogRepo) Update(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID, update bson.M) error {
+	stripProtectedFields(update)
 	update["updated_at"] = time.Now()
 	_, err := r.col.UpdateOne(ctx, bson.M{"_id": id, "tenant_id": tenantID}, bson.M{"$set": update})
 	return err

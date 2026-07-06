@@ -2,6 +2,8 @@ package middleware
 
 import (
 	"net/http"
+	"net/url"
+	"strings"
 
 	"github.com/eandstravel/digitalservice/internal/service"
 	"github.com/eandstravel/digitalservice/pkg/apierr"
@@ -38,7 +40,41 @@ func (t *TenantMiddleware) Require() gin.HandlerFunc {
 			return
 		}
 
+		if tenant.Domain != "" && !requestMatchesDomain(c, tenant.Domain) {
+			response.Error(c, http.StatusForbidden, "API key is not authorized for this domain")
+			return
+		}
+
 		c.Set("tenant_id", tenant.ID)
 		c.Next()
 	}
+}
+
+// requestMatchesDomain checks the request's Origin (falling back to Referer)
+// against the tenant's registered domain. Browser requests always carry one
+// of these; server-to-server calls (SSR, mobile apps, Postman) typically
+// carry neither, so the check is skipped when both are absent rather than
+// failing closed — the domain restriction defends against a key leaked into
+// client-side JS being reused from an unauthorized site, not against
+// server-side misuse.
+func requestMatchesDomain(c *gin.Context, domain string) bool {
+	host := requestHost(c.GetHeader("Origin"))
+	if host == "" {
+		host = requestHost(c.GetHeader("Referer"))
+	}
+	if host == "" {
+		return true
+	}
+	return strings.EqualFold(host, domain)
+}
+
+func requestHost(raw string) string {
+	if raw == "" {
+		return ""
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }

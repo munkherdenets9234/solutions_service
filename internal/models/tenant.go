@@ -20,6 +20,7 @@ type Tenant struct {
 	ContactEmail string             `bson:"contact_email" json:"contact_email"`
 	APIKeyHash   string             `bson:"api_key_hash" json:"-"`
 	APIKeyLast4  string             `bson:"api_key_last4" json:"api_key_last4"`
+	Domain       string             `bson:"domain,omitempty" json:"domain,omitempty"`
 	Status       TenantStatus       `bson:"status" json:"status"`
 	CreatedAt    time.Time          `bson:"created_at" json:"created_at"`
 	UpdatedAt    time.Time          `bson:"updated_at" json:"updated_at"`
