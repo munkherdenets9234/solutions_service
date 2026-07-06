@@ -1,0 +1,677 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "DigitalService API",
+    "version": "1.0.0",
+    "description": "Multi-tenant Go/Gin + MongoDB travel API. All GET requests are open reads: tenant-scoped ones (destinations, blogs, cars, and every `/admin/*` list/get) only need `X-API-Key` to identify the tenant, and platform-level ones (`/platform/tenants`, `/platform/admins`) need no auth at all. Every mutating request (POST/PUT/PATCH/DELETE) still requires the appropriate auth: `X-API-Key` for tenant-scoped writes, additionally a Bearer token with the `admin` role for `/admin/*` writes, and a Bearer token with the `superadmin` role for `/platform/*` writes. Tenant-scoped writes also pass through SubscriptionMiddleware — a tenant with an inactive/expired subscription gets 402 — except the four customer-facing lead forms (`/bookings`, `/rentals`, `/airport-transfers`, `/contact`), which are always accepted regardless of subscription state."
+  },
+  "servers": [ { "url": "/", "description": "Same host that serves this docs page" } ],
+  "tags": [
+    { "name": "Health" },
+    { "name": "Platform · Admins" },
+    { "name": "Platform · Tenants" },
+    { "name": "Platform · Subscriptions" },
+    { "name": "Auth & Users" },
+    { "name": "Account" },
+    { "name": "Destinations" },
+    { "name": "Blogs" },
+    { "name": "Bookings" },
+    { "name": "Cars" },
+    { "name": "Rentals" },
+    { "name": "Airport Transfers" },
+    { "name": "Contact Messages" }
+  ],
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": { "type": "apiKey", "in": "header", "name": "X-API-Key", "description": "Identifies the tenant. Format sk_live_<64 hex>, shown once at tenant creation / rotate-key." },
+      "BearerAuth": { "type": "http", "scheme": "bearer", "bearerFormat": "JWT", "description": "Carries user_id, role, tenant_id. Obtained from /login (tenant users) or /platform/login (superadmin)." }
+    },
+    "schemas": {
+      "SuccessResponse": {
+        "type": "object",
+        "properties": { "success": { "type": "boolean", "example": true }, "data": { "type": "object" } }
+      },
+      "ListMeta": {
+        "type": "object",
+        "properties": { "total": { "type": "integer", "example": 42 }, "page": { "type": "integer", "example": 1 }, "limit": { "type": "integer", "example": 20 } }
+      },
+      "ListResponse": {
+        "type": "object",
+        "properties": {
+          "success": { "type": "boolean", "example": true },
+          "data": { "type": "array", "items": { "type": "object" } },
+          "meta": { "$ref": "#/components/schemas/ListMeta" }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": { "success": { "type": "boolean", "example": false }, "message": { "type": "string", "example": "destination not found" } }
+      }
+    },
+    "responses": {
+      "BadRequest": { "description": "Validation error", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+      "Unauthorized": { "description": "Missing/invalid API key or bearer token", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+      "Forbidden": { "description": "Token role/tenant does not match what this route requires", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+      "NotFound": { "description": "Resource not found", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+      "Conflict": { "description": "Resource already exists", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } },
+      "PaymentRequired": { "description": "Tenant subscription is inactive or expired", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ErrorResponse" } } } }
+    },
+    "parameters": {
+      "Page": { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
+      "Limit": { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20, "maximum": 100 } }
+    }
+  },
+  "paths": {
+    "/healthz": {
+      "get": {
+        "tags": ["Health"], "summary": "Liveness check",
+        "responses": { "200": { "description": "ok", "content": { "application/json": { "schema": { "type": "object", "properties": { "status": { "type": "string", "example": "ok" } } } } } } }
+      }
+    },
+
+    "/api/v1/platform/login": {
+      "post": {
+        "tags": ["Platform · Admins"], "summary": "Platform login", "description": "Public. Returns a Bearer token with role `superadmin`.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object" }, "example": { "email": "ops@eandstravel.example.com", "password": "changeme" } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" }, "example": { "success": true, "data": { "token": "eyJ..." } } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/api/v1/platform/admins": {
+      "post": {
+        "tags": ["Platform · Admins"], "summary": "Create platform user", "description": "Omit `password` to auto-generate one (returned once).",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object" }, "example": { "name": "Second Superadmin", "email": "ops2@eandstravel.example.com" } } } },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      },
+      "get": {
+        "tags": ["Platform · Admins"], "summary": "List platform users", "description": "Public — no auth required.",
+        "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } }
+        }
+      }
+    },
+    "/api/v1/platform/admins/{id}/status": {
+      "put": {
+        "tags": ["Platform · Admins"], "summary": "Update platform user status", "description": "Refuses to suspend the last active user.",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "status": "suspended" } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/platform/admins/{id}/password": {
+      "put": {
+        "tags": ["Platform · Admins"], "summary": "Reset platform user password", "description": "Omit new_password to auto-generate one, returned once. Provided values need 8+ chars.",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "content": { "application/json": { "example": { "new_password": "" } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/platform/account/password": {
+      "put": {
+        "tags": ["Platform · Admins"], "summary": "Change own platform password", "description": "Verifies current_password first; new_password must be 8+ chars.",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "current_password": "changeme", "new_password": "a-new-strong-password" } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+
+    "/api/v1/platform/tenants": {
+      "post": {
+        "tags": ["Platform · Tenants"], "summary": "Create tenant", "description": "Returns the tenant's raw api_key exactly once. If contact_email is set, also bootstraps a first admin tenant-user login and returns login.password once.",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "name": "Nomad Trails LLC", "slug": "nomad-trails", "contact_email": "ops@nomadtrails.example.com" } } } },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      },
+      "get": {
+        "tags": ["Platform · Tenants"], "summary": "List tenants", "description": "Public — no auth required.",
+        "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } }
+        }
+      }
+    },
+    "/api/v1/platform/tenants/{id}": {
+      "get": {
+        "tags": ["Platform · Tenants"], "summary": "Get tenant by ID", "description": "Public — no auth required.",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/platform/tenants/{id}/status": {
+      "put": {
+        "tags": ["Platform · Tenants"], "summary": "Update tenant status",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "status": "suspended" } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/platform/tenants/{id}/rotate-key": {
+      "post": {
+        "tags": ["Platform · Tenants"], "summary": "Rotate tenant API key", "description": "Invalidates the old key immediately.",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+
+    "/api/v1/platform/tenants/{id}/subscription": {
+      "post": {
+        "tags": ["Platform · Subscriptions"], "summary": "Create tenant subscription", "description": "plan is one of free|basic|pro|enterprise, defaults to free. 409 if the tenant already has one. Status starts active with a 30-day period.",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "content": { "application/json": { "example": { "plan": "pro" } } } },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      },
+      "get": {
+        "tags": ["Platform · Subscriptions"], "summary": "Get tenant subscription", "description": "Public — no auth required.",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/platform/tenants/{id}/subscription/plan": {
+      "put": {
+        "tags": ["Platform · Subscriptions"], "summary": "Update tenant subscription plan", "description": "Starts a fresh 30-day billing period.",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "plan": "enterprise" } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/platform/tenants/{id}/subscription/cancel": {
+      "post": {
+        "tags": ["Platform · Subscriptions"], "summary": "Cancel tenant subscription", "description": "Sets status to canceled; plan/period left intact. From this point the tenant's own writes get 402 until a superadmin sets a new plan.",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+
+    "/api/v1/login": {
+      "post": {
+        "tags": ["Auth & Users"], "summary": "Tenant user login", "description": "Public but still requires X-API-Key to identify which tenant to authenticate against.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "email": "ops@nomadtrails.example.com", "password": "changeme" } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }
+        }
+      }
+    },
+    "/api/v1/admin/users": {
+      "post": {
+        "tags": ["Auth & Users"], "summary": "Create tenant user", "description": "role must be admin|staff (defaults to staff). Any other value, including superadmin, returns 400 invalid role. Omit password to auto-generate.",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "name": "Bataar Ganbold", "email": "bataar@nomadtrails.example.com", "role": "staff" } } } },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      },
+      "get": {
+        "tags": ["Auth & Users"], "summary": "List tenant users", "description": "X-API-Key only — no admin token needed to read.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/admin/users/{id}/status": {
+      "put": {
+        "tags": ["Auth & Users"], "summary": "Update tenant user status",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "status": "suspended" } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/admin/users/{id}/password": {
+      "put": {
+        "tags": ["Auth & Users"], "summary": "Reset tenant user password", "description": "Omit new_password to auto-generate one, returned once. Provided values need 8+ chars.",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "content": { "application/json": { "example": { "new_password": "" } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+
+    "/api/v1/account/password": {
+      "put": {
+        "tags": ["Account"], "summary": "Change own password", "description": "Admin or staff. Verifies current_password first; new_password must be 8+ chars.",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "current_password": "changeme", "new_password": "a-new-strong-password" } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }
+        }
+      }
+    },
+
+    "/api/v1/destinations": {
+      "get": {
+        "tags": ["Destinations"], "summary": "List destinations", "description": "All query params are optional and combine as AND filters. Only active destinations are returned.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "category", "in": "query", "schema": { "type": "string" }, "example": "cultural" },
+          { "name": "region", "in": "query", "schema": { "type": "string" }, "example": "gobi" },
+          { "name": "season", "in": "query", "schema": { "type": "string" }, "example": "summer" },
+          { "name": "featured", "in": "query", "schema": { "type": "boolean" } },
+          { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }
+        ],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/destinations/{slug}": {
+      "get": {
+        "tags": ["Destinations"], "summary": "Get destination by slug",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "name": "slug", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/admin/destinations": {
+      "post": {
+        "tags": ["Destinations"], "summary": "Create destination", "description": "Full model — unset fields default to zero value.",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": {
+          "name": "Gobi Desert Classic", "slug": "gobi-desert-classic",
+          "overview": "A 7-day journey through the dunes, canyons and nomadic camps of the Gobi.",
+          "region": "gobi", "location": { "lat": 43.5, "lng": 103.8 }, "duration_days": 7,
+          "group_size": { "min": 2, "max": 12 },
+          "prices": [ { "min_people": 2, "max_people": 4, "price_usd": 1250 }, { "min_people": 5, "max_people": 12, "price_usd": 990 } ],
+          "best_seasons": ["spring", "summer", "autumn"], "featured": true, "categories": ["adventure", "scenic"], "tags": ["desert", "camel-trekking"]
+        } } } },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/v1/admin/destinations/{id}": {
+      "put": {
+        "tags": ["Destinations"], "summary": "Update destination", "description": "Partial update ($set).",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "overview": "Updated overview text.", "is_active": true } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "tags": ["Destinations"], "summary": "Delete destination",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+
+    "/api/v1/blogs": {
+      "get": {
+        "tags": ["Blogs"], "summary": "List published blogs", "description": "Published only.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/blogs/{slug}": {
+      "get": {
+        "tags": ["Blogs"], "summary": "Get blog by slug",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "name": "slug", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/admin/blogs": {
+      "post": {
+        "tags": ["Blogs"], "summary": "Create blog", "description": "Created as draft regardless of body.",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": {
+          "title": "When is the best time to visit Mongolia?", "slug": "best-time-to-visit-mongolia", "category": "guides", "read_time": 8,
+          "featured": true, "excerpt": "A month-by-month guide to timing your journey.",
+          "author": { "name": "Saraa B.", "role": "Lead guide" }, "date": "2026-06-12", "tags": ["seasons", "planning"]
+        } } } },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/v1/admin/blogs/{id}": {
+      "put": {
+        "tags": ["Blogs"], "summary": "Update blog", "description": "Partial update.",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "title": "Best Time to Visit Mongolia (Updated 2026)", "tags": ["travel-tips", "seasons", "2026"] } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/admin/blogs/{id}/publish": {
+      "post": {
+        "tags": ["Blogs"], "summary": "Publish blog", "description": "No body.",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+
+    "/api/v1/bookings": {
+      "post": {
+        "tags": ["Bookings"], "summary": "Create booking", "description": "Customer submits a tour booking. Always accepted regardless of the tenant's subscription state — exempt from SubscriptionMiddleware.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": {
+          "destination_id": "665f1b2e8f1b2c0012a3b111",
+          "customer": { "name": "Sarah Connor", "email": "sarah.connor@example.com", "phone": "+1-555-0142", "nationality": "USA" },
+          "booking": { "travel_dates": { "start": "2026-08-10T00:00:00Z", "end": "2026-08-17T00:00:00Z" }, "travelers": { "adults": 2, "children": 0 }, "total_price_usd": 2480 }
+        } } } },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/admin/bookings": {
+      "get": {
+        "tags": ["Bookings"], "summary": "List bookings", "description": "X-API-Key only — no admin token needed to read.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/admin/bookings/{id}": {
+      "get": {
+        "tags": ["Bookings"], "summary": "Get booking by ID", "description": "X-API-Key only — no admin token needed to read.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/admin/bookings/{id}/status": {
+      "put": {
+        "tags": ["Bookings"], "summary": "Update booking status", "description": "pending → confirmed → completed, or cancelled.",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "status": "confirmed" } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+
+    "/api/v1/cars": {
+      "get": {
+        "tags": ["Cars"], "summary": "List cars",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "type", "in": "query", "schema": { "type": "string" }, "example": "4x4" },
+          { "name": "fuel", "in": "query", "schema": { "type": "string" }, "example": "diesel" },
+          { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }
+        ],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/cars/{slug}": {
+      "get": {
+        "tags": ["Cars"], "summary": "Get car by slug",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "name": "slug", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/admin/cars": {
+      "post": {
+        "tags": ["Cars"], "summary": "Create car",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": {
+          "slug": "toyota-land-cruiser-4x4", "name": "Toyota Land Cruiser 4x4", "type": "4x4", "seats": 6, "fuel": "diesel", "price_per_day_usd": 95, "tags": ["off-road", "popular"]
+        } } } },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/v1/admin/cars/{id}": {
+      "put": {
+        "tags": ["Cars"], "summary": "Update car", "description": "Partial update.",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "price_per_day_usd": 85 } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "tags": ["Cars"], "summary": "Delete car",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+
+    "/api/v1/rentals": {
+      "post": {
+        "tags": ["Rentals"], "summary": "Create rental", "description": "Customer requests a car rental. Always accepted regardless of the tenant's subscription state — exempt from SubscriptionMiddleware.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": {
+          "car_id": "665f1b2e8f1b2c0012a3b444",
+          "customer": { "name": "John Miller", "email": "john.miller@example.com", "phone": "+44-7700-900142", "nationality": "UK" },
+          "rental": { "mode": "with_driver", "pickup_date": "2026-09-01T09:00:00Z", "return_date": "2026-09-05T18:00:00Z" }
+        } } } },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/admin/rentals": {
+      "get": {
+        "tags": ["Rentals"], "summary": "List rentals", "description": "X-API-Key only — no admin token needed to read.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/admin/rentals/{id}": {
+      "get": {
+        "tags": ["Rentals"], "summary": "Get rental by ID", "description": "X-API-Key only — no admin token needed to read.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/admin/rentals/{id}/status": {
+      "put": {
+        "tags": ["Rentals"], "summary": "Update rental status", "description": "pending → confirmed → completed, or cancelled.",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "status": "confirmed" } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+
+    "/api/v1/airport-transfers": {
+      "post": {
+        "tags": ["Airport Transfers"], "summary": "Create airport transfer", "description": "Customer requests a pickup/drop-off. Always accepted regardless of the tenant's subscription state — exempt from SubscriptionMiddleware.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": {
+          "customer": { "name": "Elena Petrova", "email": "elena.petrova@example.com", "phone": "+7-916-1234567", "nationality": "Russia" },
+          "transfer": { "tier": "premium", "flight_number": "OM207", "arrival_at": "2026-09-01T07:45:00Z", "passengers": 3 }
+        } } } },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/admin/airport-transfers": {
+      "get": {
+        "tags": ["Airport Transfers"], "summary": "List airport transfers", "description": "X-API-Key only — no admin token needed to read.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/admin/airport-transfers/{id}": {
+      "get": {
+        "tags": ["Airport Transfers"], "summary": "Get airport transfer by ID", "description": "X-API-Key only — no admin token needed to read.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/admin/airport-transfers/{id}/status": {
+      "put": {
+        "tags": ["Airport Transfers"], "summary": "Update airport transfer status", "description": "pending → confirmed → completed, or cancelled.",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "status": "confirmed" } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+
+    "/api/v1/contact": {
+      "post": {
+        "tags": ["Contact Messages"], "summary": "Create contact message", "description": "Contact form submission. Always accepted regardless of the tenant's subscription state — exempt from SubscriptionMiddleware.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": {
+          "name": "Tomás Ibarra", "email": "tomas.ibarra@example.com", "subject": "Group booking for 15 people",
+          "message": "Hi, we're a university alumni group looking to book the Gobi Desert Classic for 15 people in July 2027."
+        } } } },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/admin/contact-messages": {
+      "get": {
+        "tags": ["Contact Messages"], "summary": "List contact messages", "description": "X-API-Key only — no admin token needed to read.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/admin/contact-messages/{id}/status": {
+      "put": {
+        "tags": ["Contact Messages"], "summary": "Update contact message status", "description": "new → read → responded.",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "status": "read" } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    }
+  }
+}

@@ -64,38 +64,43 @@ func (r *Router) Register(engine *gin.Engine) {
 		c.JSON(200, gin.H{"status": "ok"})
 	})
 
-	// Self-contained, searchable API reference. Not tenant-scoped — no
-	// X-API-Key required, it just describes the routes below.
+	// Swagger UI API reference. Not tenant-scoped — no X-API-Key required,
+	// it just describes the routes below.
 	engine.GET("/docs", func(c *gin.Context) {
 		c.Data(200, "text/html; charset=utf-8", DocsHTML)
+	})
+	engine.GET("/docs/openapi.json", func(c *gin.Context) {
+		c.Data(200, "application/json; charset=utf-8", OpenAPISpec)
 	})
 
 	api := engine.Group("/api/v1")
 
 	// Platform routes — manage tenants themselves. Not tenant-scoped: no
-	// X-API-Key required. Login is public; everything else is gated on the
-	// "superadmin" role.
+	// X-API-Key required. Login and all GET reads are public; every
+	// mutating request is gated on the "superadmin" role.
 	platform := api.Group("/platform")
 	{
 		platform.POST("/login", r.platformUser.Login) // public — platform user login, issues a superadmin token
+
+		// Public reads — no auth required.
+		platform.GET("/tenants", r.tenant.List)
+		platform.GET("/tenants/:id", r.tenant.GetByID)
+		platform.GET("/tenants/:id/subscription", r.subscription.Get)
+		platform.GET("/admins", r.platformUser.List)
 
 		platformAuthed := platform.Group("")
 		platformAuthed.Use(r.auth.Require("superadmin"))
 		{
 			platformTenants := platformAuthed.Group("/tenants")
 			platformTenants.POST("", r.tenant.Create)
-			platformTenants.GET("", r.tenant.List)
-			platformTenants.GET("/:id", r.tenant.GetByID)
 			platformTenants.PUT("/:id/status", r.tenant.UpdateStatus)
 			platformTenants.POST("/:id/rotate-key", r.tenant.RotateAPIKey)
 			platformTenants.POST("/:id/subscription", r.subscription.Create)
-			platformTenants.GET("/:id/subscription", r.subscription.Get)
 			platformTenants.PUT("/:id/subscription/plan", r.subscription.UpdatePlan)
 			platformTenants.POST("/:id/subscription/cancel", r.subscription.Cancel)
 
 			platformAdmins := platformAuthed.Group("/admins")
 			platformAdmins.POST("", r.platformUser.Create)
-			platformAdmins.GET("", r.platformUser.List)
 			platformAdmins.PUT("/:id/status", r.platformUser.UpdateStatus)
 			platformAdmins.PUT("/:id/password", r.platformUser.ResetPassword)
 
@@ -104,8 +109,27 @@ func (r *Router) Register(engine *gin.Engine) {
 	}
 
 	// Every route below requires X-API-Key and is scoped to that tenant.
-	tenantScoped := api.Group("")
-	tenantScoped.Use(r.tenantMW.Require())
+	tenantBase := api.Group("")
+	tenantBase.Use(r.tenantMW.Require())
+
+	// Customer-facing lead forms — exempt from SubscriptionMiddleware so a
+	// tenant's lapsed/expired subscription never blocks an incoming
+	// booking, rental, transfer, or contact request from a customer.
+	{
+		bookings := tenantBase.Group("/bookings")
+		bookings.POST("", r.booking.Create)
+
+		rentals := tenantBase.Group("/rentals")
+		rentals.POST("", r.rental.Create)
+
+		airportTransfers := tenantBase.Group("/airport-transfers")
+		airportTransfers.POST("", r.airportTransfer.Create)
+
+		contact := tenantBase.Group("/contact")
+		contact.POST("", r.contactMessage.Create)
+	}
+
+	tenantScoped := tenantBase.Group("")
 	tenantScoped.Use(r.subscriptionMW.Require())
 	{
 		// Public routes (tenant-scoped, no user auth)
@@ -121,30 +145,10 @@ func (r *Router) Register(engine *gin.Engine) {
 			blogs.GET("/:slug", r.blog.GetBySlug)
 		}
 
-		bookings := tenantScoped.Group("/bookings")
-		{
-			bookings.POST("", r.booking.Create) // public — customers create bookings
-		}
-
 		cars := tenantScoped.Group("/cars")
 		{
 			cars.GET("", r.car.List)
 			cars.GET("/:slug", r.car.GetBySlug)
-		}
-
-		rentals := tenantScoped.Group("/rentals")
-		{
-			rentals.POST("", r.rental.Create) // public — customers create rentals
-		}
-
-		airportTransfers := tenantScoped.Group("/airport-transfers")
-		{
-			airportTransfers.POST("", r.airportTransfer.Create) // public — customers request transfers
-		}
-
-		contact := tenantScoped.Group("/contact")
-		{
-			contact.POST("", r.contactMessage.Create) // public — contact form submissions
 		}
 
 		tenantScoped.POST("/login", r.tenantUser.Login) // public — tenant user login, issues a bearer token
@@ -155,13 +159,22 @@ func (r *Router) Register(engine *gin.Engine) {
 		account.Use(r.auth.Require())
 		account.PUT("/password", r.tenantUser.ChangePassword)
 
-		// Admin routes (require an "admin" token scoped to this tenant)
+		// Admin reads — X-API-Key required, no admin bearer token needed.
+		tenantScoped.GET("/admin/users", r.tenantUser.List)
+		tenantScoped.GET("/admin/bookings", r.booking.List)
+		tenantScoped.GET("/admin/bookings/:id", r.booking.GetByID)
+		tenantScoped.GET("/admin/rentals", r.rental.List)
+		tenantScoped.GET("/admin/rentals/:id", r.rental.GetByID)
+		tenantScoped.GET("/admin/airport-transfers", r.airportTransfer.List)
+		tenantScoped.GET("/admin/airport-transfers/:id", r.airportTransfer.GetByID)
+		tenantScoped.GET("/admin/contact-messages", r.contactMessage.List)
+
+		// Admin writes (require an "admin" token scoped to this tenant)
 		admin := tenantScoped.Group("/admin")
 		admin.Use(r.auth.Require("admin"))
 		{
 			adminUsers := admin.Group("/users")
 			adminUsers.POST("", r.tenantUser.Create)
-			adminUsers.GET("", r.tenantUser.List)
 			adminUsers.PUT("/:id/status", r.tenantUser.UpdateStatus)
 			adminUsers.PUT("/:id/password", r.tenantUser.ResetPassword)
 
@@ -176,8 +189,6 @@ func (r *Router) Register(engine *gin.Engine) {
 			adminBlog.POST("/:id/publish", r.blog.Publish)
 
 			adminBooking := admin.Group("/bookings")
-			adminBooking.GET("", r.booking.List)
-			adminBooking.GET("/:id", r.booking.GetByID)
 			adminBooking.PUT("/:id/status", r.booking.UpdateStatus)
 
 			adminCar := admin.Group("/cars")
@@ -186,17 +197,12 @@ func (r *Router) Register(engine *gin.Engine) {
 			adminCar.DELETE("/:id", r.car.Delete)
 
 			adminRental := admin.Group("/rentals")
-			adminRental.GET("", r.rental.List)
-			adminRental.GET("/:id", r.rental.GetByID)
 			adminRental.PUT("/:id/status", r.rental.UpdateStatus)
 
 			adminTransfer := admin.Group("/airport-transfers")
-			adminTransfer.GET("", r.airportTransfer.List)
-			adminTransfer.GET("/:id", r.airportTransfer.GetByID)
 			adminTransfer.PUT("/:id/status", r.airportTransfer.UpdateStatus)
 
 			adminContact := admin.Group("/contact-messages")
-			adminContact.GET("", r.contactMessage.List)
 			adminContact.PUT("/:id/status", r.contactMessage.UpdateStatus)
 		}
 	}
