@@ -23,8 +23,9 @@ var initLoggerOnce sync.Once
 
 // TokenSecret is used to sign tokens for every test server, so tests can
 // mint tokens directly via pkg/token (e.g. to simulate a forged/smuggled
-// claim) without going through the HTTP login flow.
-const TokenSecret = "test-secret-at-least-32-characters-long"
+// claim) without going through the HTTP login flow. Generated per test
+// binary run rather than hardcoded.
+var TokenSecret = randomHex(20)
 
 // App bundles a running test server with the pieces a test might want direct
 // access to (e.g. the token maker, to mint tokens that shouldn't be

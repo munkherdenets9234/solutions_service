@@ -57,6 +57,40 @@ func (r *BlogRepo) FindPublished(ctx context.Context, tenantID primitive.ObjectI
 	return results, total, nil
 }
 
+// FindAll returns blogs for a tenant regardless of status (draft or
+// published), for admin management views. An empty status leaves all
+// statuses in the result set.
+func (r *BlogRepo) FindAll(ctx context.Context, tenantID primitive.ObjectID, status models.BlogStatus, page, limit int) ([]*models.Blog, int64, error) {
+	filter := bson.M{"tenant_id": tenantID}
+	if status != "" {
+		filter["status"] = status
+	}
+
+	total, err := r.col.CountDocuments(ctx, filter)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	skip := int64((page - 1) * limit)
+	opts := options.Find().
+		SetSkip(skip).
+		SetLimit(int64(limit)).
+		SetSort(bson.D{{Key: "created_at", Value: -1}}).
+		SetProjection(bson.M{"content": 0}) // exclude full content in list
+
+	cur, err := r.col.Find(ctx, filter, opts)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer cur.Close(ctx)
+
+	var results []*models.Blog
+	if err := cur.All(ctx, &results); err != nil {
+		return nil, 0, err
+	}
+	return results, total, nil
+}
+
 func (r *BlogRepo) FindBySlug(ctx context.Context, tenantID primitive.ObjectID, slug string) (*models.Blog, error) {
 	var b models.Blog
 	err := r.col.FindOne(ctx, bson.M{"tenant_id": tenantID, "slug": slug, "status": models.BlogPublished}).Decode(&b)

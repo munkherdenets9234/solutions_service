@@ -171,6 +171,8 @@ func (r *Router) Register(engine *gin.Engine) {
 
 		// Admin reads — X-API-Key required, no admin bearer token needed.
 		tenantScoped.GET("/admin/users", r.tenantUser.List)
+		tenantScoped.GET("/admin/blogs", r.blog.ListAdmin)
+		tenantScoped.GET("/admin/blogs/:id", r.blog.GetByID)
 		tenantScoped.GET("/admin/bookings", r.booking.List)
 		tenantScoped.GET("/admin/bookings/:id", r.booking.GetByID)
 		tenantScoped.GET("/admin/rentals", r.rental.List)

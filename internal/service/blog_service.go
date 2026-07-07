@@ -30,6 +30,37 @@ func (s *BlogService) ListPublished(ctx context.Context, tenantID primitive.Obje
 	return s.repo.FindPublished(ctx, tenantID, page, limit)
 }
 
+// ListAll returns every blog for a tenant regardless of status, for admin
+// management views where drafts need to be visible ahead of publishing. An
+// empty status returns both drafts and published blogs.
+func (s *BlogService) ListAll(ctx context.Context, tenantID primitive.ObjectID, page, limit int, status models.BlogStatus) ([]*models.Blog, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 50 {
+		limit = 10
+	}
+	if status != "" && status != models.BlogDraft && status != models.BlogPublished {
+		return nil, 0, apierr.BadRequest("invalid status")
+	}
+	return s.repo.FindAll(ctx, tenantID, status, page, limit)
+}
+
+func (s *BlogService) GetByID(ctx context.Context, tenantID primitive.ObjectID, idStr string) (*models.Blog, error) {
+	id, err := primitive.ObjectIDFromHex(idStr)
+	if err != nil {
+		return nil, apierr.BadRequest("invalid id")
+	}
+	b, err := s.repo.FindByID(ctx, tenantID, id)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, apierr.NotFound("blog not found")
+		}
+		return nil, apierr.Internal()
+	}
+	return b, nil
+}
+
 func (s *BlogService) GetBySlug(ctx context.Context, tenantID primitive.ObjectID, slug string) (*models.Blog, error) {
 	b, err := s.repo.FindBySlug(ctx, tenantID, slug)
 	if err != nil {

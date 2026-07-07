@@ -402,6 +402,15 @@
       }
     },
     "/api/v1/admin/blogs": {
+      "get": {
+        "tags": ["Blogs"], "summary": "List all blogs (admin)", "description": "Drafts and published, for management views. Optional status query param filters to \"draft\" or \"published\".",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }, { "name": "status", "in": "query", "required": false, "schema": { "type": "string", "enum": ["draft", "published"] } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      },
       "post": {
         "tags": ["Blogs"], "summary": "Create blog", "description": "Created as draft regardless of body.",
         "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
@@ -417,6 +426,15 @@
       }
     },
     "/api/v1/admin/blogs/{id}": {
+      "get": {
+        "tags": ["Blogs"], "summary": "Get blog by id (admin)", "description": "Returns the blog regardless of status, including full content.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
       "put": {
         "tags": ["Blogs"], "summary": "Update blog", "description": "Partial update.",
         "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],

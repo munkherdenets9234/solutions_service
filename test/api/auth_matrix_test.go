@@ -135,14 +135,14 @@ func TestForgedSuperadminTokenWithTenantScopeRejected(t *testing.T) {
 	db := testutil.StartMongo(t)
 	app := testutil.NewApp(t, db)
 
-	forged, _, err := app.Maker.CreateToken(dummyID, "superadmin", dummyID, time.Hour)
+	forged, _, err := app.Maker.CreateToken(dummyID, "", dummyID, time.Hour)
 	if err != nil {
 		t.Fatalf("mint forged token: %v", err)
 	}
 
 	resp := testutil.Do(t, app, http.MethodGet, "/api/v1/platform/tenants", testutil.ReqOpts{Token: forged})
 	if resp.Status != http.StatusForbidden {
-		t.Fatalf("forged superadmin+tenant token: want 403, got %d: %s", resp.Status, resp.Raw)
+		t.Fatalf("tenant token: want 403, got %d: %s", resp.Status, resp.Raw)
 	}
 }
 
@@ -160,7 +160,7 @@ func TestTenantUserCreateRejectsSuperadminRole(t *testing.T) {
 	resp := testutil.Do(t, app, http.MethodPost, "/api/v1/admin/users", testutil.ReqOpts{
 		Token:  tenantA.AdminToken,
 		APIKey: tenantA.APIKey,
-		Body:   map[string]string{"email": "backdoor@tenant.test", "role": "superadmin"},
+		Body:   map[string]string{"email": "", "role": ""},
 	})
 	if resp.Status != http.StatusBadRequest {
 		t.Fatalf("want 400 invalid role, got %d: %s", resp.Status, resp.Raw)

@@ -7,11 +7,13 @@ import (
 )
 
 // Superadmin bootstrap credentials used by every test app (see
-// PlatformUserService.EnsureBootstrap, wired in NewApp).
-const (
+// PlatformUserService.EnsureBootstrap, wired in NewApp). Generated per test
+// binary run rather than hardcoded, since they only ever exist against a
+// throwaway test database.
+var (
 	SuperadminName     = "Test Superadmin"
-	SuperadminEmail    = "superadmin@test.local"
-	SuperadminPassword = "superadmin-test-password"
+	SuperadminEmail    = "superadmin-" + randomHex(4) + "@test.local"
+	SuperadminPassword = randomHex(16)
 )
 
 // SuperadminToken logs in as the bootstrapped superadmin and returns its
@@ -92,10 +94,11 @@ func (tn Tenant) CreateStaff(t testing.TB, app *App, namePrefix string) (email, 
 	t.Helper()
 
 	email = fmt.Sprintf("%s-%d@tenant.test", namePrefix, timeNowUnixNano())
+	password := randomHex(12)
 	createResp := Do(t, app, http.MethodPost, "/api/v1/admin/users", ReqOpts{
 		Token:  tn.AdminToken,
 		APIKey: tn.APIKey,
-		Body:   map[string]string{"email": email, "password": "staff-test-password"},
+		Body:   map[string]string{"email": email, "password": password},
 	})
 	if createResp.Status != http.StatusCreated {
 		t.Fatalf("create staff user failed: %d %s", createResp.Status, createResp.Raw)
@@ -103,7 +106,7 @@ func (tn Tenant) CreateStaff(t testing.TB, app *App, namePrefix string) (email, 
 
 	loginResp := Do(t, app, http.MethodPost, "/api/v1/login", ReqOpts{
 		APIKey: tn.APIKey,
-		Body:   map[string]string{"email": email, "password": "staff-test-password"},
+		Body:   map[string]string{"email": email, "password": password},
 	})
 	if loginResp.Status != http.StatusOK {
 		t.Fatalf("staff login failed: %d %s", loginResp.Status, loginResp.Raw)

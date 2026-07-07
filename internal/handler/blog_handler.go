@@ -31,6 +31,28 @@ func (h *BlogHandler) List(c *gin.Context) {
 	response.List(c, data, response.Meta{Total: total, Page: page, Limit: limit})
 }
 
+func (h *BlogHandler) ListAdmin(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "10"))
+	status := models.BlogStatus(c.Query("status"))
+
+	data, total, err := h.svc.ListAll(c.Request.Context(), tenantID(c), page, limit, status)
+	if err != nil {
+		handleErr(c, err)
+		return
+	}
+	response.List(c, data, response.Meta{Total: total, Page: page, Limit: limit})
+}
+
+func (h *BlogHandler) GetByID(c *gin.Context) {
+	b, err := h.svc.GetByID(c.Request.Context(), tenantID(c), c.Param("id"))
+	if err != nil {
+		handleErr(c, err)
+		return
+	}
+	response.OK(c, b)
+}
+
 func (h *BlogHandler) GetBySlug(c *gin.Context) {
 	b, err := h.svc.GetBySlug(c.Request.Context(), tenantID(c), c.Param("slug"))
 	if err != nil {
