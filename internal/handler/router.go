@@ -17,6 +17,7 @@ type Router struct {
 	tenantUser      *TenantUserHandler
 	platformUser    *PlatformUserHandler
 	subscription    *SubscriptionHandler
+	upload          *UploadHandler
 	auth            *middleware.AuthMiddleware
 	tenantMW        *middleware.TenantMiddleware
 	subscriptionMW  *middleware.SubscriptionMiddleware
@@ -34,6 +35,7 @@ func NewRouter(
 	tenantUser *TenantUserHandler,
 	platformUser *PlatformUserHandler,
 	subscription *SubscriptionHandler,
+	upload *UploadHandler,
 	auth *middleware.AuthMiddleware,
 	tenantMW *middleware.TenantMiddleware,
 	subscriptionMW *middleware.SubscriptionMiddleware,
@@ -50,6 +52,7 @@ func NewRouter(
 		tenantUser:      tenantUser,
 		platformUser:    platformUser,
 		subscription:    subscription,
+		upload:          upload,
 		auth:            auth,
 		tenantMW:        tenantMW,
 		subscriptionMW:  subscriptionMW,
@@ -215,6 +218,8 @@ func (r *Router) Register(engine *gin.Engine) {
 
 			adminContact := admin.Group("/contact-messages")
 			adminContact.PUT("/:id/status", r.contactMessage.UpdateStatus)
+
+			admin.POST("/uploads", r.upload.Upload)
 		}
 	}
 }

@@ -78,6 +78,10 @@ func main() {
 	tenantUserSvc := service.NewTenantUserService(tenantUserRepo, tokenMaker, cfg.TokenExpiry)
 	platformUserSvc := service.NewPlatformUserService(platformUserRepo, tokenMaker, cfg.TokenExpiry)
 	subscriptionSvc := service.NewSubscriptionService(subscriptionRepo)
+	uploadSvc, err := service.NewUploadService(cfg.CloudinaryURL)
+	if err != nil {
+		logger.Log.Fatal("upload service init failed", zap.Error(err))
+	}
 
 	if err := platformUserSvc.EnsureBootstrap(ctx, cfg.SuperadminName, cfg.SuperadminEmail, cfg.SuperadminPassword); err != nil {
 		logger.Log.Fatal("superadmin bootstrap failed", zap.Error(err))
@@ -94,6 +98,7 @@ func main() {
 	tenantUserHandler := handler.NewTenantUserHandler(tenantUserSvc)
 	platformUserHandler := handler.NewPlatformUserHandler(platformUserSvc)
 	subscriptionHandler := handler.NewSubscriptionHandler(subscriptionSvc)
+	uploadHandler := handler.NewUploadHandler(uploadSvc)
 	authMW := middleware.NewAuthMiddleware(tokenMaker)
 	tenantMW := middleware.NewTenantMiddleware(tenantSvc)
 	subscriptionMW := middleware.NewSubscriptionMiddleware(subscriptionSvc)
@@ -110,6 +115,7 @@ func main() {
 		tenantUserHandler,
 		platformUserHandler,
 		subscriptionHandler,
+		uploadHandler,
 		authMW,
 		tenantMW,
 		subscriptionMW,

@@ -62,6 +62,23 @@ func (r *CustomerRepo) FindByID(ctx context.Context, tenantID primitive.ObjectID
 	return &c, nil
 }
 
+func (r *CustomerRepo) FindByIDs(ctx context.Context, tenantID primitive.ObjectID, ids []primitive.ObjectID) ([]*models.Customer, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	cur, err := r.col.Find(ctx, bson.M{"tenant_id": tenantID, "_id": bson.M{"$in": ids}})
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+
+	var results []*models.Customer
+	if err := cur.All(ctx, &results); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
 func (r *CustomerRepo) FindAll(ctx context.Context, tenantID primitive.ObjectID, page, limit int) ([]*models.Customer, int64, error) {
 	filter := bson.M{"tenant_id": tenantID}
 	total, _ := r.col.CountDocuments(ctx, filter)
