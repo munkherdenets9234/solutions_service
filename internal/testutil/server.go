@@ -71,10 +71,15 @@ func NewApp(t testing.TB, db *mongo.Database) *App {
 	rentalSvc := service.NewRentalService(rentalRepo, customerRepo, carRepo)
 	airportTransferSvc := service.NewAirportTransferService(airportTransferRepo, customerRepo)
 	contactMessageSvc := service.NewContactMessageService(contactMessageRepo)
+	customerSvc := service.NewCustomerService(customerRepo, bookingRepo, rentalRepo, airportTransferRepo)
 	tenantSvc := service.NewTenantService(tenantRepo)
 	tenantUserSvc := service.NewTenantUserService(tenantUserRepo, maker, 24)
 	platformUserSvc := service.NewPlatformUserService(platformUserRepo, maker, 24)
 	subscriptionSvc := service.NewSubscriptionService(subscriptionRepo)
+	uploadSvc, err := service.NewUploadService("cloudinary://key:secret@test-cloud")
+	if err != nil {
+		t.Fatalf("new upload service: %v", err)
+	}
 
 	if err := platformUserSvc.EnsureBootstrap(context.Background(), SuperadminName, SuperadminEmail, SuperadminPassword); err != nil {
 		t.Fatalf("bootstrap superadmin: %v", err)
@@ -88,10 +93,12 @@ func NewApp(t testing.TB, db *mongo.Database) *App {
 		handler.NewRentalHandler(rentalSvc),
 		handler.NewAirportTransferHandler(airportTransferSvc),
 		handler.NewContactMessageHandler(contactMessageSvc),
+		handler.NewCustomerHandler(customerSvc),
 		handler.NewTenantHandler(tenantSvc, tenantUserSvc),
 		handler.NewTenantUserHandler(tenantUserSvc),
 		handler.NewPlatformUserHandler(platformUserSvc),
 		handler.NewSubscriptionHandler(subscriptionSvc),
+		handler.NewUploadHandler(uploadSvc),
 		middleware.NewAuthMiddleware(maker),
 		middleware.NewTenantMiddleware(tenantSvc),
 		middleware.NewSubscriptionMiddleware(subscriptionSvc),

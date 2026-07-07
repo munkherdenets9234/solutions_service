@@ -54,6 +54,38 @@ func (r *BookingRepo) FindAll(ctx context.Context, tenantID primitive.ObjectID, 
 	return results, total, nil
 }
 
+// CountByCustomerIDs returns how many bookings each of the given customers
+// has, keyed by customer ID. Customers with zero bookings are simply absent
+// from the map rather than present with a 0 value.
+func (r *BookingRepo) CountByCustomerIDs(ctx context.Context, tenantID primitive.ObjectID, customerIDs []primitive.ObjectID) (map[primitive.ObjectID]int64, error) {
+	counts := make(map[primitive.ObjectID]int64, len(customerIDs))
+	if len(customerIDs) == 0 {
+		return counts, nil
+	}
+
+	pipeline := mongo.Pipeline{
+		{{Key: "$match", Value: bson.M{"tenant_id": tenantID, "customer_id": bson.M{"$in": customerIDs}}}},
+		{{Key: "$group", Value: bson.M{"_id": "$customer_id", "count": bson.M{"$sum": 1}}}},
+	}
+	cur, err := r.col.Aggregate(ctx, pipeline)
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+
+	var rows []struct {
+		ID    primitive.ObjectID `bson:"_id"`
+		Count int64              `bson:"count"`
+	}
+	if err := cur.All(ctx, &rows); err != nil {
+		return nil, err
+	}
+	for _, row := range rows {
+		counts[row.ID] = row.Count
+	}
+	return counts, nil
+}
+
 func (r *BookingRepo) FindByID(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID) (*models.Booking, error) {
 	var b models.Booking
 	err := r.col.FindOne(ctx, bson.M{"_id": id, "tenant_id": tenantID}).Decode(&b)

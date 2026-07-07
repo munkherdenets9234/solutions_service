@@ -28,7 +28,13 @@ type CreateRentalInput struct {
 	Rental   models.Rental
 }
 
-func (s *RentalService) Create(ctx context.Context, tenantID primitive.ObjectID, input CreateRentalInput) (*models.Rental, error) {
+// RentalDetail is a rental enriched with its customer's details for API responses.
+type RentalDetail struct {
+	models.Rental
+	Customer *models.Customer `json:"customer,omitempty"`
+}
+
+func (s *RentalService) Create(ctx context.Context, tenantID primitive.ObjectID, input CreateRentalInput) (*RentalDetail, error) {
 	carID, err := primitive.ObjectIDFromHex(input.CarID)
 	if err != nil {
 		return nil, apierr.BadRequest("invalid car id")
@@ -54,20 +60,46 @@ func (s *RentalService) Create(ctx context.Context, tenantID primitive.ObjectID,
 	if err := s.repo.Create(ctx, tenantID, &rt); err != nil {
 		return nil, apierr.Internal()
 	}
-	return &rt, nil
+	return &RentalDetail{Rental: rt, Customer: customer}, nil
 }
 
-func (s *RentalService) List(ctx context.Context, tenantID primitive.ObjectID, page, limit int) ([]*models.Rental, int64, error) {
+func (s *RentalService) List(ctx context.Context, tenantID primitive.ObjectID, page, limit int) ([]*RentalDetail, int64, error) {
 	if page < 1 {
 		page = 1
 	}
 	if limit < 1 || limit > 100 {
 		limit = 20
 	}
-	return s.repo.FindAll(ctx, tenantID, bson.M{}, page, limit)
+	rentals, total, err := s.repo.FindAll(ctx, tenantID, bson.M{}, page, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	ids := make([]primitive.ObjectID, 0, len(rentals))
+	seen := make(map[primitive.ObjectID]bool, len(rentals))
+	for _, rt := range rentals {
+		if !seen[rt.CustomerID] {
+			seen[rt.CustomerID] = true
+			ids = append(ids, rt.CustomerID)
+		}
+	}
+	customers, err := s.customerRepo.FindByIDs(ctx, tenantID, ids)
+	if err != nil {
+		return nil, 0, apierr.Internal()
+	}
+	byID := make(map[primitive.ObjectID]*models.Customer, len(customers))
+	for _, c := range customers {
+		byID[c.ID] = c
+	}
+
+	details := make([]*RentalDetail, len(rentals))
+	for i, rt := range rentals {
+		details[i] = &RentalDetail{Rental: *rt, Customer: byID[rt.CustomerID]}
+	}
+	return details, total, nil
 }
 
-func (s *RentalService) GetByID(ctx context.Context, tenantID primitive.ObjectID, idStr string) (*models.Rental, error) {
+func (s *RentalService) GetByID(ctx context.Context, tenantID primitive.ObjectID, idStr string) (*RentalDetail, error) {
 	id, err := primitive.ObjectIDFromHex(idStr)
 	if err != nil {
 		return nil, apierr.BadRequest("invalid id")
@@ -79,7 +111,12 @@ func (s *RentalService) GetByID(ctx context.Context, tenantID primitive.ObjectID
 		}
 		return nil, apierr.Internal()
 	}
-	return rt, nil
+
+	customer, err := s.customerRepo.FindByID(ctx, tenantID, rt.CustomerID)
+	if err != nil && err != mongo.ErrNoDocuments {
+		return nil, apierr.Internal()
+	}
+	return &RentalDetail{Rental: *rt, Customer: customer}, nil
 }
 
 func (s *RentalService) UpdateStatus(ctx context.Context, tenantID primitive.ObjectID, idStr string, status models.RentalStatus) error {

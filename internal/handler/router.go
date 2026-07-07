@@ -13,6 +13,7 @@ type Router struct {
 	rental          *RentalHandler
 	airportTransfer *AirportTransferHandler
 	contactMessage  *ContactMessageHandler
+	customer        *CustomerHandler
 	tenant          *TenantHandler
 	tenantUser      *TenantUserHandler
 	platformUser    *PlatformUserHandler
@@ -31,6 +32,7 @@ func NewRouter(
 	rental *RentalHandler,
 	airportTransfer *AirportTransferHandler,
 	contactMessage *ContactMessageHandler,
+	customer *CustomerHandler,
 	tenant *TenantHandler,
 	tenantUser *TenantUserHandler,
 	platformUser *PlatformUserHandler,
@@ -48,6 +50,7 @@ func NewRouter(
 		rental:          rental,
 		airportTransfer: airportTransfer,
 		contactMessage:  contactMessage,
+		customer:        customer,
 		tenant:          tenant,
 		tenantUser:      tenantUser,
 		platformUser:    platformUser,
@@ -218,6 +221,10 @@ func (r *Router) Register(engine *gin.Engine) {
 
 			adminContact := admin.Group("/contact-messages")
 			adminContact.PUT("/:id/status", r.contactMessage.UpdateStatus)
+
+			adminCustomers := admin.Group("/customers")
+			adminCustomers.GET("", r.customer.List)
+			adminCustomers.GET("/:id", r.customer.GetByID)
 
 			admin.POST("/uploads", r.upload.Upload)
 		}

@@ -32,7 +32,14 @@ type CreateTransferInput struct {
 	Transfer models.AirportTransfer
 }
 
-func (s *AirportTransferService) Create(ctx context.Context, tenantID primitive.ObjectID, input CreateTransferInput) (*models.AirportTransfer, error) {
+// AirportTransferDetail is an airport transfer enriched with its customer's
+// details for API responses.
+type AirportTransferDetail struct {
+	models.AirportTransfer
+	Customer *models.Customer `json:"customer,omitempty"`
+}
+
+func (s *AirportTransferService) Create(ctx context.Context, tenantID primitive.ObjectID, input CreateTransferInput) (*AirportTransferDetail, error) {
 	if !validTransferTiers[input.Transfer.Tier] {
 		return nil, apierr.BadRequest("invalid tier")
 	}
@@ -49,20 +56,46 @@ func (s *AirportTransferService) Create(ctx context.Context, tenantID primitive.
 	if err := s.repo.Create(ctx, tenantID, &t); err != nil {
 		return nil, apierr.Internal()
 	}
-	return &t, nil
+	return &AirportTransferDetail{AirportTransfer: t, Customer: customer}, nil
 }
 
-func (s *AirportTransferService) List(ctx context.Context, tenantID primitive.ObjectID, page, limit int) ([]*models.AirportTransfer, int64, error) {
+func (s *AirportTransferService) List(ctx context.Context, tenantID primitive.ObjectID, page, limit int) ([]*AirportTransferDetail, int64, error) {
 	if page < 1 {
 		page = 1
 	}
 	if limit < 1 || limit > 100 {
 		limit = 20
 	}
-	return s.repo.FindAll(ctx, tenantID, bson.M{}, page, limit)
+	transfers, total, err := s.repo.FindAll(ctx, tenantID, bson.M{}, page, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	ids := make([]primitive.ObjectID, 0, len(transfers))
+	seen := make(map[primitive.ObjectID]bool, len(transfers))
+	for _, t := range transfers {
+		if !seen[t.CustomerID] {
+			seen[t.CustomerID] = true
+			ids = append(ids, t.CustomerID)
+		}
+	}
+	customers, err := s.customerRepo.FindByIDs(ctx, tenantID, ids)
+	if err != nil {
+		return nil, 0, apierr.Internal()
+	}
+	byID := make(map[primitive.ObjectID]*models.Customer, len(customers))
+	for _, c := range customers {
+		byID[c.ID] = c
+	}
+
+	details := make([]*AirportTransferDetail, len(transfers))
+	for i, t := range transfers {
+		details[i] = &AirportTransferDetail{AirportTransfer: *t, Customer: byID[t.CustomerID]}
+	}
+	return details, total, nil
 }
 
-func (s *AirportTransferService) GetByID(ctx context.Context, tenantID primitive.ObjectID, idStr string) (*models.AirportTransfer, error) {
+func (s *AirportTransferService) GetByID(ctx context.Context, tenantID primitive.ObjectID, idStr string) (*AirportTransferDetail, error) {
 	id, err := primitive.ObjectIDFromHex(idStr)
 	if err != nil {
 		return nil, apierr.BadRequest("invalid id")
@@ -74,7 +107,12 @@ func (s *AirportTransferService) GetByID(ctx context.Context, tenantID primitive
 		}
 		return nil, apierr.Internal()
 	}
-	return t, nil
+
+	customer, err := s.customerRepo.FindByID(ctx, tenantID, t.CustomerID)
+	if err != nil && err != mongo.ErrNoDocuments {
+		return nil, apierr.Internal()
+	}
+	return &AirportTransferDetail{AirportTransfer: *t, Customer: customer}, nil
 }
 
 func (s *AirportTransferService) UpdateStatus(ctx context.Context, tenantID primitive.ObjectID, idStr string, status models.TransferStatus) error {

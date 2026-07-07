@@ -19,7 +19,9 @@
     { "name": "Cars" },
     { "name": "Rentals" },
     { "name": "Airport Transfers" },
-    { "name": "Contact Messages" }
+    { "name": "Contact Messages" },
+    { "name": "Customers" },
+    { "name": "Uploads" }
   ],
   "components": {
     "securitySchemes": {
@@ -682,6 +684,42 @@
         "responses": {
           "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
           "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/admin/customers": {
+      "get": {
+        "tags": ["Customers"], "summary": "List customers", "description": "Requires an admin-role Bearer token (unlike other admin lists, which are X-API-Key only). Each customer includes counts of its related bookings/rentals/airport transfers, not the records themselves — see the detail endpoint for full related data.",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" }, "example": { "success": true, "data": [ { "id": "665f1b2e8f1b2c0012a3b222", "name": "Sarah Connor", "email": "sarah.connor@example.com", "phone": "+1-555-0142", "booking_count": 2, "rental_count": 0, "airport_transfer_count": 1 } ], "meta": { "total": 1, "page": 1, "limit": 20 } } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/v1/admin/customers/{id}": {
+      "get": {
+        "tags": ["Customers"], "summary": "Get customer by ID", "description": "Requires an admin-role Bearer token (unlike other admin detail reads, which are X-API-Key only). Returns the customer with its full related bookings, rentals, and airport transfers.",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" }, "example": { "success": true, "data": { "id": "665f1b2e8f1b2c0012a3b222", "name": "Sarah Connor", "email": "sarah.connor@example.com", "phone": "+1-555-0142", "bookings": [], "rentals": [], "airport_transfers": [] } } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/admin/uploads": {
+      "post": {
+        "tags": ["Uploads"], "summary": "Upload a file", "description": "Streams the file to Cloudinary and returns its public URL. `folder` is optional; omit it to upload to Cloudinary's root.",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "multipart/form-data": { "schema": { "type": "object", "properties": {
+          "file": { "type": "string", "format": "binary", "description": "The file to upload." },
+          "folder": { "type": "string", "description": "Optional Cloudinary folder, e.g. \"destinations\"." }
+        }, "required": ["file"] } } } },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" }, "example": { "success": true, "data": { "url": "https://res.cloudinary.com/demo/image/upload/v1699999999/destinations/abc123.jpg", "public_id": "destinations/abc123" } } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "502": { "description": "Upload to Cloudinary failed" }
         }
       }
     }
