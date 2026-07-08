@@ -46,6 +46,12 @@ var adminGatedRoutes = []routeCase{
 	{http.MethodPut, "/api/v1/admin/airport-transfers/" + dummyID + "/status", map[string]string{"status": "confirmed"}},
 	{http.MethodGet, "/api/v1/admin/contact-messages", nil},
 	{http.MethodPut, "/api/v1/admin/contact-messages/" + dummyID + "/status", map[string]string{"status": "read"}},
+	{http.MethodPost, "/api/v1/admin/reviews", map[string]string{"review": "x"}},
+	{http.MethodPut, "/api/v1/admin/reviews/" + dummyID, map[string]string{}},
+	{http.MethodDelete, "/api/v1/admin/reviews/" + dummyID, nil},
+	{http.MethodPost, "/api/v1/admin/partners", map[string]string{"slug": "x"}},
+	{http.MethodPut, "/api/v1/admin/partners/" + dummyID, map[string]string{}},
+	{http.MethodDelete, "/api/v1/admin/partners/" + dummyID, nil},
 }
 
 var platformGatedRoutes = []routeCase{

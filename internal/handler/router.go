@@ -14,6 +14,8 @@ type Router struct {
 	airportTransfer *AirportTransferHandler
 	contactMessage  *ContactMessageHandler
 	customer        *CustomerHandler
+	review          *ReviewHandler
+	partner         *PartnerHandler
 	tenant          *TenantHandler
 	tenantUser      *TenantUserHandler
 	platformUser    *PlatformUserHandler
@@ -33,6 +35,8 @@ func NewRouter(
 	airportTransfer *AirportTransferHandler,
 	contactMessage *ContactMessageHandler,
 	customer *CustomerHandler,
+	review *ReviewHandler,
+	partner *PartnerHandler,
 	tenant *TenantHandler,
 	tenantUser *TenantUserHandler,
 	platformUser *PlatformUserHandler,
@@ -51,6 +55,8 @@ func NewRouter(
 		airportTransfer: airportTransfer,
 		contactMessage:  contactMessage,
 		customer:        customer,
+		review:          review,
+		partner:         partner,
 		tenant:          tenant,
 		tenantUser:      tenantUser,
 		platformUser:    platformUser,
@@ -169,6 +175,18 @@ func (r *Router) Register(engine *gin.Engine) {
 			cars.GET("/:slug", r.car.GetBySlug)
 		}
 
+		reviews := tenantScoped.Group("/reviews")
+		{
+			reviews.GET("", r.review.List)
+			reviews.GET("/:id", r.review.GetByID)
+		}
+
+		partners := tenantScoped.Group("/partners")
+		{
+			partners.GET("", r.partner.List)
+			partners.GET("/:slug", r.partner.GetBySlug)
+		}
+
 		// Admin reads — X-API-Key required, no admin bearer token needed.
 		tenantScoped.GET("/admin/users", r.tenantUser.List)
 		tenantScoped.GET("/admin/blogs", r.blog.ListAdmin)
@@ -227,6 +245,16 @@ func (r *Router) Register(engine *gin.Engine) {
 			adminCustomers := admin.Group("/customers")
 			adminCustomers.GET("", r.customer.List)
 			adminCustomers.GET("/:id", r.customer.GetByID)
+
+			adminReview := admin.Group("/reviews")
+			adminReview.POST("", r.review.Create)
+			adminReview.PUT("/:id", r.review.Update)
+			adminReview.DELETE("/:id", r.review.Delete)
+
+			adminPartner := admin.Group("/partners")
+			adminPartner.POST("", r.partner.Create)
+			adminPartner.PUT("/:id", r.partner.Update)
+			adminPartner.DELETE("/:id", r.partner.Delete)
 
 			admin.POST("/uploads", r.upload.Upload)
 		}

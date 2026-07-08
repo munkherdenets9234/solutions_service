@@ -62,6 +62,8 @@ func main() {
 	rentalRepo := repository.NewRentalRepo(db)
 	airportTransferRepo := repository.NewAirportTransferRepo(db)
 	contactMessageRepo := repository.NewContactMessageRepo(db)
+	reviewRepo := repository.NewReviewRepo(db)
+	partnerRepo := repository.NewPartnerRepo(db)
 	tenantRepo := repository.NewTenantRepo(db)
 	tenantUserRepo := repository.NewTenantUserRepo(db)
 	platformUserRepo := repository.NewPlatformUserRepo(db)
@@ -75,6 +77,8 @@ func main() {
 	airportTransferSvc := service.NewAirportTransferService(airportTransferRepo, customerRepo)
 	contactMessageSvc := service.NewContactMessageService(contactMessageRepo)
 	customerSvc := service.NewCustomerService(customerRepo, bookingRepo, rentalRepo, airportTransferRepo)
+	reviewSvc := service.NewReviewService(reviewRepo)
+	partnerSvc := service.NewPartnerService(partnerRepo)
 	tenantSvc := service.NewTenantService(tenantRepo)
 	tenantUserSvc := service.NewTenantUserService(tenantUserRepo, tokenMaker, cfg.TokenExpiry)
 	platformUserSvc := service.NewPlatformUserService(platformUserRepo, tokenMaker, cfg.TokenExpiry)
@@ -96,6 +100,8 @@ func main() {
 	airportTransferHandler := handler.NewAirportTransferHandler(airportTransferSvc)
 	contactMessageHandler := handler.NewContactMessageHandler(contactMessageSvc)
 	customerHandler := handler.NewCustomerHandler(customerSvc)
+	reviewHandler := handler.NewReviewHandler(reviewSvc)
+	partnerHandler := handler.NewPartnerHandler(partnerSvc)
 	tenantHandler := handler.NewTenantHandler(tenantSvc, tenantUserSvc)
 	tenantUserHandler := handler.NewTenantUserHandler(tenantUserSvc)
 	platformUserHandler := handler.NewPlatformUserHandler(platformUserSvc)
@@ -114,6 +120,8 @@ func main() {
 		airportTransferHandler,
 		contactMessageHandler,
 		customerHandler,
+		reviewHandler,
+		partnerHandler,
 		tenantHandler,
 		tenantUserHandler,
 		platformUserHandler,

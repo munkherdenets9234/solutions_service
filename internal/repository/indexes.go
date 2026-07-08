@@ -22,6 +22,7 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 		{"destinations", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "slug", Value: 1}}, Options: options.Index().SetUnique(true)}},
 		{"blogs", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "slug", Value: 1}}, Options: options.Index().SetUnique(true)}},
 		{"cars", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "slug", Value: 1}}, Options: options.Index().SetUnique(true)}},
+		{"partners", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "slug", Value: 1}}, Options: options.Index().SetUnique(true)}},
 		{"customers", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "email", Value: 1}}, Options: options.Index().SetUnique(true)}},
 		{"tenant_users", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "email", Value: 1}}, Options: options.Index().SetUnique(true)}},
 		{"platform_users", mongo.IndexModel{Keys: bson.D{{Key: "email", Value: 1}}, Options: options.Index().SetUnique(true)}},
@@ -30,6 +31,7 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 		{"rentals", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}}},
 		{"airport_transfers", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}}},
 		{"contact_messages", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}}},
+		{"reviews", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}}},
 	}
 
 	for _, s := range specs {

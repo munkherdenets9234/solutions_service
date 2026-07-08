@@ -17,6 +17,8 @@
     { "name": "Blogs" },
     { "name": "Bookings" },
     { "name": "Cars" },
+    { "name": "Reviews" },
+    { "name": "Partners" },
     { "name": "Rentals" },
     { "name": "Airport Transfers" },
     { "name": "Contact Messages" },
@@ -565,6 +567,130 @@
         "responses": {
           "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
           "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+
+    "/api/v1/reviews": {
+      "get": {
+        "tags": ["Reviews"], "summary": "List reviews", "description": "Public read — X-API-Key only. Optional tour/partner query params filter by related_tour/related_partner.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "tour", "in": "query", "schema": { "type": "string" }, "example": "gobi-desert-5-days" },
+          { "name": "partner", "in": "query", "schema": { "type": "string" }, "example": "Nomad Camp LLC" },
+          { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }
+        ],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/reviews/{id}": {
+      "get": {
+        "tags": ["Reviews"], "summary": "Get review by id", "description": "Public read — X-API-Key only.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/admin/reviews": {
+      "post": {
+        "tags": ["Reviews"], "summary": "Create review", "description": "star (1-5 integer) and review are required. The related_* fields are free-form references — a name or an external id.",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": {
+          "related_customer": "Anna K.", "star": 5, "review": "The Gobi tour exceeded every expectation.", "related_tour": "gobi-desert-5-days", "related_partner": "Nomad Camp LLC"
+        } } } },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/v1/admin/reviews/{id}": {
+      "put": {
+        "tags": ["Reviews"], "summary": "Update review", "description": "Partial update. If star is present it must be an integer between 1 and 5.",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "star": 4, "review": "Updated review text." } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "tags": ["Reviews"], "summary": "Delete review", "description": "Hard delete.",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+
+    "/api/v1/partners": {
+      "get": {
+        "tags": ["Partners"], "summary": "List partners", "description": "Public read — X-API-Key only. Active partners; optional tag query param filters by tag.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "tag", "in": "query", "schema": { "type": "string" }, "example": "accommodation" },
+          { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }
+        ],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/partners/{slug}": {
+      "get": {
+        "tags": ["Partners"], "summary": "Get partner by slug", "description": "Public read — X-API-Key only.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "name": "slug", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/admin/partners": {
+      "post": {
+        "tags": ["Partners"], "summary": "Create partner", "description": "name and slug are required. products is a list of the partner's offerings; related_review optionally links a featured review by id.",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": {
+          "name": "Nomad Camp LLC", "slug": "nomad-camp-llc", "tag": "accommodation", "title": "Authentic ger camps in the Gobi",
+          "description": "Family-run ger camps across the southern Gobi.", "image": "https://cdn.example.com/partners/nomad-camp.jpg", "web_url": "https://nomadcamp.example.com",
+          "products": [{ "name": "Standard ger stay", "image": "https://cdn.example.com/products/ger.jpg", "description": "Twin-bed traditional ger with shared facilities." }],
+          "related_review": "665f1b2e8f1b2c0012a3b555"
+        } } } },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/v1/admin/partners/{id}": {
+      "put": {
+        "tags": ["Partners"], "summary": "Update partner", "description": "Partial update.",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "title": "Award-winning ger camps in the Gobi", "tag": "featured-partner" } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "tags": ["Partners"], "summary": "Delete partner", "description": "Soft delete — sets is_active to false, removing it from public reads.",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
         }
       }
     },

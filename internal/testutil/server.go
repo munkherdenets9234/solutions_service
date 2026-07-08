@@ -60,6 +60,8 @@ func NewApp(t testing.TB, db *mongo.Database) *App {
 	rentalRepo := repository.NewRentalRepo(db)
 	airportTransferRepo := repository.NewAirportTransferRepo(db)
 	contactMessageRepo := repository.NewContactMessageRepo(db)
+	reviewRepo := repository.NewReviewRepo(db)
+	partnerRepo := repository.NewPartnerRepo(db)
 	tenantRepo := repository.NewTenantRepo(db)
 	tenantUserRepo := repository.NewTenantUserRepo(db)
 	platformUserRepo := repository.NewPlatformUserRepo(db)
@@ -73,6 +75,8 @@ func NewApp(t testing.TB, db *mongo.Database) *App {
 	airportTransferSvc := service.NewAirportTransferService(airportTransferRepo, customerRepo)
 	contactMessageSvc := service.NewContactMessageService(contactMessageRepo)
 	customerSvc := service.NewCustomerService(customerRepo, bookingRepo, rentalRepo, airportTransferRepo)
+	reviewSvc := service.NewReviewService(reviewRepo)
+	partnerSvc := service.NewPartnerService(partnerRepo)
 	tenantSvc := service.NewTenantService(tenantRepo)
 	tenantUserSvc := service.NewTenantUserService(tenantUserRepo, maker, 24)
 	platformUserSvc := service.NewPlatformUserService(platformUserRepo, maker, 24)
@@ -95,6 +99,8 @@ func NewApp(t testing.TB, db *mongo.Database) *App {
 		handler.NewAirportTransferHandler(airportTransferSvc),
 		handler.NewContactMessageHandler(contactMessageSvc),
 		handler.NewCustomerHandler(customerSvc),
+		handler.NewReviewHandler(reviewSvc),
+		handler.NewPartnerHandler(partnerSvc),
 		handler.NewTenantHandler(tenantSvc, tenantUserSvc),
 		handler.NewTenantUserHandler(tenantUserSvc),
 		handler.NewPlatformUserHandler(platformUserSvc),
