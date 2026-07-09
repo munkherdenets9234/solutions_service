@@ -351,7 +351,20 @@
           "region": "gobi", "location": { "lat": 43.5, "lng": 103.8 }, "duration_days": 7,
           "group_size": { "min": 2, "max": 12 },
           "prices": [ { "min_people": 2, "max_people": 4, "price_usd": 1250 }, { "min_people": 5, "max_people": 12, "price_usd": 990 } ],
-          "best_seasons": ["spring", "summer", "autumn"], "featured": true, "categories": ["adventure", "scenic"], "tags": ["desert", "camel-trekking"]
+          "best_seasons": ["spring", "summer", "autumn"],
+          "departures": [ { "start_date": "2026-08-01T00:00:00Z", "end_date": "2026-08-07T00:00:00Z", "available": true } ],
+          "highlights": ["Camel trek through the Khongoryn Els dunes", "Overnight in a nomadic ger camp", "Explore Yolyn Am ice canyon"],
+          "activities": ["Camel riding", "Hiking", "Wildlife spotting"],
+          "inclusions": ["All accommodation", "Private driver-guide", "All meals"],
+          "exclusions": ["International flights", "Travel insurance", "Personal expenses"],
+          "itinerary": [
+            { "day": 1, "title": "Arrival & Yolyn Am", "description": "Drive to Yolyn Am ice canyon in the Gurvan Saikhan mountains.", "activities": ["Hiking", "Wildlife spotting"], "overnight": "Ger Camp", "meals": ["lunch", "dinner"] },
+            { "day": 2, "title": "Khongoryn Els Dunes", "description": "Camel trek among Mongolia's largest sand dunes.", "activities": ["Camel riding"], "overnight": "Ger Camp", "meals": ["breakfast", "lunch", "dinner"] }
+          ],
+          "accommodation": "4-star hotel + ger camps", "meal_plan": "all meals included", "difficulty": "moderate",
+          "featured": true, "categories": ["adventure", "scenic"], "tags": ["desert", "camel-trekking"],
+          "cover_image": { "url": "https://res.cloudinary.com/demo/image/upload/v1699999999/destinations/gobi-cover.jpg", "caption": "Khongoryn Els dunes at sunset" },
+          "images": [ { "url": "https://res.cloudinary.com/demo/image/upload/v1699999999/destinations/gobi-1.jpg", "caption": "Camel trekking" } ]
         } } } },
         "responses": {
           "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
