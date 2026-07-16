@@ -11,7 +11,7 @@ import (
 
 const DefaultLocale = "en"
 
-var SupportedLocales = []string{"en", "mn"}
+var SupportedLocales = []string{"en", "mn", "ko"}
 
 func IsSupported(locale string) bool {
 	for _, l := range SupportedLocales {
