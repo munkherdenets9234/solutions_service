@@ -41,6 +41,33 @@ func (s *PartnerService) List(ctx context.Context, tenantID primitive.ObjectID, 
 	return s.repo.FindAll(ctx, tenantID, filter, f.Page, f.Limit)
 }
 
+// ListAdmin returns every partner for a tenant regardless of active status,
+// for the admin CMS.
+func (s *PartnerService) ListAdmin(ctx context.Context, tenantID primitive.ObjectID, page, limit int) ([]*models.Partner, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+	return s.repo.FindAll(ctx, tenantID, bson.M{}, page, limit)
+}
+
+func (s *PartnerService) GetByID(ctx context.Context, tenantID primitive.ObjectID, idStr string) (*models.Partner, error) {
+	id, err := primitive.ObjectIDFromHex(idStr)
+	if err != nil {
+		return nil, apierr.BadRequest("invalid id")
+	}
+	p, err := s.repo.FindByID(ctx, tenantID, id)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, apierr.NotFound("partner not found")
+		}
+		return nil, apierr.Internal()
+	}
+	return p, nil
+}
+
 func (s *PartnerService) GetBySlug(ctx context.Context, tenantID primitive.ObjectID, slug string) (*models.Partner, error) {
 	p, err := s.repo.FindBySlug(ctx, tenantID, slug)
 	if err != nil {

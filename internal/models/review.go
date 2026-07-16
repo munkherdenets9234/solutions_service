@@ -15,9 +15,10 @@ type Review struct {
 	TenantID        primitive.ObjectID `bson:"tenant_id" json:"tenant_id"`
 	RelatedCustomer string             `bson:"related_customer" json:"related_customer"`
 	Star            int                `bson:"star" json:"star"` // 1-5
-	Review          string             `bson:"review" json:"review"`
-	RelatedTour     string             `bson:"related_tour" json:"related_tour"`
-	RelatedPartner  string             `bson:"related_partner" json:"related_partner"`
-	CreatedAt       time.Time          `bson:"created_at" json:"created_at"`
-	UpdatedAt       time.Time          `bson:"updated_at" json:"updated_at"`
+	// Review is a locale map (e.g. {"en": "...", "mn": "..."}) — see internal/i18n.
+	Review         map[string]string `bson:"review" json:"review"`
+	RelatedTour    string            `bson:"related_tour" json:"related_tour"`
+	RelatedPartner string            `bson:"related_partner" json:"related_partner"`
+	CreatedAt      time.Time         `bson:"created_at" json:"created_at"`
+	UpdatedAt      time.Time         `bson:"updated_at" json:"updated_at"`
 }

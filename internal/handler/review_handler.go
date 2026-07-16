@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/eandstravel/digitalservice/internal/dto"
+	"github.com/eandstravel/digitalservice/internal/i18n"
 	"github.com/eandstravel/digitalservice/internal/models"
 	"github.com/eandstravel/digitalservice/internal/service"
 	"github.com/eandstravel/digitalservice/pkg/response"
@@ -33,9 +35,32 @@ func (h *ReviewHandler) List(c *gin.Context) {
 		handleErr(c, err)
 		return
 	}
+	locale := i18n.ResolveFromRequest(c)
+	response.List(c, dto.ToReviewResponses(data, locale), response.Meta{Total: total, Page: page, Limit: limit})
+}
+
+// ListAdmin is List without locale resolution — full locale maps, for the
+// admin CMS to edit every language at once.
+func (h *ReviewHandler) ListAdmin(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+
+	data, total, err := h.svc.List(c.Request.Context(), tenantID(c), service.ListReviewsFilter{
+		Tour:    c.Query("tour"),
+		Partner: c.Query("partner"),
+		Page:    page,
+		Limit:   limit,
+	})
+	if err != nil {
+		handleErr(c, err)
+		return
+	}
 	response.List(c, data, response.Meta{Total: total, Page: page, Limit: limit})
 }
 
+// GetByID returns a single review with its full locale map intact — used by
+// the admin edit form, not the public storefront (which only ever lists
+// reviews, never fetches one by id).
 func (h *ReviewHandler) GetByID(c *gin.Context) {
 	rev, err := h.svc.GetByID(c.Request.Context(), tenantID(c), c.Param("id"))
 	if err != nil {

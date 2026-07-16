@@ -62,7 +62,8 @@
     },
     "parameters": {
       "Page": { "name": "page", "in": "query", "schema": { "type": "integer", "default": 1 } },
-      "Limit": { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20, "maximum": 100 } }
+      "Limit": { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20, "maximum": 100 } },
+      "Lang": { "name": "lang", "in": "query", "description": "Locale for translatable fields. Falls back to the Accept-Language header, then to \"en\" if omitted or unsupported.", "schema": { "type": "string", "enum": ["en", "mn"] } }
     }
   },
   "paths": {
@@ -315,13 +316,14 @@
 
     "/api/v1/destinations": {
       "get": {
-        "tags": ["Destinations"], "summary": "List destinations", "description": "All query params are optional and combine as AND filters. Only active destinations are returned.",
+        "tags": ["Destinations"], "summary": "List destinations", "description": "All query params are optional and combine as AND filters. Only active destinations are returned. Translatable fields (overview, highlights, activities, inclusions, exclusions, accommodation, meal_plan, difficulty, itinerary day text) are resolved to a single locale per `lang` — see `#/components/parameters/Lang`.",
         "security": [{ "ApiKeyAuth": [] }],
         "parameters": [
           { "name": "category", "in": "query", "schema": { "type": "string" }, "example": "cultural" },
           { "name": "region", "in": "query", "schema": { "type": "string" }, "example": "gobi" },
           { "name": "season", "in": "query", "schema": { "type": "string" }, "example": "summer" },
           { "name": "featured", "in": "query", "schema": { "type": "boolean" } },
+          { "$ref": "#/components/parameters/Lang" },
           { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }
         ],
         "responses": {
@@ -332,9 +334,12 @@
     },
     "/api/v1/destinations/{slug}": {
       "get": {
-        "tags": ["Destinations"], "summary": "Get destination by slug",
+        "tags": ["Destinations"], "summary": "Get destination by slug", "description": "Translatable fields are resolved to a single locale per `lang` — see `#/components/parameters/Lang`.",
         "security": [{ "ApiKeyAuth": [] }],
-        "parameters": [{ "name": "slug", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [
+          { "name": "slug", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "$ref": "#/components/parameters/Lang" }
+        ],
         "responses": {
           "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
           "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }
@@ -342,26 +347,35 @@
       }
     },
     "/api/v1/admin/destinations": {
+      "get": {
+        "tags": ["Destinations"], "summary": "List all destinations (admin)", "description": "Active and inactive, with translatable fields returned as full locale maps (e.g. `{\"en\": \"...\", \"mn\": \"...\"}`) rather than resolved to one language, so the CMS can edit every language at once.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      },
       "post": {
-        "tags": ["Destinations"], "summary": "Create destination", "description": "Full model — unset fields default to zero value.",
+        "tags": ["Destinations"], "summary": "Create destination", "description": "Full model — unset fields default to zero value. Translatable fields (overview, highlights, activities, inclusions, exclusions, accommodation, meal_plan, difficulty, and itinerary day title/description/overnight/activities/meals) are locale maps keyed by language code, e.g. `{\"en\": \"...\", \"mn\": \"...\"}`. A locale may be omitted; reads fall back to `en`.",
         "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
         "requestBody": { "required": true, "content": { "application/json": { "example": {
           "name": "Gobi Desert Classic", "slug": "gobi-desert-classic",
-          "overview": "A 7-day journey through the dunes, canyons and nomadic camps of the Gobi.",
+          "overview": { "en": "A 7-day journey through the dunes, canyons and nomadic camps of the Gobi.", "mn": "Говийн элсэн манхан, хавцал, нүүдэлчдийн буудлаар дамжих 7 хоногийн аялал." },
           "region": "gobi", "location": { "lat": 43.5, "lng": 103.8 }, "duration_days": 7,
           "group_size": { "min": 2, "max": 12 },
           "prices": [ { "min_people": 2, "max_people": 4, "price_usd": 1250 }, { "min_people": 5, "max_people": 12, "price_usd": 990 } ],
           "best_seasons": ["spring", "summer", "autumn"],
           "departures": [ { "start_date": "2026-08-01T00:00:00Z", "end_date": "2026-08-07T00:00:00Z", "available": true } ],
-          "highlights": ["Camel trek through the Khongoryn Els dunes", "Overnight in a nomadic ger camp", "Explore Yolyn Am ice canyon"],
-          "activities": ["Camel riding", "Hiking", "Wildlife spotting"],
-          "inclusions": ["All accommodation", "Private driver-guide", "All meals"],
-          "exclusions": ["International flights", "Travel insurance", "Personal expenses"],
+          "highlights": { "en": ["Camel trek through the Khongoryn Els dunes", "Overnight in a nomadic ger camp", "Explore Yolyn Am ice canyon"] },
+          "activities": { "en": ["Camel riding", "Hiking", "Wildlife spotting"] },
+          "inclusions": { "en": ["All accommodation", "Private driver-guide", "All meals"] },
+          "exclusions": { "en": ["International flights", "Travel insurance", "Personal expenses"] },
           "itinerary": [
-            { "day": 1, "title": "Arrival & Yolyn Am", "description": "Drive to Yolyn Am ice canyon in the Gurvan Saikhan mountains.", "activities": ["Hiking", "Wildlife spotting"], "overnight": "Ger Camp", "meals": ["lunch", "dinner"] },
-            { "day": 2, "title": "Khongoryn Els Dunes", "description": "Camel trek among Mongolia's largest sand dunes.", "activities": ["Camel riding"], "overnight": "Ger Camp", "meals": ["breakfast", "lunch", "dinner"] }
+            { "day": 1, "title": { "en": "Arrival & Yolyn Am" }, "description": { "en": "Drive to Yolyn Am ice canyon in the Gurvan Saikhan mountains." }, "activities": { "en": ["Hiking", "Wildlife spotting"] }, "overnight": { "en": "Ger Camp" }, "meals": { "en": ["lunch", "dinner"] } },
+            { "day": 2, "title": { "en": "Khongoryn Els Dunes" }, "description": { "en": "Camel trek among Mongolia's largest sand dunes." }, "activities": { "en": ["Camel riding"] }, "overnight": { "en": "Ger Camp" }, "meals": { "en": ["breakfast", "lunch", "dinner"] } }
           ],
-          "accommodation": "4-star hotel + ger camps", "meal_plan": "all meals included", "difficulty": "moderate",
+          "accommodation": { "en": "4-star hotel + ger camps" }, "meal_plan": { "en": "all meals included" }, "difficulty": { "en": "moderate" },
           "featured": true, "categories": ["adventure", "scenic"], "tags": ["desert", "camel-trekking"],
           "cover_image": { "url": "https://res.cloudinary.com/demo/image/upload/v1699999999/destinations/gobi-cover.jpg", "caption": "Khongoryn Els dunes at sunset" },
           "images": [ { "url": "https://res.cloudinary.com/demo/image/upload/v1699999999/destinations/gobi-1.jpg", "caption": "Camel trekking" } ]
@@ -373,11 +387,20 @@
       }
     },
     "/api/v1/admin/destinations/{id}": {
+      "get": {
+        "tags": ["Destinations"], "summary": "Get destination by id (admin)", "description": "Returns the destination regardless of active status, with translatable fields as full locale maps.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
       "put": {
-        "tags": ["Destinations"], "summary": "Update destination", "description": "Partial update ($set).",
+        "tags": ["Destinations"], "summary": "Update destination", "description": "Partial update ($set). Translatable fields can be updated per-locale via dot notation, e.g. `{\"overview.mn\": \"...\"}`.",
         "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "requestBody": { "required": true, "content": { "application/json": { "example": { "overview": "Updated overview text.", "is_active": true } } } },
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "overview.en": "Updated overview text.", "is_active": true } } } },
         "responses": {
           "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
           "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
@@ -396,9 +419,9 @@
 
     "/api/v1/blogs": {
       "get": {
-        "tags": ["Blogs"], "summary": "List published blogs", "description": "Published only.",
+        "tags": ["Blogs"], "summary": "List published blogs", "description": "Published only. Translatable fields (title, excerpt, content, quote) are resolved to a single locale per `lang` — see `#/components/parameters/Lang`.",
         "security": [{ "ApiKeyAuth": [] }],
-        "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
+        "parameters": [{ "$ref": "#/components/parameters/Lang" }, { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
         "responses": {
           "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } },
           "401": { "$ref": "#/components/responses/Unauthorized" }
@@ -407,9 +430,12 @@
     },
     "/api/v1/blogs/{slug}": {
       "get": {
-        "tags": ["Blogs"], "summary": "Get blog by slug",
+        "tags": ["Blogs"], "summary": "Get blog by slug", "description": "Translatable fields are resolved to a single locale per `lang` — see `#/components/parameters/Lang`.",
         "security": [{ "ApiKeyAuth": [] }],
-        "parameters": [{ "name": "slug", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [
+          { "name": "slug", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "$ref": "#/components/parameters/Lang" }
+        ],
         "responses": {
           "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
           "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }
@@ -427,11 +453,11 @@
         }
       },
       "post": {
-        "tags": ["Blogs"], "summary": "Create blog", "description": "Created as draft regardless of body.",
+        "tags": ["Blogs"], "summary": "Create blog", "description": "Created as draft regardless of body. Title, excerpt, content, and quote are locale maps keyed by language code, e.g. `{\"en\": \"...\", \"mn\": \"...\"}`. A locale may be omitted; reads fall back to `en`.",
         "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
         "requestBody": { "required": true, "content": { "application/json": { "example": {
-          "title": "When is the best time to visit Mongolia?", "slug": "best-time-to-visit-mongolia", "category": "guides", "read_time": 8,
-          "featured": true, "excerpt": "A month-by-month guide to timing your journey.",
+          "title": { "en": "When is the best time to visit Mongolia?", "mn": "Монголд аялахад тохиромжтой хугацаа хэзээ вэ?" }, "slug": "best-time-to-visit-mongolia", "category": "guides", "read_time": 8,
+          "featured": true, "excerpt": { "en": "A month-by-month guide to timing your journey." },
           "author": { "name": "Saraa B.", "role": "Lead guide" }, "date": "2026-06-12", "tags": ["seasons", "planning"]
         } } } },
         "responses": {
@@ -451,10 +477,10 @@
         }
       },
       "put": {
-        "tags": ["Blogs"], "summary": "Update blog", "description": "Partial update.",
+        "tags": ["Blogs"], "summary": "Update blog", "description": "Partial update. Translatable fields can be updated per-locale via dot notation, e.g. `{\"title.mn\": \"...\"}`.",
         "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "requestBody": { "required": true, "content": { "application/json": { "example": { "title": "Best Time to Visit Mongolia (Updated 2026)", "tags": ["travel-tips", "seasons", "2026"] } } } },
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "title.en": "Best Time to Visit Mongolia (Updated 2026)", "tags": ["travel-tips", "seasons", "2026"] } } } },
         "responses": {
           "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
           "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
@@ -586,7 +612,23 @@
 
     "/api/v1/reviews": {
       "get": {
-        "tags": ["Reviews"], "summary": "List reviews", "description": "Public read — X-API-Key only. Optional tour/partner query params filter by related_tour/related_partner.",
+        "tags": ["Reviews"], "summary": "List reviews", "description": "Public read — X-API-Key only. Optional tour/partner query params filter by related_tour/related_partner. `review` is resolved to a single locale per `lang` — see `#/components/parameters/Lang`.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "tour", "in": "query", "schema": { "type": "string" }, "example": "gobi-desert-5-days" },
+          { "name": "partner", "in": "query", "schema": { "type": "string" }, "example": "Nomad Camp LLC" },
+          { "$ref": "#/components/parameters/Lang" },
+          { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }
+        ],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/admin/reviews": {
+      "get": {
+        "tags": ["Reviews"], "summary": "List all reviews (admin)", "description": "With `review` returned as a full locale map (e.g. `{\"en\": \"...\", \"mn\": \"...\"}`) rather than resolved to one language, so the CMS can edit every language at once.",
         "security": [{ "ApiKeyAuth": [] }],
         "parameters": [
           { "name": "tour", "in": "query", "schema": { "type": "string" }, "example": "gobi-desert-5-days" },
@@ -597,25 +639,12 @@
           "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } },
           "401": { "$ref": "#/components/responses/Unauthorized" }
         }
-      }
-    },
-    "/api/v1/reviews/{id}": {
-      "get": {
-        "tags": ["Reviews"], "summary": "Get review by id", "description": "Public read — X-API-Key only.",
-        "security": [{ "ApiKeyAuth": [] }],
-        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "responses": {
-          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
-          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }
-        }
-      }
-    },
-    "/api/v1/admin/reviews": {
+      },
       "post": {
-        "tags": ["Reviews"], "summary": "Create review", "description": "star (1-5 integer) and review are required. The related_* fields are free-form references — a name or an external id.",
+        "tags": ["Reviews"], "summary": "Create review", "description": "star (1-5 integer) and review are required. review is a locale map keyed by language code, e.g. `{\"en\": \"...\", \"mn\": \"...\"}` — a locale may be omitted; reads fall back to `en`. The related_* fields are free-form references — a name or an external id.",
         "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
         "requestBody": { "required": true, "content": { "application/json": { "example": {
-          "related_customer": "Anna K.", "star": 5, "review": "The Gobi tour exceeded every expectation.", "related_tour": "gobi-desert-5-days", "related_partner": "Nomad Camp LLC"
+          "related_customer": "Anna K.", "star": 5, "review": { "en": "The Gobi tour exceeded every expectation." }, "related_tour": "gobi-desert-5-days", "related_partner": "Nomad Camp LLC"
         } } } },
         "responses": {
           "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
@@ -624,11 +653,20 @@
       }
     },
     "/api/v1/admin/reviews/{id}": {
+      "get": {
+        "tags": ["Reviews"], "summary": "Get review by id (admin)", "description": "Returns the review with its full locale map intact — not exposed publicly (the storefront only ever lists reviews).",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
       "put": {
-        "tags": ["Reviews"], "summary": "Update review", "description": "Partial update. If star is present it must be an integer between 1 and 5.",
+        "tags": ["Reviews"], "summary": "Update review", "description": "Partial update. If star is present it must be an integer between 1 and 5. review can be updated per-locale via dot notation, e.g. `{\"review.mn\": \"...\"}`.",
         "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "requestBody": { "required": true, "content": { "application/json": { "example": { "star": 4, "review": "Updated review text." } } } },
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "star": 4, "review.en": "Updated review text." } } } },
         "responses": {
           "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
           "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
@@ -647,10 +685,11 @@
 
     "/api/v1/partners": {
       "get": {
-        "tags": ["Partners"], "summary": "List partners", "description": "Public read — X-API-Key only. Active partners; optional tag query param filters by tag.",
+        "tags": ["Partners"], "summary": "List partners", "description": "Public read — X-API-Key only. Active partners; optional tag query param filters by tag. Title and description are resolved to a single locale per `lang` — see `#/components/parameters/Lang`.",
         "security": [{ "ApiKeyAuth": [] }],
         "parameters": [
           { "name": "tag", "in": "query", "schema": { "type": "string" }, "example": "accommodation" },
+          { "$ref": "#/components/parameters/Lang" },
           { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }
         ],
         "responses": {
@@ -661,9 +700,12 @@
     },
     "/api/v1/partners/{slug}": {
       "get": {
-        "tags": ["Partners"], "summary": "Get partner by slug", "description": "Public read — X-API-Key only.",
+        "tags": ["Partners"], "summary": "Get partner by slug", "description": "Public read — X-API-Key only. Title and description are resolved to a single locale per `lang` — see `#/components/parameters/Lang`.",
         "security": [{ "ApiKeyAuth": [] }],
-        "parameters": [{ "name": "slug", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "parameters": [
+          { "name": "slug", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "$ref": "#/components/parameters/Lang" }
+        ],
         "responses": {
           "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
           "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }
@@ -671,12 +713,21 @@
       }
     },
     "/api/v1/admin/partners": {
+      "get": {
+        "tags": ["Partners"], "summary": "List all partners (admin)", "description": "Active and inactive, with title/description returned as full locale maps (e.g. `{\"en\": \"...\", \"mn\": \"...\"}`) rather than resolved to one language, so the CMS can edit every language at once.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      },
       "post": {
-        "tags": ["Partners"], "summary": "Create partner", "description": "name and slug are required. products is a list of the partner's offerings; related_review optionally links a featured review by id.",
+        "tags": ["Partners"], "summary": "Create partner", "description": "name and slug are required. name and tag are plain strings (not translated). title and description are locale maps keyed by language code, e.g. `{\"en\": \"...\", \"mn\": \"...\"}`. products is a list of the partner's offerings (not translated); related_review optionally links a featured review by id.",
         "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
         "requestBody": { "required": true, "content": { "application/json": { "example": {
-          "name": "Nomad Camp LLC", "slug": "nomad-camp-llc", "tag": "accommodation", "title": "Authentic ger camps in the Gobi",
-          "description": "Family-run ger camps across the southern Gobi.", "image": "https://cdn.example.com/partners/nomad-camp.jpg", "web_url": "https://nomadcamp.example.com",
+          "name": "Nomad Camp LLC", "slug": "nomad-camp-llc", "tag": "accommodation", "title": { "en": "Authentic ger camps in the Gobi", "mn": "Говь дахь жинхэнэ гэр буудал" },
+          "description": { "en": "Family-run ger camps across the southern Gobi." }, "image": "https://cdn.example.com/partners/nomad-camp.jpg", "web_url": "https://nomadcamp.example.com",
           "products": [{ "name": "Standard ger stay", "image": "https://cdn.example.com/products/ger.jpg", "description": "Twin-bed traditional ger with shared facilities." }],
           "related_review": "665f1b2e8f1b2c0012a3b555"
         } } } },
@@ -687,11 +738,20 @@
       }
     },
     "/api/v1/admin/partners/{id}": {
+      "get": {
+        "tags": ["Partners"], "summary": "Get partner by id (admin)", "description": "Returns the partner regardless of active status, with title/description as full locale maps.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
       "put": {
-        "tags": ["Partners"], "summary": "Update partner", "description": "Partial update.",
+        "tags": ["Partners"], "summary": "Update partner", "description": "Partial update. Translatable fields can be updated per-locale via dot notation, e.g. `{\"title.mn\": \"...\"}`.",
         "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "requestBody": { "required": true, "content": { "application/json": { "example": { "title": "Award-winning ger camps in the Gobi", "tag": "featured-partner" } } } },
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "title.en": "Award-winning ger camps in the Gobi", "tag": "featured-partner" } } } },
         "responses": {
           "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
           "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }

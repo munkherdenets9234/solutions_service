@@ -178,7 +178,6 @@ func (r *Router) Register(engine *gin.Engine) {
 		reviews := tenantScoped.Group("/reviews")
 		{
 			reviews.GET("", r.review.List)
-			reviews.GET("/:id", r.review.GetByID)
 		}
 
 		partners := tenantScoped.Group("/partners")
@@ -191,6 +190,12 @@ func (r *Router) Register(engine *gin.Engine) {
 		tenantScoped.GET("/admin/users", r.tenantUser.List)
 		tenantScoped.GET("/admin/blogs", r.blog.ListAdmin)
 		tenantScoped.GET("/admin/blogs/:id", r.blog.GetByID)
+		tenantScoped.GET("/admin/destinations", r.destination.ListAdmin)
+		tenantScoped.GET("/admin/destinations/:id", r.destination.GetByID)
+		tenantScoped.GET("/admin/partners", r.partner.ListAdmin)
+		tenantScoped.GET("/admin/partners/:id", r.partner.GetByID)
+		tenantScoped.GET("/admin/reviews", r.review.ListAdmin)
+		tenantScoped.GET("/admin/reviews/:id", r.review.GetByID)
 		tenantScoped.GET("/admin/bookings", r.booking.List)
 		tenantScoped.GET("/admin/bookings/:id", r.booking.GetByID)
 		tenantScoped.GET("/admin/rentals", r.rental.List)

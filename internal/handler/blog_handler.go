@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/eandstravel/digitalservice/internal/dto"
+	"github.com/eandstravel/digitalservice/internal/i18n"
 	"github.com/eandstravel/digitalservice/internal/models"
 	"github.com/eandstravel/digitalservice/internal/service"
 	"github.com/eandstravel/digitalservice/pkg/response"
@@ -28,7 +30,8 @@ func (h *BlogHandler) List(c *gin.Context) {
 		handleErr(c, err)
 		return
 	}
-	response.List(c, data, response.Meta{Total: total, Page: page, Limit: limit})
+	locale := i18n.ResolveFromRequest(c)
+	response.List(c, dto.ToBlogResponses(data, locale), response.Meta{Total: total, Page: page, Limit: limit})
 }
 
 func (h *BlogHandler) ListAdmin(c *gin.Context) {
@@ -59,7 +62,8 @@ func (h *BlogHandler) GetBySlug(c *gin.Context) {
 		handleErr(c, err)
 		return
 	}
-	response.OK(c, b)
+	locale := i18n.ResolveFromRequest(c)
+	response.OK(c, dto.ToBlogResponse(b, locale))
 }
 
 func (h *BlogHandler) Create(c *gin.Context) {

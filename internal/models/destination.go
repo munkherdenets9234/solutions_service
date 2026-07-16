@@ -17,13 +17,15 @@ type PriceByGroup struct {
 	PriceUSD  float64 `bson:"price_usd" json:"price_usd"`
 }
 
+// ItineraryDay's Title, Description, Overnight, Activities, and Meals are
+// locale maps — see internal/i18n.
 type ItineraryDay struct {
-	Day         int      `bson:"day" json:"day"`
-	Title       string   `bson:"title" json:"title"`
-	Description string   `bson:"description" json:"description"`
-	Activities  []string `bson:"activities" json:"activities"`
-	Overnight   string   `bson:"overnight" json:"overnight"` // e.g. "Ger Camp", "Hotel"
-	Meals       []string `bson:"meals" json:"meals"`         // e.g. ["breakfast","lunch","dinner"]
+	Day         int                 `bson:"day" json:"day"`
+	Title       map[string]string   `bson:"title" json:"title"`
+	Description map[string]string   `bson:"description" json:"description"`
+	Activities  map[string][]string `bson:"activities" json:"activities"`
+	Overnight   map[string]string   `bson:"overnight" json:"overnight"` // e.g. "Ger Camp", "Hotel"
+	Meals       map[string][]string `bson:"meals" json:"meals"`         // e.g. ["breakfast","lunch","dinner"]
 }
 
 type Departure struct {
@@ -37,8 +39,9 @@ type Destination struct {
 	TenantID primitive.ObjectID `bson:"tenant_id" json:"tenant_id"`
 	Name     string             `bson:"name" json:"name"`
 	Slug     string             `bson:"slug" json:"slug"`
-	Overview string             `bson:"overview" json:"overview"`
-	Region   string             `bson:"region" json:"region"`
+	// Overview is a locale map — see internal/i18n.
+	Overview map[string]string `bson:"overview" json:"overview"`
+	Region   string            `bson:"region" json:"region"`
 	Location struct {
 		Lat float64 `bson:"lat" json:"lat"`
 		Lng float64 `bson:"lng" json:"lng"`
@@ -54,17 +57,18 @@ type Destination struct {
 	BestSeasons []string       `bson:"best_seasons" json:"best_seasons"` // "spring","summer","autumn","winter"
 	Departures  []Departure    `bson:"departures" json:"departures"`
 
-	// Content
-	Highlights []string       `bson:"highlights" json:"highlights"`
-	Activities []string       `bson:"activities" json:"activities"`
-	Inclusions []string       `bson:"inclusions" json:"inclusions"`
-	Exclusions []string       `bson:"exclusions" json:"exclusions"`
-	Itinerary  []ItineraryDay `bson:"itinerary" json:"itinerary"`
+	// Content — Highlights, Activities, Inclusions, Exclusions are locale maps
+	// (see internal/i18n); Itinerary's own translatable fields are on ItineraryDay.
+	Highlights map[string][]string `bson:"highlights" json:"highlights"`
+	Activities map[string][]string `bson:"activities" json:"activities"`
+	Inclusions map[string][]string `bson:"inclusions" json:"inclusions"`
+	Exclusions map[string][]string `bson:"exclusions" json:"exclusions"`
+	Itinerary  []ItineraryDay      `bson:"itinerary" json:"itinerary"`
 
-	// Logistics
-	Accommodation string `bson:"accommodation" json:"accommodation"` // e.g. "4-star hotel + ger camps"
-	MealPlan      string `bson:"meal_plan" json:"meal_plan"`         // e.g. "all meals included"
-	Difficulty    string `bson:"difficulty" json:"difficulty"`       // easy | moderate | challenging
+	// Logistics — Accommodation, MealPlan, Difficulty are locale maps.
+	Accommodation map[string]string `bson:"accommodation" json:"accommodation"` // e.g. "4-star hotel + ger camps"
+	MealPlan      map[string]string `bson:"meal_plan" json:"meal_plan"`         // e.g. "all meals included"
+	Difficulty    map[string]string `bson:"difficulty" json:"difficulty"`       // easy | moderate | challenging
 
 	// Categories & tags
 	Categories []string `bson:"categories" json:"categories"` // adventure, cultural, wildlife, scenic

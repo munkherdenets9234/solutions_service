@@ -28,15 +28,17 @@ type BlogSection struct {
 }
 
 type Blog struct {
-	ID            primitive.ObjectID  `bson:"_id,omitempty" json:"id"`
-	TenantID      primitive.ObjectID  `bson:"tenant_id" json:"tenant_id"`
-	Title         string              `bson:"title" json:"title"`
+	ID       primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	TenantID primitive.ObjectID `bson:"tenant_id" json:"tenant_id"`
+	// Title, Excerpt, Content, Quote are locale maps (e.g. {"en": "...", "mn": "..."})
+	// — see internal/i18n for resolving them to a single locale.
+	Title         map[string]string   `bson:"title" json:"title"`
 	Slug          string              `bson:"slug" json:"slug"`
 	Category      string              `bson:"category" json:"category"`
-	Excerpt       string              `bson:"excerpt" json:"excerpt"`
-	Content       string              `bson:"content" json:"content"` // HTML or Markdown
-	Body          []BlogSection       `bson:"body" json:"body"`       // structured alternative to Content
-	Quote         string              `bson:"quote" json:"quote"`
+	Excerpt       map[string]string   `bson:"excerpt" json:"excerpt"`
+	Content       map[string]string   `bson:"content" json:"content"` // HTML or Markdown, per locale
+	Body          []BlogSection       `bson:"body" json:"body"`       // structured alternative to Content — not localized
+	Quote         map[string]string   `bson:"quote" json:"quote"`
 	Author        BlogAuthor          `bson:"author" json:"author"`
 	ReadTime      int                 `bson:"read_time" json:"read_time"` // estimated minutes to read
 	Date          string              `bson:"date" json:"date"`           // editorial display date, e.g. "2026-06-12" - independent of published_at

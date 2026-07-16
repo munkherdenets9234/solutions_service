@@ -53,6 +53,33 @@ func (s *DestinationService) List(ctx context.Context, tenantID primitive.Object
 	return s.repo.FindAll(ctx, tenantID, filter, f.Page, f.Limit)
 }
 
+// ListAdmin returns every destination for a tenant regardless of active
+// status, for the admin CMS.
+func (s *DestinationService) ListAdmin(ctx context.Context, tenantID primitive.ObjectID, page, limit int) ([]*models.Destination, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+	return s.repo.FindAll(ctx, tenantID, bson.M{}, page, limit)
+}
+
+func (s *DestinationService) GetByID(ctx context.Context, tenantID primitive.ObjectID, idStr string) (*models.Destination, error) {
+	id, err := primitive.ObjectIDFromHex(idStr)
+	if err != nil {
+		return nil, apierr.BadRequest("invalid id")
+	}
+	d, err := s.repo.FindByID(ctx, tenantID, id)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, apierr.NotFound("destination not found")
+		}
+		return nil, apierr.Internal()
+	}
+	return d, nil
+}
+
 func (s *DestinationService) GetBySlug(ctx context.Context, tenantID primitive.ObjectID, slug string) (*models.Destination, error) {
 	d, err := s.repo.FindBySlug(ctx, tenantID, slug)
 	if err != nil {

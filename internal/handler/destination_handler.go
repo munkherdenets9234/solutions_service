@@ -4,6 +4,8 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/eandstravel/digitalservice/internal/dto"
+	"github.com/eandstravel/digitalservice/internal/i18n"
 	"github.com/eandstravel/digitalservice/internal/models"
 	"github.com/eandstravel/digitalservice/internal/service"
 	"github.com/eandstravel/digitalservice/pkg/apierr"
@@ -46,11 +48,38 @@ func (h *DestinationHandler) List(c *gin.Context) {
 		handleErr(c, err)
 		return
 	}
-	response.List(c, data, response.Meta{Total: total, Page: page, Limit: limit})
+	locale := i18n.ResolveFromRequest(c)
+	response.List(c, dto.ToDestinationResponses(data, locale), response.Meta{Total: total, Page: page, Limit: limit})
 }
 
 func (h *DestinationHandler) GetBySlug(c *gin.Context) {
 	d, err := h.svc.GetBySlug(c.Request.Context(), tenantID(c), c.Param("slug"))
+	if err != nil {
+		handleErr(c, err)
+		return
+	}
+	locale := i18n.ResolveFromRequest(c)
+	response.OK(c, dto.ToDestinationResponse(d, locale))
+}
+
+// ListAdmin returns every destination for a tenant (active and inactive)
+// with full locale maps intact, for the admin CMS to edit every language at once.
+func (h *DestinationHandler) ListAdmin(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+
+	data, total, err := h.svc.ListAdmin(c.Request.Context(), tenantID(c), page, limit)
+	if err != nil {
+		handleErr(c, err)
+		return
+	}
+	response.List(c, data, response.Meta{Total: total, Page: page, Limit: limit})
+}
+
+// GetByID returns a single destination with full locale maps intact, for
+// admin edit forms.
+func (h *DestinationHandler) GetByID(c *gin.Context) {
+	d, err := h.svc.GetByID(c.Request.Context(), tenantID(c), c.Param("id"))
 	if err != nil {
 		handleErr(c, err)
 		return

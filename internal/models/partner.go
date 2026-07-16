@@ -15,16 +15,17 @@ type PartnerProduct struct {
 }
 
 type Partner struct {
-	ID          primitive.ObjectID `bson:"_id,omitempty" json:"id"`
-	TenantID    primitive.ObjectID `bson:"tenant_id" json:"tenant_id"`
-	Name        string             `bson:"name" json:"name"`
-	Slug        string             `bson:"slug" json:"slug"`
-	Tag         string             `bson:"tag" json:"tag"`
-	Title       string             `bson:"title" json:"title"`
-	Description string             `bson:"description" json:"description"`
-	Image       string             `bson:"image" json:"image"` // hero image URL
-	WebURL      string             `bson:"web_url" json:"web_url"`
-	Products    []PartnerProduct   `bson:"products" json:"products"`
+	ID       primitive.ObjectID `bson:"_id,omitempty" json:"id"`
+	TenantID primitive.ObjectID `bson:"tenant_id" json:"tenant_id"`
+	Name     string             `bson:"name" json:"name"`
+	Slug     string             `bson:"slug" json:"slug"`
+	Tag      string             `bson:"tag" json:"tag"`
+	// Title, Description are locale maps — see internal/i18n.
+	Title       map[string]string `bson:"title" json:"title"`
+	Description map[string]string `bson:"description" json:"description"`
+	Image       string            `bson:"image" json:"image"` // hero image URL
+	WebURL      string            `bson:"web_url" json:"web_url"`
+	Products    []PartnerProduct  `bson:"products" json:"products"`
 	// RelatedReview optionally links a featured testimonial; the public read
 	// path can resolve it via GET /reviews/:id.
 	RelatedReview *primitive.ObjectID `bson:"related_review,omitempty" json:"related_review,omitempty"`

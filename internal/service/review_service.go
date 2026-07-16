@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 
+	"github.com/eandstravel/digitalservice/internal/i18n"
 	"github.com/eandstravel/digitalservice/internal/models"
 	"github.com/eandstravel/digitalservice/internal/repository"
 	"github.com/eandstravel/digitalservice/pkg/apierr"
@@ -64,7 +65,7 @@ func (s *ReviewService) Create(ctx context.Context, tenantID primitive.ObjectID,
 	if rev.Star < 1 || rev.Star > 5 {
 		return apierr.BadRequest("star must be between 1 and 5")
 	}
-	if rev.Review == "" {
+	if i18n.Resolve(rev.Review, i18n.DefaultLocale) == "" {
 		return apierr.BadRequest("review is required")
 	}
 	return s.repo.Create(ctx, tenantID, rev)
