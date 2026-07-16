@@ -10,3 +10,4 @@
 /bin
 vendor/
 server_std*.log
+/backups
