@@ -9,9 +9,11 @@ import (
 	"github.com/eandstravel/digitalservice/internal/models"
 	"github.com/eandstravel/digitalservice/internal/service"
 	"github.com/eandstravel/digitalservice/pkg/apierr"
+	"github.com/eandstravel/digitalservice/pkg/logger"
 	"github.com/eandstravel/digitalservice/pkg/response"
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson"
+	"go.uber.org/zap"
 )
 
 type DestinationHandler struct {
@@ -121,10 +123,16 @@ func (h *DestinationHandler) Delete(c *gin.Context) {
 	response.OK(c, gin.H{"deleted": true})
 }
 
+// handleErr is shared by every handler in this package. Known, expected
+// failures (*apierr.APIError) are reported to the client as-is. Anything
+// else is unexpected — it's logged with the full error and request path so
+// it shows up in the server logs instead of only ever surfacing to the
+// client as an opaque "internal server error".
 func handleErr(c *gin.Context, err error) {
 	if e, ok := err.(*apierr.APIError); ok {
 		response.Error(c, e.StatusCode, e.Message)
 		return
 	}
+	logger.Log.Error("unhandled error", zap.Error(err), zap.String("path", c.FullPath()))
 	response.Error(c, http.StatusInternalServerError, "internal server error")
 }
