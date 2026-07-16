@@ -176,21 +176,25 @@ func migrateDestinationItinerary(ctx context.Context, db *mongo.Database, apply 
 	fmt.Printf("destinations.itinerary: scanned=%d changed=%d\n", scanned, changed)
 }
 
-// wrapString returns ({"en": v}, true) if v is a plain (non-empty) string
-// that still needs wrapping. Anything else (already a map, missing, empty,
-// wrong type) is left untouched — that's what makes this idempotent.
+// wrapString returns ({"en": v}, true) if v is a plain string (including an
+// empty one) that still needs wrapping. Anything else (already a map,
+// missing, wrong type) is left untouched — that's what makes this
+// idempotent. An empty string still must be wrapped: leaving it as a bare ""
+// is not a no-op, since the model now expects map[string]string for this
+// field and a raw string in that slot fails to decode.
 func wrapString(v interface{}) (bson.M, bool) {
 	s, ok := v.(string)
-	if !ok || s == "" {
+	if !ok {
 		return nil, false
 	}
 	return bson.M{i18n.DefaultLocale: s}, true
 }
 
-// wrapList is wrapString for array fields (Highlights, Activities, ...).
+// wrapList is wrapString for array fields (Highlights, Activities, ...). An
+// empty array is wrapped the same way, for the same reason.
 func wrapList(v interface{}) (bson.M, bool) {
 	a, ok := v.(bson.A)
-	if !ok || len(a) == 0 {
+	if !ok {
 		return nil, false
 	}
 	return bson.M{i18n.DefaultLocale: a}, true
