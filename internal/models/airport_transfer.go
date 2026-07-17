@@ -33,4 +33,11 @@ type AirportTransfer struct {
 	ConfirmationID string             `bson:"confirmation_id" json:"confirmation_id"`
 	CreatedAt      time.Time          `bson:"created_at" json:"created_at"`
 	UpdatedAt      time.Time          `bson:"updated_at" json:"updated_at"`
+	// UserID is the tenant_users._id of the admin who last changed this
+	// transfer's status. Nil until an admin acts on it — transfers are
+	// created by public, unauthenticated customer submissions.
+	UserID *primitive.ObjectID `bson:"user_id,omitempty" json:"user_id,omitempty"`
+	// LastEditedBy is UserID resolved to a display name, populated by the
+	// service layer on read — not persisted.
+	LastEditedBy *string `bson:"-" json:"lastEditedBy,omitempty"`
 }

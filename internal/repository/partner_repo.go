@@ -81,7 +81,11 @@ func (r *PartnerRepo) Update(ctx context.Context, tenantID primitive.ObjectID, i
 	return err
 }
 
-func (r *PartnerRepo) Delete(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID) error {
-	_, err := r.col.UpdateOne(ctx, bson.M{"_id": id, "tenant_id": tenantID}, bson.M{"$set": bson.M{"is_active": false, "updated_at": time.Now()}})
+func (r *PartnerRepo) Delete(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID, userID *primitive.ObjectID) error {
+	set := bson.M{"is_active": false, "updated_at": time.Now()}
+	if userID != nil {
+		set["user_id"] = *userID
+	}
+	_, err := r.col.UpdateOne(ctx, bson.M{"_id": id, "tenant_id": tenantID}, bson.M{"$set": set})
 	return err
 }

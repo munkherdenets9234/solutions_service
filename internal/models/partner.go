@@ -36,4 +36,7 @@ type Partner struct {
 	// record via the admin panel. Nil if never touched by an authenticated
 	// tenant user.
 	UserID *primitive.ObjectID `bson:"user_id,omitempty" json:"user_id,omitempty"`
+	// LastEditedBy is UserID resolved to a display name, populated by the
+	// service layer on read — not persisted.
+	LastEditedBy *string `bson:"-" json:"lastEditedBy,omitempty"`
 }

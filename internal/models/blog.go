@@ -14,7 +14,11 @@ const (
 )
 
 // BlogAuthor is the byline shown on an article - a name plus a short role
-// like "Lead guide", not a reference to a TenantUser account.
+// like "Lead guide". Name as stored here is just editorial text, not a
+// TenantUser reference — but BlogService.resolveAuthors overwrites it on
+// every read with the display name of whoever last created/updated the
+// blog (Blog.UserID), when that's known, so GET responses always show the
+// current editor rather than a possibly stale typed-in byline.
 type BlogAuthor struct {
 	Name string `bson:"name" json:"name"`
 	Role string `bson:"role" json:"role"`
@@ -57,4 +61,8 @@ type Blog struct {
 	// record via the admin panel. Nil if never touched by an authenticated
 	// tenant user.
 	UserID *primitive.ObjectID `bson:"user_id,omitempty" json:"user_id,omitempty"`
+	// LastEditedBy is UserID resolved to a display name, populated by the
+	// service layer on read (see BlogService.resolveLastEditedBy) — not
+	// persisted.
+	LastEditedBy *string `bson:"-" json:"lastEditedBy,omitempty"`
 }

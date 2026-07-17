@@ -21,4 +21,7 @@ type Customer struct {
 	// booking/rental forms with no authenticated tenant user, so this is nil
 	// unless a future admin-facing write path sets it.
 	UserID *primitive.ObjectID `bson:"user_id,omitempty" json:"user_id,omitempty"`
+	// LastEditedBy is UserID resolved to a display name, populated by the
+	// service layer on read — not persisted.
+	LastEditedBy *string `bson:"-" json:"lastEditedBy,omitempty"`
 }

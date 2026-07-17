@@ -19,11 +19,12 @@ func NewReviewRepo(db *mongo.Database) *ReviewRepo {
 	return &ReviewRepo{col: db.Collection("reviews")}
 }
 
-func (r *ReviewRepo) Create(ctx context.Context, tenantID primitive.ObjectID, rev *models.Review) error {
+func (r *ReviewRepo) Create(ctx context.Context, tenantID primitive.ObjectID, rev *models.Review, userID *primitive.ObjectID) error {
 	rev.ID = primitive.NewObjectID()
 	rev.TenantID = tenantID
 	rev.CreatedAt = time.Now()
 	rev.UpdatedAt = time.Now()
+	rev.UserID = userID
 	_, err := r.col.InsertOne(ctx, rev)
 	return err
 }
@@ -61,9 +62,12 @@ func (r *ReviewRepo) FindByID(ctx context.Context, tenantID primitive.ObjectID, 
 	return &rev, nil
 }
 
-func (r *ReviewRepo) Update(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID, update bson.M) error {
+func (r *ReviewRepo) Update(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID, update bson.M, userID *primitive.ObjectID) error {
 	stripProtectedFields(update)
 	update["updated_at"] = time.Now()
+	if userID != nil {
+		update["user_id"] = *userID
+	}
 	_, err := r.col.UpdateOne(ctx, bson.M{"_id": id, "tenant_id": tenantID}, bson.M{"$set": update})
 	return err
 }

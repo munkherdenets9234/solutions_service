@@ -37,4 +37,12 @@ type Subscription struct {
 	CanceledAt         *time.Time         `bson:"canceled_at,omitempty" json:"canceled_at,omitempty"`
 	CreatedAt          time.Time          `bson:"created_at" json:"created_at"`
 	UpdatedAt          time.Time          `bson:"updated_at" json:"updated_at"`
+	// UserID is the platform_users._id of the superadmin who last
+	// created/updated this subscription — unlike every other entity's UserID,
+	// this references platform_users, not tenant_users, since subscriptions
+	// are only ever managed via /platform routes. Nil if never touched.
+	UserID *primitive.ObjectID `bson:"user_id,omitempty" json:"user_id,omitempty"`
+	// LastEditedBy is UserID resolved to a display name, populated by the
+	// service layer on read — not persisted.
+	LastEditedBy *string `bson:"-" json:"lastEditedBy,omitempty"`
 }

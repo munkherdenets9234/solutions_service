@@ -33,7 +33,7 @@ func (h *SubscriptionHandler) Create(c *gin.Context) {
 		return
 	}
 
-	sub, err := h.svc.Create(c.Request.Context(), tenantID, body.Plan)
+	sub, err := h.svc.Create(c.Request.Context(), tenantID, body.Plan, currentUserID(c))
 	if err != nil {
 		handleErr(c, err)
 		return
@@ -71,7 +71,7 @@ func (h *SubscriptionHandler) UpdatePlan(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.UpdatePlan(c.Request.Context(), tenantID, body.Plan); err != nil {
+	if err := h.svc.UpdatePlan(c.Request.Context(), tenantID, body.Plan, currentUserID(c)); err != nil {
 		handleErr(c, err)
 		return
 	}
@@ -85,7 +85,7 @@ func (h *SubscriptionHandler) Cancel(c *gin.Context) {
 		return
 	}
 
-	if err := h.svc.Cancel(c.Request.Context(), tenantID); err != nil {
+	if err := h.svc.Cancel(c.Request.Context(), tenantID, currentUserID(c)); err != nil {
 		handleErr(c, err)
 		return
 	}

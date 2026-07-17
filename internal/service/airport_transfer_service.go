@@ -19,12 +19,13 @@ var validTransferTiers = map[models.TransferTier]bool{
 }
 
 type AirportTransferService struct {
-	repo         *repository.AirportTransferRepo
-	customerRepo *repository.CustomerRepo
+	repo           *repository.AirportTransferRepo
+	customerRepo   *repository.CustomerRepo
+	tenantUserRepo *repository.TenantUserRepo
 }
 
-func NewAirportTransferService(repo *repository.AirportTransferRepo, customerRepo *repository.CustomerRepo) *AirportTransferService {
-	return &AirportTransferService{repo: repo, customerRepo: customerRepo}
+func NewAirportTransferService(repo *repository.AirportTransferRepo, customerRepo *repository.CustomerRepo, tenantUserRepo *repository.TenantUserRepo) *AirportTransferService {
+	return &AirportTransferService{repo: repo, customerRepo: customerRepo, tenantUserRepo: tenantUserRepo}
 }
 
 type CreateTransferInput struct {
@@ -70,6 +71,9 @@ func (s *AirportTransferService) List(ctx context.Context, tenantID primitive.Ob
 	if err != nil {
 		return nil, 0, err
 	}
+	if err := s.resolveLastEditedBy(ctx, tenantID, transfers); err != nil {
+		return nil, 0, apierr.Internal()
+	}
 
 	ids := make([]primitive.ObjectID, 0, len(transfers))
 	seen := make(map[primitive.ObjectID]bool, len(transfers))
@@ -112,13 +116,51 @@ func (s *AirportTransferService) GetByID(ctx context.Context, tenantID primitive
 	if err != nil && err != mongo.ErrNoDocuments {
 		return nil, apierr.Internal()
 	}
+	if err := s.resolveLastEditedBy(ctx, tenantID, []*models.AirportTransfer{t}); err != nil {
+		return nil, apierr.Internal()
+	}
 	return &AirportTransferDetail{AirportTransfer: *t, Customer: customer}, nil
 }
 
-func (s *AirportTransferService) UpdateStatus(ctx context.Context, tenantID primitive.ObjectID, idStr string, status models.TransferStatus) error {
+// resolveLastEditedBy populates each transfer's LastEditedBy with the display
+// name of the tenant user referenced by its UserID, for admin GET responses.
+func (s *AirportTransferService) resolveLastEditedBy(ctx context.Context, tenantID primitive.ObjectID, transfers []*models.AirportTransfer) error {
+	ids := make([]primitive.ObjectID, 0, len(transfers))
+	seen := make(map[primitive.ObjectID]bool, len(transfers))
+	for _, t := range transfers {
+		if t.UserID != nil && !seen[*t.UserID] {
+			seen[*t.UserID] = true
+			ids = append(ids, *t.UserID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	users, err := s.tenantUserRepo.FindByIDs(ctx, tenantID, ids)
+	if err != nil {
+		return err
+	}
+	names := make(map[primitive.ObjectID]string, len(users))
+	for _, u := range users {
+		names[u.ID] = u.Name
+	}
+
+	for _, t := range transfers {
+		if t.UserID == nil {
+			continue
+		}
+		if name, ok := names[*t.UserID]; ok {
+			t.LastEditedBy = &name
+		}
+	}
+	return nil
+}
+
+func (s *AirportTransferService) UpdateStatus(ctx context.Context, tenantID primitive.ObjectID, idStr string, status models.TransferStatus, userID *primitive.ObjectID) error {
 	id, err := primitive.ObjectIDFromHex(idStr)
 	if err != nil {
 		return apierr.BadRequest("invalid id")
 	}
-	return s.repo.UpdateStatus(ctx, tenantID, id, status)
+	return s.repo.UpdateStatus(ctx, tenantID, id, status, userID)
 }

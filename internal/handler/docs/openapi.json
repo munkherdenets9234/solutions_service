@@ -214,7 +214,7 @@
         }
       },
       "get": {
-        "tags": ["Platform · Subscriptions"], "summary": "Get tenant subscription", "description": "Public — no auth required.",
+        "tags": ["Platform · Subscriptions"], "summary": "Get tenant subscription", "description": "Public — no auth required. Includes `lastEditedBy` — the display name of the platform superadmin who last created/updated it (not a tenant user, since subscriptions are only ever managed via /platform routes) — when known.",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": {
           "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
@@ -348,7 +348,7 @@
     },
     "/api/v1/admin/destinations": {
       "get": {
-        "tags": ["Destinations"], "summary": "List all destinations (admin)", "description": "Active and inactive, with translatable fields returned as full locale maps (e.g. `{\"en\": \"...\", \"mn\": \"...\"}`) rather than resolved to one language, so the CMS can edit every language at once.",
+        "tags": ["Destinations"], "summary": "List all destinations (admin)", "description": "Active and inactive, with translatable fields returned as full locale maps (e.g. `{\"en\": \"...\", \"mn\": \"...\"}`) rather than resolved to one language, so the CMS can edit every language at once. Each item includes `lastEditedBy` — the display name of the tenant user who last created/updated it — when known.",
         "security": [{ "ApiKeyAuth": [] }],
         "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
         "responses": {
@@ -388,7 +388,7 @@
     },
     "/api/v1/admin/destinations/{id}": {
       "get": {
-        "tags": ["Destinations"], "summary": "Get destination by id (admin)", "description": "Returns the destination regardless of active status, with translatable fields as full locale maps.",
+        "tags": ["Destinations"], "summary": "Get destination by id (admin)", "description": "Returns the destination regardless of active status, with translatable fields as full locale maps. Includes `lastEditedBy` — the display name of the tenant user who last created/updated it — when known.",
         "security": [{ "ApiKeyAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": {
@@ -444,7 +444,7 @@
     },
     "/api/v1/admin/blogs": {
       "get": {
-        "tags": ["Blogs"], "summary": "List all blogs (admin)", "description": "Drafts and published, for management views. Optional status query param filters to \"draft\" or \"published\".",
+        "tags": ["Blogs"], "summary": "List all blogs (admin)", "description": "Drafts and published, for management views. Optional status query param filters to \"draft\" or \"published\". Each item includes `lastEditedBy` — the display name of the tenant user who last created/updated it — when known.",
         "security": [{ "ApiKeyAuth": [] }],
         "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }, { "name": "status", "in": "query", "required": false, "schema": { "type": "string", "enum": ["draft", "published"] } }],
         "responses": {
@@ -468,7 +468,7 @@
     },
     "/api/v1/admin/blogs/{id}": {
       "get": {
-        "tags": ["Blogs"], "summary": "Get blog by id (admin)", "description": "Returns the blog regardless of status, including full content.",
+        "tags": ["Blogs"], "summary": "Get blog by id (admin)", "description": "Returns the blog regardless of status, including full content. Includes `lastEditedBy` — the display name of the tenant user who last created/updated it — when known.",
         "security": [{ "ApiKeyAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": {
@@ -516,7 +516,7 @@
     },
     "/api/v1/admin/bookings": {
       "get": {
-        "tags": ["Bookings"], "summary": "List bookings", "description": "X-API-Key only — no admin token needed to read.",
+        "tags": ["Bookings"], "summary": "List bookings", "description": "X-API-Key only — no admin token needed to read. Each item includes `lastEditedBy` — the display name of the tenant user who last changed its status — when known.",
         "security": [{ "ApiKeyAuth": [] }],
         "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
         "responses": {
@@ -527,7 +527,7 @@
     },
     "/api/v1/admin/bookings/{id}": {
       "get": {
-        "tags": ["Bookings"], "summary": "Get booking by ID", "description": "X-API-Key only — no admin token needed to read.",
+        "tags": ["Bookings"], "summary": "Get booking by ID", "description": "X-API-Key only — no admin token needed to read. Includes `lastEditedBy` — the display name of the tenant user who last changed its status — when known.",
         "security": [{ "ApiKeyAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": {
@@ -628,7 +628,7 @@
     },
     "/api/v1/admin/reviews": {
       "get": {
-        "tags": ["Reviews"], "summary": "List all reviews (admin)", "description": "With `review` returned as a full locale map (e.g. `{\"en\": \"...\", \"mn\": \"...\"}`) rather than resolved to one language, so the CMS can edit every language at once.",
+        "tags": ["Reviews"], "summary": "List all reviews (admin)", "description": "With `review` returned as a full locale map (e.g. `{\"en\": \"...\", \"mn\": \"...\"}`) rather than resolved to one language, so the CMS can edit every language at once. Each item includes `lastEditedBy` — the display name of the tenant user who last created/updated it — when known.",
         "security": [{ "ApiKeyAuth": [] }],
         "parameters": [
           { "name": "tour", "in": "query", "schema": { "type": "string" }, "example": "gobi-desert-5-days" },
@@ -654,7 +654,7 @@
     },
     "/api/v1/admin/reviews/{id}": {
       "get": {
-        "tags": ["Reviews"], "summary": "Get review by id (admin)", "description": "Returns the review with its full locale map intact — not exposed publicly (the storefront only ever lists reviews).",
+        "tags": ["Reviews"], "summary": "Get review by id (admin)", "description": "Returns the review with its full locale map intact — not exposed publicly (the storefront only ever lists reviews). Includes `lastEditedBy` — the display name of the tenant user who last created/updated it — when known.",
         "security": [{ "ApiKeyAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": {
@@ -714,7 +714,7 @@
     },
     "/api/v1/admin/partners": {
       "get": {
-        "tags": ["Partners"], "summary": "List all partners (admin)", "description": "Active and inactive, with title/description returned as full locale maps (e.g. `{\"en\": \"...\", \"mn\": \"...\"}`) rather than resolved to one language, so the CMS can edit every language at once.",
+        "tags": ["Partners"], "summary": "List all partners (admin)", "description": "Active and inactive, with title/description returned as full locale maps (e.g. `{\"en\": \"...\", \"mn\": \"...\"}`) rather than resolved to one language, so the CMS can edit every language at once. Each item includes `lastEditedBy` — the display name of the tenant user who last created/updated it — when known.",
         "security": [{ "ApiKeyAuth": [] }],
         "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
         "responses": {
@@ -739,7 +739,7 @@
     },
     "/api/v1/admin/partners/{id}": {
       "get": {
-        "tags": ["Partners"], "summary": "Get partner by id (admin)", "description": "Returns the partner regardless of active status, with title/description as full locale maps.",
+        "tags": ["Partners"], "summary": "Get partner by id (admin)", "description": "Returns the partner regardless of active status, with title/description as full locale maps. Includes `lastEditedBy` — the display name of the tenant user who last created/updated it — when known.",
         "security": [{ "ApiKeyAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": {
@@ -785,7 +785,7 @@
     },
     "/api/v1/admin/rentals": {
       "get": {
-        "tags": ["Rentals"], "summary": "List rentals", "description": "X-API-Key only — no admin token needed to read.",
+        "tags": ["Rentals"], "summary": "List rentals", "description": "X-API-Key only — no admin token needed to read. Each item includes `lastEditedBy` — the display name of the tenant user who last changed its status — when known.",
         "security": [{ "ApiKeyAuth": [] }],
         "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
         "responses": {
@@ -796,7 +796,7 @@
     },
     "/api/v1/admin/rentals/{id}": {
       "get": {
-        "tags": ["Rentals"], "summary": "Get rental by ID", "description": "X-API-Key only — no admin token needed to read.",
+        "tags": ["Rentals"], "summary": "Get rental by ID", "description": "X-API-Key only — no admin token needed to read. Includes `lastEditedBy` — the display name of the tenant user who last changed its status — when known.",
         "security": [{ "ApiKeyAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": {
@@ -834,7 +834,7 @@
     },
     "/api/v1/admin/airport-transfers": {
       "get": {
-        "tags": ["Airport Transfers"], "summary": "List airport transfers", "description": "X-API-Key only — no admin token needed to read.",
+        "tags": ["Airport Transfers"], "summary": "List airport transfers", "description": "X-API-Key only — no admin token needed to read. Each item includes `lastEditedBy` — the display name of the tenant user who last changed its status — when known.",
         "security": [{ "ApiKeyAuth": [] }],
         "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
         "responses": {
@@ -845,7 +845,7 @@
     },
     "/api/v1/admin/airport-transfers/{id}": {
       "get": {
-        "tags": ["Airport Transfers"], "summary": "Get airport transfer by ID", "description": "X-API-Key only — no admin token needed to read.",
+        "tags": ["Airport Transfers"], "summary": "Get airport transfer by ID", "description": "X-API-Key only — no admin token needed to read. Includes `lastEditedBy` — the display name of the tenant user who last changed its status — when known.",
         "security": [{ "ApiKeyAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": {
@@ -883,7 +883,7 @@
     },
     "/api/v1/admin/contact-messages": {
       "get": {
-        "tags": ["Contact Messages"], "summary": "List contact messages", "description": "X-API-Key only — no admin token needed to read.",
+        "tags": ["Contact Messages"], "summary": "List contact messages", "description": "X-API-Key only — no admin token needed to read. Each item includes `lastEditedBy` — the display name of the tenant user who last changed its status — when known.",
         "security": [{ "ApiKeyAuth": [] }],
         "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
         "responses": {
@@ -906,22 +906,22 @@
     },
     "/api/v1/admin/customers": {
       "get": {
-        "tags": ["Customers"], "summary": "List customers", "description": "Requires an admin-role Bearer token (unlike other admin lists, which are X-API-Key only). Each customer includes counts of its related bookings/rentals/airport transfers, not the records themselves — see the detail endpoint for full related data.",
+        "tags": ["Customers"], "summary": "List customers", "description": "Requires an admin-role Bearer token (unlike other admin lists, which are X-API-Key only). Each customer includes counts of its related bookings/rentals/airport transfers, not the records themselves — see the detail endpoint for full related data. Also includes `lastEditedBy` — the display name of the tenant user who last created/updated it — when known.",
         "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
         "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
         "responses": {
-          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" }, "example": { "success": true, "data": [ { "id": "665f1b2e8f1b2c0012a3b222", "name": "Sarah Connor", "email": "sarah.connor@example.com", "phone": "+1-555-0142", "booking_count": 2, "rental_count": 0, "airport_transfer_count": 1 } ], "meta": { "total": 1, "page": 1, "limit": 20 } } } } },
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" }, "example": { "success": true, "data": [ { "id": "665f1b2e8f1b2c0012a3b222", "name": "Sarah Connor", "email": "sarah.connor@example.com", "phone": "+1-555-0142", "booking_count": 2, "rental_count": 0, "airport_transfer_count": 1, "lastEditedBy": "Bataar Ganbold" } ], "meta": { "total": 1, "page": 1, "limit": 20 } } } } },
           "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }
         }
       }
     },
     "/api/v1/admin/customers/{id}": {
       "get": {
-        "tags": ["Customers"], "summary": "Get customer by ID", "description": "Requires an admin-role Bearer token (unlike other admin detail reads, which are X-API-Key only). Returns the customer with its full related bookings, rentals, and airport transfers.",
+        "tags": ["Customers"], "summary": "Get customer by ID", "description": "Requires an admin-role Bearer token (unlike other admin detail reads, which are X-API-Key only). Returns the customer with its full related bookings, rentals, and airport transfers. Includes `lastEditedBy` — the display name of the tenant user who last created/updated it — when known.",
         "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": {
-          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" }, "example": { "success": true, "data": { "id": "665f1b2e8f1b2c0012a3b222", "name": "Sarah Connor", "email": "sarah.connor@example.com", "phone": "+1-555-0142", "bookings": [], "rentals": [], "airport_transfers": [] } } } } },
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" }, "example": { "success": true, "data": { "id": "665f1b2e8f1b2c0012a3b222", "name": "Sarah Connor", "email": "sarah.connor@example.com", "phone": "+1-555-0142", "bookings": [], "rentals": [], "airport_transfers": [], "lastEditedBy": "Bataar Ganbold" } } } } },
           "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
         }
       }

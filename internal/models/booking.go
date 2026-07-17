@@ -47,4 +47,7 @@ type Booking struct {
 	// booking's status. Nil until an admin acts on it — bookings are created
 	// by public, unauthenticated customer submissions.
 	UserID *primitive.ObjectID `bson:"user_id,omitempty" json:"user_id,omitempty"`
+	// LastEditedBy is UserID resolved to a display name, populated by the
+	// service layer on read — not persisted.
+	LastEditedBy *string `bson:"-" json:"lastEditedBy,omitempty"`
 }

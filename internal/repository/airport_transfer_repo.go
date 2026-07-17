@@ -94,10 +94,14 @@ func (r *AirportTransferRepo) FindByID(ctx context.Context, tenantID primitive.O
 	return &t, nil
 }
 
-func (r *AirportTransferRepo) UpdateStatus(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID, status models.TransferStatus) error {
-	_, err := r.col.UpdateOne(ctx, bson.M{"_id": id, "tenant_id": tenantID}, bson.M{"$set": bson.M{
+func (r *AirportTransferRepo) UpdateStatus(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID, status models.TransferStatus, userID *primitive.ObjectID) error {
+	set := bson.M{
 		"status":     status,
 		"updated_at": time.Now(),
-	}})
+	}
+	if userID != nil {
+		set["user_id"] = *userID
+	}
+	_, err := r.col.UpdateOne(ctx, bson.M{"_id": id, "tenant_id": tenantID}, bson.M{"$set": set})
 	return err
 }

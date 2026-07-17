@@ -100,7 +100,7 @@ func (h *PartnerHandler) Update(c *gin.Context) {
 }
 
 func (h *PartnerHandler) Delete(c *gin.Context) {
-	if err := h.svc.Delete(c.Request.Context(), tenantID(c), c.Param("id")); err != nil {
+	if err := h.svc.Delete(c.Request.Context(), tenantID(c), c.Param("id"), currentUserID(c)); err != nil {
 		handleErr(c, err)
 		return
 	}

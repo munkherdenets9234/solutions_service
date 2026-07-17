@@ -12,13 +12,14 @@ import (
 )
 
 type BookingService struct {
-	repo         *repository.BookingRepo
-	customerRepo *repository.CustomerRepo
-	destRepo     *repository.DestinationRepo
+	repo           *repository.BookingRepo
+	customerRepo   *repository.CustomerRepo
+	destRepo       *repository.DestinationRepo
+	tenantUserRepo *repository.TenantUserRepo
 }
 
-func NewBookingService(repo *repository.BookingRepo, customerRepo *repository.CustomerRepo, destRepo *repository.DestinationRepo) *BookingService {
-	return &BookingService{repo: repo, customerRepo: customerRepo, destRepo: destRepo}
+func NewBookingService(repo *repository.BookingRepo, customerRepo *repository.CustomerRepo, destRepo *repository.DestinationRepo, tenantUserRepo *repository.TenantUserRepo) *BookingService {
+	return &BookingService{repo: repo, customerRepo: customerRepo, destRepo: destRepo, tenantUserRepo: tenantUserRepo}
 }
 
 type CreateBookingInput struct {
@@ -72,6 +73,9 @@ func (s *BookingService) List(ctx context.Context, tenantID primitive.ObjectID, 
 	if err != nil {
 		return nil, 0, err
 	}
+	if err := s.resolveLastEditedBy(ctx, tenantID, bookings); err != nil {
+		return nil, 0, apierr.Internal()
+	}
 
 	details, err := s.attachCustomers(ctx, tenantID, bookings)
 	if err != nil {
@@ -97,7 +101,45 @@ func (s *BookingService) GetByID(ctx context.Context, tenantID primitive.ObjectI
 	if err != nil && err != mongo.ErrNoDocuments {
 		return nil, apierr.Internal()
 	}
+	if err := s.resolveLastEditedBy(ctx, tenantID, []*models.Booking{b}); err != nil {
+		return nil, apierr.Internal()
+	}
 	return &BookingDetail{Booking: *b, Customer: customer}, nil
+}
+
+// resolveLastEditedBy populates each booking's LastEditedBy with the display
+// name of the tenant user referenced by its UserID, for admin GET responses.
+func (s *BookingService) resolveLastEditedBy(ctx context.Context, tenantID primitive.ObjectID, bookings []*models.Booking) error {
+	ids := make([]primitive.ObjectID, 0, len(bookings))
+	seen := make(map[primitive.ObjectID]bool, len(bookings))
+	for _, b := range bookings {
+		if b.UserID != nil && !seen[*b.UserID] {
+			seen[*b.UserID] = true
+			ids = append(ids, *b.UserID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	users, err := s.tenantUserRepo.FindByIDs(ctx, tenantID, ids)
+	if err != nil {
+		return err
+	}
+	names := make(map[primitive.ObjectID]string, len(users))
+	for _, u := range users {
+		names[u.ID] = u.Name
+	}
+
+	for _, b := range bookings {
+		if b.UserID == nil {
+			continue
+		}
+		if name, ok := names[*b.UserID]; ok {
+			b.LastEditedBy = &name
+		}
+	}
+	return nil
 }
 
 func (s *BookingService) attachCustomers(ctx context.Context, tenantID primitive.ObjectID, bookings []*models.Booking) ([]*BookingDetail, error) {

@@ -17,14 +17,15 @@ import (
 const maxRelatedRecords = 500
 
 type CustomerService struct {
-	repo         *repository.CustomerRepo
-	bookingRepo  *repository.BookingRepo
-	rentalRepo   *repository.RentalRepo
-	transferRepo *repository.AirportTransferRepo
+	repo           *repository.CustomerRepo
+	bookingRepo    *repository.BookingRepo
+	rentalRepo     *repository.RentalRepo
+	transferRepo   *repository.AirportTransferRepo
+	tenantUserRepo *repository.TenantUserRepo
 }
 
-func NewCustomerService(repo *repository.CustomerRepo, bookingRepo *repository.BookingRepo, rentalRepo *repository.RentalRepo, transferRepo *repository.AirportTransferRepo) *CustomerService {
-	return &CustomerService{repo: repo, bookingRepo: bookingRepo, rentalRepo: rentalRepo, transferRepo: transferRepo}
+func NewCustomerService(repo *repository.CustomerRepo, bookingRepo *repository.BookingRepo, rentalRepo *repository.RentalRepo, transferRepo *repository.AirportTransferRepo, tenantUserRepo *repository.TenantUserRepo) *CustomerService {
+	return &CustomerService{repo: repo, bookingRepo: bookingRepo, rentalRepo: rentalRepo, transferRepo: transferRepo, tenantUserRepo: tenantUserRepo}
 }
 
 // CustomerSummary is a customer with counts of its related records, for the
@@ -75,6 +76,9 @@ func (s *CustomerService) List(ctx context.Context, tenantID primitive.ObjectID,
 	if err != nil {
 		return nil, 0, apierr.Internal()
 	}
+	if err := s.resolveLastEditedBy(ctx, tenantID, customers); err != nil {
+		return nil, 0, apierr.Internal()
+	}
 
 	summaries := make([]*CustomerSummary, len(customers))
 	for i, c := range customers {
@@ -114,6 +118,9 @@ func (s *CustomerService) GetByID(ctx context.Context, tenantID primitive.Object
 	if err != nil {
 		return nil, apierr.Internal()
 	}
+	if err := s.resolveLastEditedBy(ctx, tenantID, []*models.Customer{c}); err != nil {
+		return nil, apierr.Internal()
+	}
 
 	return &CustomerDetail{
 		Customer:         *c,
@@ -121,4 +128,39 @@ func (s *CustomerService) GetByID(ctx context.Context, tenantID primitive.Object
 		Rentals:          rentals,
 		AirportTransfers: transfers,
 	}, nil
+}
+
+// resolveLastEditedBy populates each customer's LastEditedBy with the display
+// name of the tenant user referenced by its UserID, for admin GET responses.
+func (s *CustomerService) resolveLastEditedBy(ctx context.Context, tenantID primitive.ObjectID, customers []*models.Customer) error {
+	ids := make([]primitive.ObjectID, 0, len(customers))
+	seen := make(map[primitive.ObjectID]bool, len(customers))
+	for _, c := range customers {
+		if c.UserID != nil && !seen[*c.UserID] {
+			seen[*c.UserID] = true
+			ids = append(ids, *c.UserID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	users, err := s.tenantUserRepo.FindByIDs(ctx, tenantID, ids)
+	if err != nil {
+		return err
+	}
+	names := make(map[primitive.ObjectID]string, len(users))
+	for _, u := range users {
+		names[u.ID] = u.Name
+	}
+
+	for _, c := range customers {
+		if c.UserID == nil {
+			continue
+		}
+		if name, ok := names[*c.UserID]; ok {
+			c.LastEditedBy = &name
+		}
+	}
+	return nil
 }

@@ -13,11 +13,12 @@ import (
 )
 
 type ReviewService struct {
-	repo *repository.ReviewRepo
+	repo           *repository.ReviewRepo
+	tenantUserRepo *repository.TenantUserRepo
 }
 
-func NewReviewService(repo *repository.ReviewRepo) *ReviewService {
-	return &ReviewService{repo: repo}
+func NewReviewService(repo *repository.ReviewRepo, tenantUserRepo *repository.TenantUserRepo) *ReviewService {
+	return &ReviewService{repo: repo, tenantUserRepo: tenantUserRepo}
 }
 
 type ListReviewsFilter struct {
@@ -43,7 +44,14 @@ func (s *ReviewService) List(ctx context.Context, tenantID primitive.ObjectID, f
 		f.Limit = 20
 	}
 
-	return s.repo.FindAll(ctx, tenantID, filter, f.Page, f.Limit)
+	reviews, total, err := s.repo.FindAll(ctx, tenantID, filter, f.Page, f.Limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := s.resolveLastEditedBy(ctx, tenantID, reviews); err != nil {
+		return nil, 0, apierr.Internal()
+	}
+	return reviews, total, nil
 }
 
 func (s *ReviewService) GetByID(ctx context.Context, tenantID primitive.ObjectID, idStr string) (*models.Review, error) {
@@ -58,20 +66,58 @@ func (s *ReviewService) GetByID(ctx context.Context, tenantID primitive.ObjectID
 		}
 		return nil, apierr.Internal()
 	}
+	if err := s.resolveLastEditedBy(ctx, tenantID, []*models.Review{rev}); err != nil {
+		return nil, apierr.Internal()
+	}
 	return rev, nil
 }
 
-func (s *ReviewService) Create(ctx context.Context, tenantID primitive.ObjectID, rev *models.Review) error {
+// resolveLastEditedBy populates each review's LastEditedBy with the display
+// name of the tenant user referenced by its UserID, for admin GET responses.
+func (s *ReviewService) resolveLastEditedBy(ctx context.Context, tenantID primitive.ObjectID, reviews []*models.Review) error {
+	ids := make([]primitive.ObjectID, 0, len(reviews))
+	seen := make(map[primitive.ObjectID]bool, len(reviews))
+	for _, rev := range reviews {
+		if rev.UserID != nil && !seen[*rev.UserID] {
+			seen[*rev.UserID] = true
+			ids = append(ids, *rev.UserID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	users, err := s.tenantUserRepo.FindByIDs(ctx, tenantID, ids)
+	if err != nil {
+		return err
+	}
+	names := make(map[primitive.ObjectID]string, len(users))
+	for _, u := range users {
+		names[u.ID] = u.Name
+	}
+
+	for _, rev := range reviews {
+		if rev.UserID == nil {
+			continue
+		}
+		if name, ok := names[*rev.UserID]; ok {
+			rev.LastEditedBy = &name
+		}
+	}
+	return nil
+}
+
+func (s *ReviewService) Create(ctx context.Context, tenantID primitive.ObjectID, rev *models.Review, userID *primitive.ObjectID) error {
 	if rev.Star < 1 || rev.Star > 5 {
 		return apierr.BadRequest("star must be between 1 and 5")
 	}
 	if i18n.Resolve(rev.Review, i18n.DefaultLocale) == "" {
 		return apierr.BadRequest("review is required")
 	}
-	return s.repo.Create(ctx, tenantID, rev)
+	return s.repo.Create(ctx, tenantID, rev, userID)
 }
 
-func (s *ReviewService) Update(ctx context.Context, tenantID primitive.ObjectID, idStr string, update bson.M) error {
+func (s *ReviewService) Update(ctx context.Context, tenantID primitive.ObjectID, idStr string, update bson.M, userID *primitive.ObjectID) error {
 	id, err := primitive.ObjectIDFromHex(idStr)
 	if err != nil {
 		return apierr.BadRequest("invalid id")
@@ -86,7 +132,7 @@ func (s *ReviewService) Update(ctx context.Context, tenantID primitive.ObjectID,
 	if _, err := s.repo.FindByID(ctx, tenantID, id); err != nil {
 		return apierr.NotFound("review not found")
 	}
-	return s.repo.Update(ctx, tenantID, id, update)
+	return s.repo.Update(ctx, tenantID, id, update, userID)
 }
 
 func (s *ReviewService) Delete(ctx context.Context, tenantID primitive.ObjectID, idStr string) error {

@@ -13,13 +13,14 @@ import (
 )
 
 type RentalService struct {
-	repo         *repository.RentalRepo
-	customerRepo *repository.CustomerRepo
-	carRepo      *repository.CarRepo
+	repo           *repository.RentalRepo
+	customerRepo   *repository.CustomerRepo
+	carRepo        *repository.CarRepo
+	tenantUserRepo *repository.TenantUserRepo
 }
 
-func NewRentalService(repo *repository.RentalRepo, customerRepo *repository.CustomerRepo, carRepo *repository.CarRepo) *RentalService {
-	return &RentalService{repo: repo, customerRepo: customerRepo, carRepo: carRepo}
+func NewRentalService(repo *repository.RentalRepo, customerRepo *repository.CustomerRepo, carRepo *repository.CarRepo, tenantUserRepo *repository.TenantUserRepo) *RentalService {
+	return &RentalService{repo: repo, customerRepo: customerRepo, carRepo: carRepo, tenantUserRepo: tenantUserRepo}
 }
 
 type CreateRentalInput struct {
@@ -74,6 +75,9 @@ func (s *RentalService) List(ctx context.Context, tenantID primitive.ObjectID, p
 	if err != nil {
 		return nil, 0, err
 	}
+	if err := s.resolveLastEditedBy(ctx, tenantID, rentals); err != nil {
+		return nil, 0, apierr.Internal()
+	}
 
 	ids := make([]primitive.ObjectID, 0, len(rentals))
 	seen := make(map[primitive.ObjectID]bool, len(rentals))
@@ -116,7 +120,45 @@ func (s *RentalService) GetByID(ctx context.Context, tenantID primitive.ObjectID
 	if err != nil && err != mongo.ErrNoDocuments {
 		return nil, apierr.Internal()
 	}
+	if err := s.resolveLastEditedBy(ctx, tenantID, []*models.Rental{rt}); err != nil {
+		return nil, apierr.Internal()
+	}
 	return &RentalDetail{Rental: *rt, Customer: customer}, nil
+}
+
+// resolveLastEditedBy populates each rental's LastEditedBy with the display
+// name of the tenant user referenced by its UserID, for admin GET responses.
+func (s *RentalService) resolveLastEditedBy(ctx context.Context, tenantID primitive.ObjectID, rentals []*models.Rental) error {
+	ids := make([]primitive.ObjectID, 0, len(rentals))
+	seen := make(map[primitive.ObjectID]bool, len(rentals))
+	for _, rt := range rentals {
+		if rt.UserID != nil && !seen[*rt.UserID] {
+			seen[*rt.UserID] = true
+			ids = append(ids, *rt.UserID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	users, err := s.tenantUserRepo.FindByIDs(ctx, tenantID, ids)
+	if err != nil {
+		return err
+	}
+	names := make(map[primitive.ObjectID]string, len(users))
+	for _, u := range users {
+		names[u.ID] = u.Name
+	}
+
+	for _, rt := range rentals {
+		if rt.UserID == nil {
+			continue
+		}
+		if name, ok := names[*rt.UserID]; ok {
+			rt.LastEditedBy = &name
+		}
+	}
+	return nil
 }
 
 func (s *RentalService) UpdateStatus(ctx context.Context, tenantID primitive.ObjectID, idStr string, status models.RentalStatus, userID *primitive.ObjectID) error {

@@ -12,11 +12,12 @@ import (
 )
 
 type PartnerService struct {
-	repo *repository.PartnerRepo
+	repo           *repository.PartnerRepo
+	tenantUserRepo *repository.TenantUserRepo
 }
 
-func NewPartnerService(repo *repository.PartnerRepo) *PartnerService {
-	return &PartnerService{repo: repo}
+func NewPartnerService(repo *repository.PartnerRepo, tenantUserRepo *repository.TenantUserRepo) *PartnerService {
+	return &PartnerService{repo: repo, tenantUserRepo: tenantUserRepo}
 }
 
 type ListPartnersFilter struct {
@@ -50,7 +51,14 @@ func (s *PartnerService) ListAdmin(ctx context.Context, tenantID primitive.Objec
 	if limit < 1 || limit > 100 {
 		limit = 20
 	}
-	return s.repo.FindAll(ctx, tenantID, bson.M{}, page, limit)
+	partners, total, err := s.repo.FindAll(ctx, tenantID, bson.M{}, page, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := s.resolveLastEditedBy(ctx, tenantID, partners); err != nil {
+		return nil, 0, apierr.Internal()
+	}
+	return partners, total, nil
 }
 
 func (s *PartnerService) GetByID(ctx context.Context, tenantID primitive.ObjectID, idStr string) (*models.Partner, error) {
@@ -65,7 +73,45 @@ func (s *PartnerService) GetByID(ctx context.Context, tenantID primitive.ObjectI
 		}
 		return nil, apierr.Internal()
 	}
+	if err := s.resolveLastEditedBy(ctx, tenantID, []*models.Partner{p}); err != nil {
+		return nil, apierr.Internal()
+	}
 	return p, nil
+}
+
+// resolveLastEditedBy populates each partner's LastEditedBy with the display
+// name of the tenant user referenced by its UserID, for admin GET responses.
+func (s *PartnerService) resolveLastEditedBy(ctx context.Context, tenantID primitive.ObjectID, partners []*models.Partner) error {
+	ids := make([]primitive.ObjectID, 0, len(partners))
+	seen := make(map[primitive.ObjectID]bool, len(partners))
+	for _, p := range partners {
+		if p.UserID != nil && !seen[*p.UserID] {
+			seen[*p.UserID] = true
+			ids = append(ids, *p.UserID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	users, err := s.tenantUserRepo.FindByIDs(ctx, tenantID, ids)
+	if err != nil {
+		return err
+	}
+	names := make(map[primitive.ObjectID]string, len(users))
+	for _, u := range users {
+		names[u.ID] = u.Name
+	}
+
+	for _, p := range partners {
+		if p.UserID == nil {
+			continue
+		}
+		if name, ok := names[*p.UserID]; ok {
+			p.LastEditedBy = &name
+		}
+	}
+	return nil
 }
 
 func (s *PartnerService) GetBySlug(ctx context.Context, tenantID primitive.ObjectID, slug string) (*models.Partner, error) {
@@ -101,10 +147,10 @@ func (s *PartnerService) Update(ctx context.Context, tenantID primitive.ObjectID
 	return s.repo.Update(ctx, tenantID, id, update, userID)
 }
 
-func (s *PartnerService) Delete(ctx context.Context, tenantID primitive.ObjectID, idStr string) error {
+func (s *PartnerService) Delete(ctx context.Context, tenantID primitive.ObjectID, idStr string, userID *primitive.ObjectID) error {
 	id, err := primitive.ObjectIDFromHex(idStr)
 	if err != nil {
 		return apierr.BadRequest("invalid id")
 	}
-	return s.repo.Delete(ctx, tenantID, id)
+	return s.repo.Delete(ctx, tenantID, id, userID)
 }

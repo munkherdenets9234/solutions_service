@@ -36,4 +36,7 @@ type Rental struct {
 	// rental's status. Nil until an admin acts on it — rentals are created by
 	// public, unauthenticated customer submissions.
 	UserID *primitive.ObjectID `bson:"user_id,omitempty" json:"user_id,omitempty"`
+	// LastEditedBy is UserID resolved to a display name, populated by the
+	// service layer on read — not persisted.
+	LastEditedBy *string `bson:"-" json:"lastEditedBy,omitempty"`
 }

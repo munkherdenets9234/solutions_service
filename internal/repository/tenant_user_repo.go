@@ -69,6 +69,25 @@ func (r *TenantUserRepo) FindByID(ctx context.Context, tenantID, id primitive.Ob
 	return &u, nil
 }
 
+// FindByIDs bulk-resolves tenant users for list views that need to display
+// several audit-trail names at once without an N+1 query per row.
+func (r *TenantUserRepo) FindByIDs(ctx context.Context, tenantID primitive.ObjectID, ids []primitive.ObjectID) ([]*models.TenantUser, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	cur, err := r.col.Find(ctx, bson.M{"tenant_id": tenantID, "_id": bson.M{"$in": ids}})
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+
+	var results []*models.TenantUser
+	if err := cur.All(ctx, &results); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
 func (r *TenantUserRepo) UpdatePassword(ctx context.Context, tenantID, id primitive.ObjectID, passwordHash string) error {
 	_, err := r.col.UpdateOne(ctx, bson.M{"_id": id, "tenant_id": tenantID}, bson.M{"$set": bson.M{
 		"password_hash": passwordHash,

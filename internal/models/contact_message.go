@@ -28,4 +28,7 @@ type ContactMessage struct {
 	// message's status. Nil until an admin acts on it — contact messages are
 	// created by public, unauthenticated visitors.
 	UserID *primitive.ObjectID `bson:"user_id,omitempty" json:"user_id,omitempty"`
+	// LastEditedBy is UserID resolved to a display name, populated by the
+	// service layer on read — not persisted.
+	LastEditedBy *string `bson:"-" json:"lastEditedBy,omitempty"`
 }
