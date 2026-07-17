@@ -72,7 +72,7 @@ func (h *BlogHandler) Create(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.svc.Create(c.Request.Context(), tenantID(c), &b); err != nil {
+	if err := h.svc.Create(c.Request.Context(), tenantID(c), &b, currentUserID(c)); err != nil {
 		handleErr(c, err)
 		return
 	}
@@ -85,7 +85,7 @@ func (h *BlogHandler) Update(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.svc.Update(c.Request.Context(), tenantID(c), c.Param("id"), update); err != nil {
+	if err := h.svc.Update(c.Request.Context(), tenantID(c), c.Param("id"), update, currentUserID(c)); err != nil {
 		handleErr(c, err)
 		return
 	}
@@ -93,7 +93,7 @@ func (h *BlogHandler) Update(c *gin.Context) {
 }
 
 func (h *BlogHandler) Publish(c *gin.Context) {
-	if err := h.svc.Publish(c.Request.Context(), tenantID(c), c.Param("id")); err != nil {
+	if err := h.svc.Publish(c.Request.Context(), tenantID(c), c.Param("id"), currentUserID(c)); err != nil {
 		handleErr(c, err)
 		return
 	}

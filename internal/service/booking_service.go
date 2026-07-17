@@ -126,10 +126,10 @@ func (s *BookingService) attachCustomers(ctx context.Context, tenantID primitive
 	return details, nil
 }
 
-func (s *BookingService) UpdateStatus(ctx context.Context, tenantID primitive.ObjectID, idStr string, status models.BookingStatus) error {
+func (s *BookingService) UpdateStatus(ctx context.Context, tenantID primitive.ObjectID, idStr string, status models.BookingStatus, userID *primitive.ObjectID) error {
 	id, err := primitive.ObjectIDFromHex(idStr)
 	if err != nil {
 		return apierr.BadRequest("invalid id")
 	}
-	return s.repo.UpdateStatus(ctx, tenantID, id, status)
+	return s.repo.UpdateStatus(ctx, tenantID, id, status, userID)
 }

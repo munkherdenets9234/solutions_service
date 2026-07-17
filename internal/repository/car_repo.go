@@ -19,11 +19,12 @@ func NewCarRepo(db *mongo.Database) *CarRepo {
 	return &CarRepo{col: db.Collection("cars")}
 }
 
-func (r *CarRepo) Create(ctx context.Context, tenantID primitive.ObjectID, c *models.Car) error {
+func (r *CarRepo) Create(ctx context.Context, tenantID primitive.ObjectID, c *models.Car, userID *primitive.ObjectID) error {
 	c.ID = primitive.NewObjectID()
 	c.TenantID = tenantID
 	c.CreatedAt = time.Now()
 	c.UpdatedAt = time.Now()
+	c.UserID = userID
 	_, err := r.col.InsertOne(ctx, c)
 	return err
 }
@@ -70,9 +71,12 @@ func (r *CarRepo) FindByID(ctx context.Context, tenantID primitive.ObjectID, id 
 	return &c, nil
 }
 
-func (r *CarRepo) Update(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID, update bson.M) error {
+func (r *CarRepo) Update(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID, update bson.M, userID *primitive.ObjectID) error {
 	stripProtectedFields(update)
 	update["updated_at"] = time.Now()
+	if userID != nil {
+		update["user_id"] = *userID
+	}
 	_, err := r.col.UpdateOne(ctx, bson.M{"_id": id, "tenant_id": tenantID}, bson.M{"$set": update})
 	return err
 }

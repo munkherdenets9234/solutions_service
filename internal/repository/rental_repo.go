@@ -94,10 +94,14 @@ func (r *RentalRepo) FindByID(ctx context.Context, tenantID primitive.ObjectID, 
 	return &rt, nil
 }
 
-func (r *RentalRepo) UpdateStatus(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID, status models.RentalStatus) error {
-	_, err := r.col.UpdateOne(ctx, bson.M{"_id": id, "tenant_id": tenantID}, bson.M{"$set": bson.M{
+func (r *RentalRepo) UpdateStatus(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID, status models.RentalStatus, userID *primitive.ObjectID) error {
+	set := bson.M{
 		"status":     status,
 		"updated_at": time.Now(),
-	}})
+	}
+	if userID != nil {
+		set["user_id"] = *userID
+	}
+	_, err := r.col.UpdateOne(ctx, bson.M{"_id": id, "tenant_id": tenantID}, bson.M{"$set": set})
 	return err
 }

@@ -79,7 +79,7 @@ func (h *PartnerHandler) Create(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.svc.Create(c.Request.Context(), tenantID(c), &p); err != nil {
+	if err := h.svc.Create(c.Request.Context(), tenantID(c), &p, currentUserID(c)); err != nil {
 		handleErr(c, err)
 		return
 	}
@@ -92,7 +92,7 @@ func (h *PartnerHandler) Update(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.svc.Update(c.Request.Context(), tenantID(c), c.Param("id"), update); err != nil {
+	if err := h.svc.Update(c.Request.Context(), tenantID(c), c.Param("id"), update, currentUserID(c)); err != nil {
 		handleErr(c, err)
 		return
 	}

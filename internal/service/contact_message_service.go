@@ -34,10 +34,10 @@ func (s *ContactMessageService) List(ctx context.Context, tenantID primitive.Obj
 	return s.repo.FindAll(ctx, tenantID, page, limit)
 }
 
-func (s *ContactMessageService) UpdateStatus(ctx context.Context, tenantID primitive.ObjectID, idStr string, status models.ContactStatus) error {
+func (s *ContactMessageService) UpdateStatus(ctx context.Context, tenantID primitive.ObjectID, idStr string, status models.ContactStatus, userID *primitive.ObjectID) error {
 	id, err := primitive.ObjectIDFromHex(idStr)
 	if err != nil {
 		return apierr.BadRequest("invalid id")
 	}
-	return s.repo.UpdateStatus(ctx, tenantID, id, status)
+	return s.repo.UpdateStatus(ctx, tenantID, id, status, userID)
 }

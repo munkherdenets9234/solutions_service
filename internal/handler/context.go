@@ -17,3 +17,14 @@ func tenantID(c *gin.Context) primitive.ObjectID {
 func userID(c *gin.Context) string {
 	return c.MustGet("user_id").(string)
 }
+
+// currentUserID is userID(c) parsed as an ObjectID, for stamping the
+// tenant_users audit link (user_id) on writes. Only call this from routes
+// mounted behind AuthMiddleware.
+func currentUserID(c *gin.Context) *primitive.ObjectID {
+	id, err := primitive.ObjectIDFromHex(userID(c))
+	if err != nil {
+		return nil
+	}
+	return &id
+}

@@ -76,22 +76,22 @@ func (s *BlogService) GetBySlug(ctx context.Context, tenantID primitive.ObjectID
 	return b, nil
 }
 
-func (s *BlogService) Create(ctx context.Context, tenantID primitive.ObjectID, b *models.Blog) error {
+func (s *BlogService) Create(ctx context.Context, tenantID primitive.ObjectID, b *models.Blog, userID *primitive.ObjectID) error {
 	if b.Slug == "" {
 		return apierr.BadRequest("slug is required")
 	}
-	return s.repo.Create(ctx, tenantID, b)
+	return s.repo.Create(ctx, tenantID, b, userID)
 }
 
-func (s *BlogService) Update(ctx context.Context, tenantID primitive.ObjectID, idStr string, update bson.M) error {
+func (s *BlogService) Update(ctx context.Context, tenantID primitive.ObjectID, idStr string, update bson.M, userID *primitive.ObjectID) error {
 	id, err := primitive.ObjectIDFromHex(idStr)
 	if err != nil {
 		return apierr.BadRequest("invalid id")
 	}
-	return s.repo.Update(ctx, tenantID, id, update)
+	return s.repo.Update(ctx, tenantID, id, update, userID)
 }
 
-func (s *BlogService) Publish(ctx context.Context, tenantID primitive.ObjectID, idStr string) error {
+func (s *BlogService) Publish(ctx context.Context, tenantID primitive.ObjectID, idStr string, userID *primitive.ObjectID) error {
 	id, err := primitive.ObjectIDFromHex(idStr)
 	if err != nil {
 		return apierr.BadRequest("invalid id")
@@ -103,5 +103,5 @@ func (s *BlogService) Publish(ctx context.Context, tenantID primitive.ObjectID, 
 	return s.repo.Update(ctx, tenantID, id, bson.M{
 		"status":       models.BlogPublished,
 		"published_at": now,
-	})
+	}, userID)
 }

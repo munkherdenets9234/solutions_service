@@ -60,7 +60,14 @@ func (r *ContactMessageRepo) FindByID(ctx context.Context, tenantID primitive.Ob
 	return &m, nil
 }
 
-func (r *ContactMessageRepo) UpdateStatus(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID, status models.ContactStatus) error {
-	_, err := r.col.UpdateOne(ctx, bson.M{"_id": id, "tenant_id": tenantID}, bson.M{"$set": bson.M{"status": status}})
+func (r *ContactMessageRepo) UpdateStatus(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID, status models.ContactStatus, userID *primitive.ObjectID) error {
+	set := bson.M{
+		"status":     status,
+		"updated_at": time.Now(),
+	}
+	if userID != nil {
+		set["user_id"] = *userID
+	}
+	_, err := r.col.UpdateOne(ctx, bson.M{"_id": id, "tenant_id": tenantID}, bson.M{"$set": set})
 	return err
 }

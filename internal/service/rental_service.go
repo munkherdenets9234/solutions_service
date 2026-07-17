@@ -119,10 +119,10 @@ func (s *RentalService) GetByID(ctx context.Context, tenantID primitive.ObjectID
 	return &RentalDetail{Rental: *rt, Customer: customer}, nil
 }
 
-func (s *RentalService) UpdateStatus(ctx context.Context, tenantID primitive.ObjectID, idStr string, status models.RentalStatus) error {
+func (s *RentalService) UpdateStatus(ctx context.Context, tenantID primitive.ObjectID, idStr string, status models.RentalStatus, userID *primitive.ObjectID) error {
 	id, err := primitive.ObjectIDFromHex(idStr)
 	if err != nil {
 		return apierr.BadRequest("invalid id")
 	}
-	return s.repo.UpdateStatus(ctx, tenantID, id, status)
+	return s.repo.UpdateStatus(ctx, tenantID, id, status, userID)
 }

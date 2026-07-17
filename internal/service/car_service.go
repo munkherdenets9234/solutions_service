@@ -56,15 +56,15 @@ func (s *CarService) GetBySlug(ctx context.Context, tenantID primitive.ObjectID,
 	return c, nil
 }
 
-func (s *CarService) Create(ctx context.Context, tenantID primitive.ObjectID, c *models.Car) error {
+func (s *CarService) Create(ctx context.Context, tenantID primitive.ObjectID, c *models.Car, userID *primitive.ObjectID) error {
 	if c.Slug == "" {
 		return apierr.BadRequest("slug is required")
 	}
 	c.IsActive = true
-	return s.repo.Create(ctx, tenantID, c)
+	return s.repo.Create(ctx, tenantID, c, userID)
 }
 
-func (s *CarService) Update(ctx context.Context, tenantID primitive.ObjectID, idStr string, update bson.M) error {
+func (s *CarService) Update(ctx context.Context, tenantID primitive.ObjectID, idStr string, update bson.M, userID *primitive.ObjectID) error {
 	id, err := primitive.ObjectIDFromHex(idStr)
 	if err != nil {
 		return apierr.BadRequest("invalid id")
@@ -72,7 +72,7 @@ func (s *CarService) Update(ctx context.Context, tenantID primitive.ObjectID, id
 	if _, err := s.repo.FindByID(ctx, tenantID, id); err != nil {
 		return apierr.NotFound("car not found")
 	}
-	return s.repo.Update(ctx, tenantID, id, update)
+	return s.repo.Update(ctx, tenantID, id, update, userID)
 }
 
 func (s *CarService) Delete(ctx context.Context, tenantID primitive.ObjectID, idStr string) error {

@@ -91,15 +91,15 @@ func (s *DestinationService) GetBySlug(ctx context.Context, tenantID primitive.O
 	return d, nil
 }
 
-func (s *DestinationService) Create(ctx context.Context, tenantID primitive.ObjectID, d *models.Destination) error {
+func (s *DestinationService) Create(ctx context.Context, tenantID primitive.ObjectID, d *models.Destination, userID *primitive.ObjectID) error {
 	if d.Slug == "" {
 		return apierr.BadRequest("slug is required")
 	}
 	d.IsActive = true
-	return s.repo.Create(ctx, tenantID, d)
+	return s.repo.Create(ctx, tenantID, d, userID)
 }
 
-func (s *DestinationService) Update(ctx context.Context, tenantID primitive.ObjectID, idStr string, update bson.M) error {
+func (s *DestinationService) Update(ctx context.Context, tenantID primitive.ObjectID, idStr string, update bson.M, userID *primitive.ObjectID) error {
 	id, err := primitive.ObjectIDFromHex(idStr)
 	if err != nil {
 		return apierr.BadRequest("invalid id")
@@ -107,7 +107,7 @@ func (s *DestinationService) Update(ctx context.Context, tenantID primitive.Obje
 	if _, err := s.repo.FindByID(ctx, tenantID, id); err != nil {
 		return apierr.NotFound("destination not found")
 	}
-	return s.repo.Update(ctx, tenantID, id, update)
+	return s.repo.Update(ctx, tenantID, id, update, userID)
 }
 
 func (s *DestinationService) AddImage(ctx context.Context, tenantID primitive.ObjectID, idStr string, img models.Image) error {

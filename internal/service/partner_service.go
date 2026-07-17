@@ -79,7 +79,7 @@ func (s *PartnerService) GetBySlug(ctx context.Context, tenantID primitive.Objec
 	return p, nil
 }
 
-func (s *PartnerService) Create(ctx context.Context, tenantID primitive.ObjectID, p *models.Partner) error {
+func (s *PartnerService) Create(ctx context.Context, tenantID primitive.ObjectID, p *models.Partner, userID *primitive.ObjectID) error {
 	if p.Slug == "" {
 		return apierr.BadRequest("slug is required")
 	}
@@ -87,10 +87,10 @@ func (s *PartnerService) Create(ctx context.Context, tenantID primitive.ObjectID
 		return apierr.BadRequest("name is required")
 	}
 	p.IsActive = true
-	return s.repo.Create(ctx, tenantID, p)
+	return s.repo.Create(ctx, tenantID, p, userID)
 }
 
-func (s *PartnerService) Update(ctx context.Context, tenantID primitive.ObjectID, idStr string, update bson.M) error {
+func (s *PartnerService) Update(ctx context.Context, tenantID primitive.ObjectID, idStr string, update bson.M, userID *primitive.ObjectID) error {
 	id, err := primitive.ObjectIDFromHex(idStr)
 	if err != nil {
 		return apierr.BadRequest("invalid id")
@@ -98,7 +98,7 @@ func (s *PartnerService) Update(ctx context.Context, tenantID primitive.ObjectID
 	if _, err := s.repo.FindByID(ctx, tenantID, id); err != nil {
 		return apierr.NotFound("partner not found")
 	}
-	return s.repo.Update(ctx, tenantID, id, update)
+	return s.repo.Update(ctx, tenantID, id, update, userID)
 }
 
 func (s *PartnerService) Delete(ctx context.Context, tenantID primitive.ObjectID, idStr string) error {

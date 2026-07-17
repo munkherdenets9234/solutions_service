@@ -19,11 +19,12 @@ func NewPartnerRepo(db *mongo.Database) *PartnerRepo {
 	return &PartnerRepo{col: db.Collection("partners")}
 }
 
-func (r *PartnerRepo) Create(ctx context.Context, tenantID primitive.ObjectID, p *models.Partner) error {
+func (r *PartnerRepo) Create(ctx context.Context, tenantID primitive.ObjectID, p *models.Partner, userID *primitive.ObjectID) error {
 	p.ID = primitive.NewObjectID()
 	p.TenantID = tenantID
 	p.CreatedAt = time.Now()
 	p.UpdatedAt = time.Now()
+	p.UserID = userID
 	_, err := r.col.InsertOne(ctx, p)
 	return err
 }
@@ -70,9 +71,12 @@ func (r *PartnerRepo) FindByID(ctx context.Context, tenantID primitive.ObjectID,
 	return &p, nil
 }
 
-func (r *PartnerRepo) Update(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID, update bson.M) error {
+func (r *PartnerRepo) Update(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID, update bson.M, userID *primitive.ObjectID) error {
 	stripProtectedFields(update)
 	update["updated_at"] = time.Now()
+	if userID != nil {
+		update["user_id"] = *userID
+	}
 	_, err := r.col.UpdateOne(ctx, bson.M{"_id": id, "tenant_id": tenantID}, bson.M{"$set": update})
 	return err
 }

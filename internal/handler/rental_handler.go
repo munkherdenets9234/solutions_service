@@ -72,7 +72,7 @@ func (h *RentalHandler) UpdateStatus(c *gin.Context) {
 		response.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := h.svc.UpdateStatus(c.Request.Context(), tenantID(c), c.Param("id"), body.Status); err != nil {
+	if err := h.svc.UpdateStatus(c.Request.Context(), tenantID(c), c.Param("id"), body.Status, currentUserID(c)); err != nil {
 		handleErr(c, err)
 		return
 	}

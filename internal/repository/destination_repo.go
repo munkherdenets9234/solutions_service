@@ -19,11 +19,12 @@ func NewDestinationRepo(db *mongo.Database) *DestinationRepo {
 	return &DestinationRepo{col: db.Collection("destinations")}
 }
 
-func (r *DestinationRepo) Create(ctx context.Context, tenantID primitive.ObjectID, d *models.Destination) error {
+func (r *DestinationRepo) Create(ctx context.Context, tenantID primitive.ObjectID, d *models.Destination, userID *primitive.ObjectID) error {
 	d.ID = primitive.NewObjectID()
 	d.TenantID = tenantID
 	d.CreatedAt = time.Now()
 	d.UpdatedAt = time.Now()
+	d.UserID = userID
 	_, err := r.col.InsertOne(ctx, d)
 	return err
 }
@@ -70,9 +71,12 @@ func (r *DestinationRepo) FindByID(ctx context.Context, tenantID primitive.Objec
 	return &d, nil
 }
 
-func (r *DestinationRepo) Update(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID, update bson.M) error {
+func (r *DestinationRepo) Update(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID, update bson.M, userID *primitive.ObjectID) error {
 	stripProtectedFields(update)
 	update["updated_at"] = time.Now()
+	if userID != nil {
+		update["user_id"] = *userID
+	}
 	_, err := r.col.UpdateOne(ctx, bson.M{"_id": id, "tenant_id": tenantID}, bson.M{"$set": update})
 	return err
 }

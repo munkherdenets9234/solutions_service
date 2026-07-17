@@ -19,13 +19,14 @@ func NewBlogRepo(db *mongo.Database) *BlogRepo {
 	return &BlogRepo{col: db.Collection("blogs")}
 }
 
-func (r *BlogRepo) Create(ctx context.Context, tenantID primitive.ObjectID, b *models.Blog) error {
+func (r *BlogRepo) Create(ctx context.Context, tenantID primitive.ObjectID, b *models.Blog, userID *primitive.ObjectID) error {
 	b.ID = primitive.NewObjectID()
 	b.TenantID = tenantID
 	b.Status = models.BlogDraft
 	b.Views = 0
 	b.CreatedAt = time.Now()
 	b.UpdatedAt = time.Now()
+	b.UserID = userID
 	_, err := r.col.InsertOne(ctx, b)
 	return err
 }
@@ -109,9 +110,12 @@ func (r *BlogRepo) FindByID(ctx context.Context, tenantID primitive.ObjectID, id
 	return &b, nil
 }
 
-func (r *BlogRepo) Update(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID, update bson.M) error {
+func (r *BlogRepo) Update(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID, update bson.M, userID *primitive.ObjectID) error {
 	stripProtectedFields(update)
 	update["updated_at"] = time.Now()
+	if userID != nil {
+		update["user_id"] = *userID
+	}
 	_, err := r.col.UpdateOne(ctx, bson.M{"_id": id, "tenant_id": tenantID}, bson.M{"$set": update})
 	return err
 }

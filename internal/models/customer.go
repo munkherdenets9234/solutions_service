@@ -16,4 +16,9 @@ type Customer struct {
 	Notes       string             `bson:"notes" json:"notes"`
 	CreatedAt   time.Time          `bson:"created_at" json:"created_at"`
 	UpdatedAt   time.Time          `bson:"updated_at" json:"updated_at"`
+	// UserID is the tenant_users._id of whoever last created/updated this
+	// record via the admin panel. Customers are normally upserted from public
+	// booking/rental forms with no authenticated tenant user, so this is nil
+	// unless a future admin-facing write path sets it.
+	UserID *primitive.ObjectID `bson:"user_id,omitempty" json:"user_id,omitempty"`
 }

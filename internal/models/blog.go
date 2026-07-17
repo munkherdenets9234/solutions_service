@@ -53,4 +53,8 @@ type Blog struct {
 	PublishedAt   *time.Time          `bson:"published_at,omitempty" json:"published_at,omitempty"`
 	CreatedAt     time.Time           `bson:"created_at" json:"created_at"`
 	UpdatedAt     time.Time           `bson:"updated_at" json:"updated_at"`
+	// UserID is the tenant_users._id of whoever last created/updated this
+	// record via the admin panel. Nil if never touched by an authenticated
+	// tenant user.
+	UserID *primitive.ObjectID `bson:"user_id,omitempty" json:"user_id,omitempty"`
 }
