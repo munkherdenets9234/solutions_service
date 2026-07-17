@@ -20,6 +20,22 @@ type ReviewResponse struct {
 	UpdatedAt       time.Time          `json:"updated_at"`
 }
 
+type CreatePublicReviewRequest struct {
+	Name   string `json:"name" binding:"required"`
+	Star   int    `json:"star" binding:"required"`
+	Review string `json:"review" binding:"required"`
+	Tour   string `json:"related_tour"`
+}
+
+func (req CreatePublicReviewRequest) ToModel(locale string) *models.Review {
+	return &models.Review{
+		RelatedCustomer: req.Name,
+		Star:            req.Star,
+		Review:          map[string]string{locale: req.Review},
+		RelatedTour:     req.Tour,
+	}
+}
+
 func ToReviewResponse(r *models.Review, locale string) ReviewResponse {
 	return ReviewResponse{
 		ID:              r.ID,

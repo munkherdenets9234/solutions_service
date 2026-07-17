@@ -178,6 +178,7 @@ func (r *Router) Register(engine *gin.Engine) {
 		reviews := tenantScoped.Group("/reviews")
 		{
 			reviews.GET("", r.review.List)
+			reviews.POST("", r.review.CreatePublic)
 		}
 
 		partners := tenantScoped.Group("/partners")

@@ -70,6 +70,23 @@ func (h *ReviewHandler) GetByID(c *gin.Context) {
 	response.OK(c, rev)
 }
 
+// CreatePublic is the customer-facing counterpart to Create — a site visitor
+// submits a single-locale review with no auth beyond the tenant's X-API-Key,
+// same as bookings/rentals/contact messages.
+func (h *ReviewHandler) CreatePublic(c *gin.Context) {
+	var req dto.CreatePublicReviewRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	rev := req.ToModel(i18n.ResolveFromRequest(c))
+	if err := h.svc.Create(c.Request.Context(), tenantID(c), rev, nil); err != nil {
+		handleErr(c, err)
+		return
+	}
+	response.Created(c, rev)
+}
+
 func (h *ReviewHandler) Create(c *gin.Context) {
 	var rev models.Review
 	if err := c.ShouldBindJSON(&rev); err != nil {
