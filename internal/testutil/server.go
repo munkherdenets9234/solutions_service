@@ -70,7 +70,7 @@ func NewApp(t testing.TB, db *mongo.Database) *App {
 	destSvc := service.NewDestinationService(destRepo, tenantUserRepo)
 	bookingSvc := service.NewBookingService(bookingRepo, customerRepo, destRepo, tenantUserRepo)
 	blogSvc := service.NewBlogService(blogRepo, tenantUserRepo)
-	carSvc := service.NewCarService(carRepo)
+	carSvc := service.NewCarService(carRepo, tenantUserRepo)
 	rentalSvc := service.NewRentalService(rentalRepo, customerRepo, carRepo, tenantUserRepo)
 	airportTransferSvc := service.NewAirportTransferService(airportTransferRepo, customerRepo, tenantUserRepo)
 	contactMessageSvc := service.NewContactMessageService(contactMessageRepo, tenantUserRepo)

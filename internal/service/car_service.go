@@ -12,11 +12,12 @@ import (
 )
 
 type CarService struct {
-	repo *repository.CarRepo
+	repo           *repository.CarRepo
+	tenantUserRepo *repository.TenantUserRepo
 }
 
-func NewCarService(repo *repository.CarRepo) *CarService {
-	return &CarService{repo: repo}
+func NewCarService(repo *repository.CarRepo, tenantUserRepo *repository.TenantUserRepo) *CarService {
+	return &CarService{repo: repo, tenantUserRepo: tenantUserRepo}
 }
 
 type ListCarsFilter struct {
@@ -42,7 +43,14 @@ func (s *CarService) List(ctx context.Context, tenantID primitive.ObjectID, f Li
 		f.Limit = 20
 	}
 
-	return s.repo.FindAll(ctx, tenantID, filter, f.Page, f.Limit)
+	cars, total, err := s.repo.FindAll(ctx, tenantID, filter, f.Page, f.Limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := s.resolveLastEditedBy(ctx, tenantID, cars); err != nil {
+		return nil, 0, apierr.Internal()
+	}
+	return cars, total, nil
 }
 
 func (s *CarService) GetBySlug(ctx context.Context, tenantID primitive.ObjectID, slug string) (*models.Car, error) {
@@ -53,7 +61,45 @@ func (s *CarService) GetBySlug(ctx context.Context, tenantID primitive.ObjectID,
 		}
 		return nil, apierr.Internal()
 	}
+	if err := s.resolveLastEditedBy(ctx, tenantID, []*models.Car{c}); err != nil {
+		return nil, apierr.Internal()
+	}
 	return c, nil
+}
+
+// resolveLastEditedBy populates each car's LastEditedBy with the display
+// name of the tenant user referenced by its UserID.
+func (s *CarService) resolveLastEditedBy(ctx context.Context, tenantID primitive.ObjectID, cars []*models.Car) error {
+	ids := make([]primitive.ObjectID, 0, len(cars))
+	seen := make(map[primitive.ObjectID]bool, len(cars))
+	for _, c := range cars {
+		if c.UserID != nil && !seen[*c.UserID] {
+			seen[*c.UserID] = true
+			ids = append(ids, *c.UserID)
+		}
+	}
+	if len(ids) == 0 {
+		return nil
+	}
+
+	users, err := s.tenantUserRepo.FindByIDs(ctx, tenantID, ids)
+	if err != nil {
+		return err
+	}
+	names := make(map[primitive.ObjectID]string, len(users))
+	for _, u := range users {
+		names[u.ID] = u.Name
+	}
+
+	for _, c := range cars {
+		if c.UserID == nil {
+			continue
+		}
+		if name, ok := names[*c.UserID]; ok {
+			c.LastEditedBy = &name
+		}
+	}
+	return nil
 }
 
 func (s *CarService) Create(ctx context.Context, tenantID primitive.ObjectID, c *models.Car, userID *primitive.ObjectID) error {
@@ -75,10 +121,10 @@ func (s *CarService) Update(ctx context.Context, tenantID primitive.ObjectID, id
 	return s.repo.Update(ctx, tenantID, id, update, userID)
 }
 
-func (s *CarService) Delete(ctx context.Context, tenantID primitive.ObjectID, idStr string) error {
+func (s *CarService) Delete(ctx context.Context, tenantID primitive.ObjectID, idStr string, userID *primitive.ObjectID) error {
 	id, err := primitive.ObjectIDFromHex(idStr)
 	if err != nil {
 		return apierr.BadRequest("invalid id")
 	}
-	return s.repo.Delete(ctx, tenantID, id)
+	return s.repo.Delete(ctx, tenantID, id, userID)
 }
