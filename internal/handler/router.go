@@ -13,6 +13,7 @@ type Router struct {
 	rental          *RentalHandler
 	airportTransfer *AirportTransferHandler
 	contactMessage  *ContactMessageHandler
+	newsletter      *NewsletterHandler
 	customer        *CustomerHandler
 	review          *ReviewHandler
 	partner         *PartnerHandler
@@ -34,6 +35,7 @@ func NewRouter(
 	rental *RentalHandler,
 	airportTransfer *AirportTransferHandler,
 	contactMessage *ContactMessageHandler,
+	newsletter *NewsletterHandler,
 	customer *CustomerHandler,
 	review *ReviewHandler,
 	partner *PartnerHandler,
@@ -54,6 +56,7 @@ func NewRouter(
 		rental:          rental,
 		airportTransfer: airportTransfer,
 		contactMessage:  contactMessage,
+		newsletter:      newsletter,
 		customer:        customer,
 		review:          review,
 		partner:         partner,
@@ -144,6 +147,9 @@ func (r *Router) Register(engine *gin.Engine) {
 		contact := tenantBase.Group("/contact")
 		contact.POST("", r.contactMessage.Create)
 
+		newsletter := tenantBase.Group("/newsletter")
+		newsletter.POST("", r.newsletter.Subscribe)
+
 		tenantBase.POST("/login", r.tenantUser.Login) // public — tenant user login, issues a bearer token
 
 		// Self-service account routes (require a valid token scoped to this
@@ -204,6 +210,7 @@ func (r *Router) Register(engine *gin.Engine) {
 		tenantScoped.GET("/admin/airport-transfers", r.airportTransfer.List)
 		tenantScoped.GET("/admin/airport-transfers/:id", r.airportTransfer.GetByID)
 		tenantScoped.GET("/admin/contact-messages", r.contactMessage.List)
+		tenantScoped.GET("/admin/newsletter", r.newsletter.List)
 
 		// Tenant user management — a platform superadmin can administer any
 		// tenant's admin/staff accounts (e.g. resetting a locked-out admin's
@@ -247,6 +254,8 @@ func (r *Router) Register(engine *gin.Engine) {
 
 			adminContact := admin.Group("/contact-messages")
 			adminContact.PUT("/:id/status", r.contactMessage.UpdateStatus)
+
+			admin.DELETE("/newsletter/:id", r.newsletter.Delete)
 
 			adminCustomers := admin.Group("/customers")
 			adminCustomers.GET("", r.customer.List)

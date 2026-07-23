@@ -31,6 +31,7 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 		{"rentals", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}}},
 		{"airport_transfers", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}}},
 		{"contact_messages", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}}},
+		{"newsletter_subscribers", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "email", Value: 1}}, Options: options.Index().SetUnique(true)}},
 		{"reviews", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}}},
 	}
 

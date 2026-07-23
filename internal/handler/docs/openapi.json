@@ -3,7 +3,7 @@
   "info": {
     "title": "DigitalService API",
     "version": "1.0.0",
-    "description": "Multi-tenant Go/Gin + MongoDB travel API. All GET requests are open reads: tenant-scoped ones (destinations, blogs, cars, and every `/admin/*` list/get) only need `X-API-Key` to identify the tenant, and platform-level ones (`/platform/tenants`, `/platform/admins`) need no auth at all. Every mutating request (POST/PUT/PATCH/DELETE) still requires the appropriate auth: `X-API-Key` for tenant-scoped writes, additionally a Bearer token with the `admin` role for `/admin/*` writes, and a Bearer token with the `superadmin` role for `/platform/*` writes. Tenant-scoped writes also pass through SubscriptionMiddleware — a tenant with an inactive/expired subscription gets 402 — except the four customer-facing lead forms (`/bookings`, `/rentals`, `/airport-transfers`, `/contact`), which are always accepted regardless of subscription state. If a tenant has a `domain` set (see `PUT /platform/tenants/{id}/domain`), every tenant-scoped request also passes through domain-bound key validation: a request carrying an `Origin` or `Referer` header that doesn't match that domain is rejected with 403, even with a valid `X-API-Key` — this only applies to browser-originated requests, since server-to-server calls send neither header."
+    "description": "Multi-tenant Go/Gin + MongoDB travel API. All GET requests are open reads: tenant-scoped ones (destinations, blogs, cars, and every `/admin/*` list/get) only need `X-API-Key` to identify the tenant, and platform-level ones (`/platform/tenants`, `/platform/admins`) need no auth at all. Every mutating request (POST/PUT/PATCH/DELETE) still requires the appropriate auth: `X-API-Key` for tenant-scoped writes, additionally a Bearer token with the `admin` role for `/admin/*` writes, and a Bearer token with the `superadmin` role for `/platform/*` writes. Tenant-scoped writes also pass through SubscriptionMiddleware — a tenant with an inactive/expired subscription gets 402 — except the five customer-facing lead/capture forms (`/bookings`, `/rentals`, `/airport-transfers`, `/contact`, `/newsletter`), which are always accepted regardless of subscription state. If a tenant has a `domain` set (see `PUT /platform/tenants/{id}/domain`), every tenant-scoped request also passes through domain-bound key validation: a request carrying an `Origin` or `Referer` header that doesn't match that domain is rejected with 403, even with a valid `X-API-Key` — this only applies to browser-originated requests, since server-to-server calls send neither header."
   },
   "servers": [ { "url": "/", "description": "Same host that serves this docs page" } ],
   "tags": [
@@ -22,6 +22,7 @@
     { "name": "Rentals" },
     { "name": "Airport Transfers" },
     { "name": "Contact Messages" },
+    { "name": "Newsletter" },
     { "name": "Customers" },
     { "name": "Uploads" }
   ],
@@ -901,6 +902,39 @@
         "responses": {
           "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
           "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/newsletter": {
+      "post": {
+        "tags": ["Newsletter"], "summary": "Subscribe to newsletter", "description": "Newsletter signup form. Always accepted regardless of the tenant's subscription state — exempt from SubscriptionMiddleware. Idempotent: resubmitting the same email is a no-op, not a duplicate error.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "email": "traveler@example.com" } } } },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/admin/newsletter": {
+      "get": {
+        "tags": ["Newsletter"], "summary": "List newsletter subscribers", "description": "X-API-Key only — no admin token needed to read.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/admin/newsletter/{id}": {
+      "delete": {
+        "tags": ["Newsletter"], "summary": "Remove a newsletter subscriber", "description": "Unsubscribes/removes the subscriber. Requires an admin-role Bearer token.",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
         }
       }
     },

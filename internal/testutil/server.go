@@ -60,6 +60,7 @@ func NewApp(t testing.TB, db *mongo.Database) *App {
 	rentalRepo := repository.NewRentalRepo(db)
 	airportTransferRepo := repository.NewAirportTransferRepo(db)
 	contactMessageRepo := repository.NewContactMessageRepo(db)
+	newsletterRepo := repository.NewNewsletterRepo(db)
 	reviewRepo := repository.NewReviewRepo(db)
 	partnerRepo := repository.NewPartnerRepo(db)
 	tenantRepo := repository.NewTenantRepo(db)
@@ -74,6 +75,7 @@ func NewApp(t testing.TB, db *mongo.Database) *App {
 	rentalSvc := service.NewRentalService(rentalRepo, customerRepo, carRepo, tenantUserRepo)
 	airportTransferSvc := service.NewAirportTransferService(airportTransferRepo, customerRepo, tenantUserRepo)
 	contactMessageSvc := service.NewContactMessageService(contactMessageRepo, tenantUserRepo)
+	newsletterSvc := service.NewNewsletterService(newsletterRepo)
 	customerSvc := service.NewCustomerService(customerRepo, bookingRepo, rentalRepo, airportTransferRepo, tenantUserRepo)
 	reviewSvc := service.NewReviewService(reviewRepo, tenantUserRepo)
 	partnerSvc := service.NewPartnerService(partnerRepo, tenantUserRepo)
@@ -98,6 +100,7 @@ func NewApp(t testing.TB, db *mongo.Database) *App {
 		handler.NewRentalHandler(rentalSvc),
 		handler.NewAirportTransferHandler(airportTransferSvc),
 		handler.NewContactMessageHandler(contactMessageSvc),
+		handler.NewNewsletterHandler(newsletterSvc),
 		handler.NewCustomerHandler(customerSvc),
 		handler.NewReviewHandler(reviewSvc),
 		handler.NewPartnerHandler(partnerSvc),
