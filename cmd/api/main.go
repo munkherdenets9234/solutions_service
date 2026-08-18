@@ -65,7 +65,12 @@ func main() {
 	newsletterRepo := repository.NewNewsletterRepo(db)
 	reviewRepo := repository.NewReviewRepo(db)
 	partnerRepo := repository.NewPartnerRepo(db)
+	packageRepo := repository.NewPackageRepo(db)
+	quoteRepo := repository.NewQuoteRepo(db)
 	tenantRepo := repository.NewTenantRepo(db)
+	tenantDetailRepo := repository.NewTenantDetailRepo(db)
+	tenantReviewRepo := repository.NewTenantReviewRepo(db)
+	tenantPackageRepo := repository.NewTenantPackageRepo(db)
 	tenantUserRepo := repository.NewTenantUserRepo(db)
 	platformUserRepo := repository.NewPlatformUserRepo(db)
 	subscriptionRepo := repository.NewSubscriptionRepo(db)
@@ -81,10 +86,14 @@ func main() {
 	customerSvc := service.NewCustomerService(customerRepo, bookingRepo, rentalRepo, airportTransferRepo, tenantUserRepo)
 	reviewSvc := service.NewReviewService(reviewRepo, tenantUserRepo)
 	partnerSvc := service.NewPartnerService(partnerRepo, tenantUserRepo)
-	tenantSvc := service.NewTenantService(tenantRepo)
+	packageSvc := service.NewPackageService(packageRepo, tenantPackageRepo, platformUserRepo)
+	quoteSvc := service.NewQuoteService(quoteRepo, tenantUserRepo, platformUserRepo)
+	tenantSvc := service.NewTenantService(tenantRepo, tenantDetailRepo, platformUserRepo)
+	tenantReviewSvc := service.NewTenantReviewService(tenantReviewRepo, tenantRepo)
+	tenantPackageSvc := service.NewTenantPackageService(tenantPackageRepo, tenantRepo, packageRepo)
 	tenantUserSvc := service.NewTenantUserService(tenantUserRepo, tokenMaker, cfg.TokenExpiry)
 	platformUserSvc := service.NewPlatformUserService(platformUserRepo, tokenMaker, cfg.TokenExpiry)
-	subscriptionSvc := service.NewSubscriptionService(subscriptionRepo, platformUserRepo)
+	subscriptionSvc := service.NewSubscriptionService(subscriptionRepo, platformUserRepo, packageRepo)
 	uploadSvc, err := service.NewUploadService(cfg.CloudinaryURL)
 	if err != nil {
 		logger.Log.Fatal("upload service init failed", zap.Error(err))
@@ -105,7 +114,11 @@ func main() {
 	customerHandler := handler.NewCustomerHandler(customerSvc)
 	reviewHandler := handler.NewReviewHandler(reviewSvc)
 	partnerHandler := handler.NewPartnerHandler(partnerSvc)
+	packageHandler := handler.NewPackageHandler(packageSvc)
+	quoteHandler := handler.NewQuoteHandler(quoteSvc)
 	tenantHandler := handler.NewTenantHandler(tenantSvc, tenantUserSvc)
+	tenantReviewHandler := handler.NewTenantReviewHandler(tenantReviewSvc)
+	tenantPackageHandler := handler.NewTenantPackageHandler(tenantPackageSvc)
 	tenantUserHandler := handler.NewTenantUserHandler(tenantUserSvc)
 	platformUserHandler := handler.NewPlatformUserHandler(platformUserSvc)
 	subscriptionHandler := handler.NewSubscriptionHandler(subscriptionSvc)
@@ -126,7 +139,11 @@ func main() {
 		customerHandler,
 		reviewHandler,
 		partnerHandler,
+		packageHandler,
+		quoteHandler,
 		tenantHandler,
+		tenantReviewHandler,
+		tenantPackageHandler,
 		tenantUserHandler,
 		platformUserHandler,
 		subscriptionHandler,

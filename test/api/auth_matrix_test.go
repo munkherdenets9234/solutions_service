@@ -52,6 +52,7 @@ var adminGatedRoutes = []routeCase{
 	{http.MethodPost, "/api/v1/admin/partners", map[string]string{"slug": "x"}},
 	{http.MethodPut, "/api/v1/admin/partners/" + dummyID, map[string]string{}},
 	{http.MethodDelete, "/api/v1/admin/partners/" + dummyID, nil},
+	{http.MethodPut, "/api/v1/admin/quotes/" + dummyID + "/status", map[string]string{"status": "contacted"}},
 }
 
 var platformGatedRoutes = []routeCase{
@@ -63,10 +64,20 @@ var platformGatedRoutes = []routeCase{
 	{http.MethodGet, "/api/v1/platform/tenants/" + dummyID, nil},
 	{http.MethodPut, "/api/v1/platform/tenants/" + dummyID + "/status", map[string]string{"status": "suspended"}},
 	{http.MethodPost, "/api/v1/platform/tenants/" + dummyID + "/rotate-key", nil},
-	{http.MethodPost, "/api/v1/platform/tenants/" + dummyID + "/subscription", map[string]string{"plan": "free"}},
+	{http.MethodPut, "/api/v1/platform/tenants/" + dummyID + "/project", map[string]string{}},
+	{http.MethodPost, "/api/v1/platform/tenants/" + dummyID + "/subscription", map[string]string{"package_id": dummyID}},
 	{http.MethodGet, "/api/v1/platform/tenants/" + dummyID + "/subscription", nil},
-	{http.MethodPut, "/api/v1/platform/tenants/" + dummyID + "/subscription/plan", map[string]string{"plan": "pro"}},
+	{http.MethodPut, "/api/v1/platform/tenants/" + dummyID + "/subscription/package", map[string]string{"package_id": dummyID}},
 	{http.MethodPost, "/api/v1/platform/tenants/" + dummyID + "/subscription/cancel", nil},
+	{http.MethodPost, "/api/v1/platform/reviews", map[string]string{"tenant_id": dummyID}},
+	{http.MethodPut, "/api/v1/platform/reviews/" + dummyID, map[string]string{}},
+	{http.MethodDelete, "/api/v1/platform/reviews/" + dummyID, nil},
+	{http.MethodPost, "/api/v1/platform/packages", map[string]string{"slug": "x"}},
+	{http.MethodPut, "/api/v1/platform/packages/" + dummyID, map[string]string{}},
+	{http.MethodDelete, "/api/v1/platform/packages/" + dummyID, nil},
+	{http.MethodPost, "/api/v1/platform/tenants/" + dummyID + "/packages", map[string]string{"package_id": dummyID}},
+	{http.MethodDelete, "/api/v1/platform/tenants/" + dummyID + "/packages/" + dummyID, nil},
+	{http.MethodPut, "/api/v1/platform/quotes/" + dummyID + "/status", map[string]string{"status": "contacted"}},
 }
 
 func TestAdminGatedRoutes_RejectMissingAndWrongAuth(t *testing.T) {

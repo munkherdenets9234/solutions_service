@@ -4,10 +4,13 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/eandstravel/digitalservice/internal/dto"
+	"github.com/eandstravel/digitalservice/internal/i18n"
 	"github.com/eandstravel/digitalservice/internal/models"
 	"github.com/eandstravel/digitalservice/internal/service"
 	"github.com/eandstravel/digitalservice/pkg/response"
 	"github.com/gin-gonic/gin"
+	"go.mongodb.org/mongo-driver/bson"
 )
 
 type TenantHandler struct {
@@ -108,6 +111,53 @@ func (h *TenantHandler) UpdateDomain(c *gin.Context) {
 		return
 	}
 	if err := h.svc.UpdateDomain(c.Request.Context(), c.Param("id"), body.Domain); err != nil {
+		handleErr(c, err)
+		return
+	}
+	response.OK(c, gin.H{"updated": true})
+}
+
+// ListProjects is the public "Our Projects" listing — active tenants with a
+// showcase-enabled TenantDetail, locale-resolved.
+func (h *TenantHandler) ListProjects(c *gin.Context) {
+	page, _ := strconv.Atoi(c.DefaultQuery("page", "1"))
+	limit, _ := strconv.Atoi(c.DefaultQuery("limit", "20"))
+
+	tenants, details, total, err := h.svc.ListProjects(c.Request.Context(), page, limit)
+	if err != nil {
+		handleErr(c, err)
+		return
+	}
+	locale := i18n.ResolveFromRequest(c)
+	response.List(c, dto.ToProjectResponses(tenants, details, locale), response.Meta{Total: total, Page: page, Limit: limit})
+}
+
+// GetProjectBySlug is ListProjects' single-project counterpart, for the
+// case-study detail page.
+func (h *TenantHandler) GetProjectBySlug(c *gin.Context) {
+	t, d, err := h.svc.GetProjectBySlug(c.Request.Context(), c.Param("slug"))
+	if err != nil {
+		handleErr(c, err)
+		return
+	}
+	locale := i18n.ResolveFromRequest(c)
+	response.OK(c, dto.ToProjectResponse(t, d, locale))
+}
+
+// UpdateProject edits a tenant's TenantDetail — the "Our Projects"
+// case-study content, stored in its own tenant_details table — separately
+// from the tenant's identity/billing fields (status, domain, api key),
+// which have their own dedicated routes. Also embedded as `project` in GET
+// /platform/tenants and /platform/tenants/{id}. Partial update, same as
+// Partner/Package: locale-map fields can be set per-locale via dot
+// notation, e.g. {"tagline.mn": "..."}.
+func (h *TenantHandler) UpdateProject(c *gin.Context) {
+	var update bson.M
+	if err := c.ShouldBindJSON(&update); err != nil {
+		response.Error(c, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := h.svc.UpdateProject(c.Request.Context(), c.Param("id"), update, currentUserID(c)); err != nil {
 		handleErr(c, err)
 		return
 	}

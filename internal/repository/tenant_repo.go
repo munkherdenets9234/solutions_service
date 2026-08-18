@@ -92,3 +92,35 @@ func (r *TenantRepo) UpdateDomain(ctx context.Context, id primitive.ObjectID, do
 	}})
 	return err
 }
+
+// FindBySlugActive looks up an active tenant by its public slug — used by
+// the "Our Projects" case-study detail page (joined against TenantDetail by
+// TenantService).
+func (r *TenantRepo) FindBySlugActive(ctx context.Context, slug string) (*models.Tenant, error) {
+	var t models.Tenant
+	err := r.col.FindOne(ctx, bson.M{"slug": slug, "status": models.TenantActive}).Decode(&t)
+	if err != nil {
+		return nil, err
+	}
+	return &t, nil
+}
+
+// FindByIDsActive batch-loads active tenants for the given ids, preserving
+// no particular order — used to join the "Our Projects" listing's
+// showcase-enabled TenantDetail records back to their tenants.
+func (r *TenantRepo) FindByIDsActive(ctx context.Context, ids []primitive.ObjectID) ([]*models.Tenant, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	cur, err := r.col.Find(ctx, bson.M{"_id": bson.M{"$in": ids}, "status": models.TenantActive})
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+
+	var results []*models.Tenant
+	if err := cur.All(ctx, &results); err != nil {
+		return nil, err
+	}
+	return results, nil
+}

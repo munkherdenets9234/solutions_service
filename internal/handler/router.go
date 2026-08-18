@@ -17,7 +17,11 @@ type Router struct {
 	customer        *CustomerHandler
 	review          *ReviewHandler
 	partner         *PartnerHandler
+	pkg             *PackageHandler
+	quote           *QuoteHandler
 	tenant          *TenantHandler
+	tenantReview    *TenantReviewHandler
+	tenantPackage   *TenantPackageHandler
 	tenantUser      *TenantUserHandler
 	platformUser    *PlatformUserHandler
 	subscription    *SubscriptionHandler
@@ -39,7 +43,11 @@ func NewRouter(
 	customer *CustomerHandler,
 	review *ReviewHandler,
 	partner *PartnerHandler,
+	pkg *PackageHandler,
+	quote *QuoteHandler,
 	tenant *TenantHandler,
+	tenantReview *TenantReviewHandler,
+	tenantPackage *TenantPackageHandler,
 	tenantUser *TenantUserHandler,
 	platformUser *PlatformUserHandler,
 	subscription *SubscriptionHandler,
@@ -60,7 +68,11 @@ func NewRouter(
 		customer:        customer,
 		review:          review,
 		partner:         partner,
+		pkg:             pkg,
+		quote:           quote,
 		tenant:          tenant,
+		tenantReview:    tenantReview,
+		tenantPackage:   tenantPackage,
 		tenantUser:      tenantUser,
 		platformUser:    platformUser,
 		subscription:    subscription,
@@ -103,6 +115,38 @@ func (r *Router) Register(engine *gin.Engine) {
 		platform.GET("/tenants/:id/subscription", r.subscription.Get)
 		platform.GET("/admins", r.platformUser.List)
 
+		// Our Projects — public case-study cards/detail, joining active
+		// tenants against their showcase-enabled TenantDetail record (see
+		// the tenant_details table). Separate from /tenants above, which
+		// stays the platform's own full-detail tenant management read.
+		platform.GET("/projects", r.tenant.ListProjects)
+		platform.GET("/projects/:slug", r.tenant.GetProjectBySlug)
+
+		// Tenant reviews — testimonials from the platform's own onboarded
+		// tenants (clients), for the platform operator's own Review page.
+		// Distinct from /reviews (tenant-scoped, a tenant's own customers
+		// reviewing that tenant's tours/partners).
+		platform.GET("/reviews", r.tenantReview.List)
+
+		// Packages — the platform's own global price-list catalog, managed
+		// centrally rather than per-tenant. Which tenants show a given
+		// package on their own storefront is a separate assignment (see
+		// /platform/tenants/{id}/packages below and models.TenantPackage).
+		// Distinct from the tenant-scoped /packages (a tenant's own,
+		// assignment-filtered storefront read).
+		platform.GET("/packages", r.pkg.ListAll)
+		platform.GET("/packages/:id", r.pkg.GetByID)
+		platform.GET("/tenants/:id/packages", r.tenantPackage.ListForTenant)
+
+		// Quotes — a quote is a lead for a *potential* tenant, not every one
+		// has an existing tenant relationship. This intake+listing is fully
+		// public (no X-API-Key at all) for exactly that reason: a prospect
+		// inquiring here has no tenant to authenticate as. Distinct from the
+		// tenant-scoped /quotes (submitted through an existing tenant's own
+		// storefront, which does set tenant_id from its X-API-Key).
+		platform.POST("/quotes", r.quote.CreatePlatform)
+		platform.GET("/quotes", r.quote.ListAll)
+
 		platformAuthed := platform.Group("")
 		platformAuthed.Use(r.auth.Require("superadmin"))
 		{
@@ -111,9 +155,26 @@ func (r *Router) Register(engine *gin.Engine) {
 			platformTenants.PUT("/:id/status", r.tenant.UpdateStatus)
 			platformTenants.POST("/:id/rotate-key", r.tenant.RotateAPIKey)
 			platformTenants.PUT("/:id/domain", r.tenant.UpdateDomain)
+			platformTenants.PUT("/:id/project", r.tenant.UpdateProject)
+			platformTenants.GET("/:id/quotes", r.quote.ListForTenant)
 			platformTenants.POST("/:id/subscription", r.subscription.Create)
-			platformTenants.PUT("/:id/subscription/plan", r.subscription.UpdatePlan)
+			platformTenants.PUT("/:id/subscription/package", r.subscription.UpdatePackage)
 			platformTenants.POST("/:id/subscription/cancel", r.subscription.Cancel)
+			platformTenants.POST("/:id/packages", r.tenantPackage.Assign)
+			platformTenants.DELETE("/:id/packages/:package_id", r.tenantPackage.Unassign)
+
+			platformReviews := platformAuthed.Group("/reviews")
+			platformReviews.POST("", r.tenantReview.Create)
+			platformReviews.PUT("/:id", r.tenantReview.Update)
+			platformReviews.DELETE("/:id", r.tenantReview.Delete)
+
+			platformPackages := platformAuthed.Group("/packages")
+			platformPackages.POST("", r.pkg.Create)
+			platformPackages.PUT("/:id", r.pkg.Update)
+			platformPackages.DELETE("/:id", r.pkg.Delete)
+
+			platformQuotes := platformAuthed.Group("/quotes")
+			platformQuotes.PUT("/:id/status", r.quote.UpdateStatusPlatform)
 
 			platformAdmins := platformAuthed.Group("/admins")
 			platformAdmins.POST("", r.platformUser.Create)
@@ -146,6 +207,9 @@ func (r *Router) Register(engine *gin.Engine) {
 
 		contact := tenantBase.Group("/contact")
 		contact.POST("", r.contactMessage.Create)
+
+		quotes := tenantBase.Group("/quotes")
+		quotes.POST("", r.quote.Create)
 
 		newsletter := tenantBase.Group("/newsletter")
 		newsletter.POST("", r.newsletter.Subscribe)
@@ -193,6 +257,12 @@ func (r *Router) Register(engine *gin.Engine) {
 			partners.GET("/:slug", r.partner.GetBySlug)
 		}
 
+		packages := tenantScoped.Group("/packages")
+		{
+			packages.GET("", r.pkg.List)
+			packages.GET("/:slug", r.pkg.GetBySlug)
+		}
+
 		// Admin reads — X-API-Key required, no admin bearer token needed.
 		tenantScoped.GET("/admin/users", r.tenantUser.List)
 		tenantScoped.GET("/admin/blogs", r.blog.ListAdmin)
@@ -210,6 +280,7 @@ func (r *Router) Register(engine *gin.Engine) {
 		tenantScoped.GET("/admin/airport-transfers", r.airportTransfer.List)
 		tenantScoped.GET("/admin/airport-transfers/:id", r.airportTransfer.GetByID)
 		tenantScoped.GET("/admin/contact-messages", r.contactMessage.List)
+		tenantScoped.GET("/admin/quotes", r.quote.List)
 		tenantScoped.GET("/admin/newsletter", r.newsletter.List)
 
 		// Tenant user management — a platform superadmin can administer any
@@ -254,6 +325,9 @@ func (r *Router) Register(engine *gin.Engine) {
 
 			adminContact := admin.Group("/contact-messages")
 			adminContact.PUT("/:id/status", r.contactMessage.UpdateStatus)
+
+			adminQuote := admin.Group("/quotes")
+			adminQuote.PUT("/:id/status", r.quote.UpdateStatus)
 
 			admin.DELETE("/newsletter/:id", r.newsletter.Delete)
 

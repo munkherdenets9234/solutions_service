@@ -36,9 +36,9 @@ func (r *SubscriptionRepo) FindByTenantID(ctx context.Context, tenantID primitiv
 	return &s, nil
 }
 
-func (r *SubscriptionRepo) UpdatePlan(ctx context.Context, tenantID primitive.ObjectID, plan models.SubscriptionPlan, periodStart, periodEnd time.Time, userID *primitive.ObjectID) error {
+func (r *SubscriptionRepo) UpdatePackage(ctx context.Context, tenantID primitive.ObjectID, packageID primitive.ObjectID, periodStart, periodEnd time.Time, userID *primitive.ObjectID) error {
 	set := bson.M{
-		"plan":                 plan,
+		"package_id":           packageID,
 		"current_period_start": periodStart,
 		"current_period_end":   periodEnd,
 		"updated_at":           time.Now(),

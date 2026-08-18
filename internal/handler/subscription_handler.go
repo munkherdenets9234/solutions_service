@@ -3,7 +3,6 @@ package handler
 import (
 	"net/http"
 
-	"github.com/eandstravel/digitalservice/internal/models"
 	"github.com/eandstravel/digitalservice/internal/service"
 	"github.com/eandstravel/digitalservice/pkg/response"
 	"github.com/gin-gonic/gin"
@@ -26,14 +25,19 @@ func (h *SubscriptionHandler) Create(c *gin.Context) {
 	}
 
 	var body struct {
-		Plan models.SubscriptionPlan `json:"plan"`
+		PackageID string `json:"package_id" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		response.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	packageID, err := primitive.ObjectIDFromHex(body.PackageID)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "invalid package_id")
+		return
+	}
 
-	sub, err := h.svc.Create(c.Request.Context(), tenantID, body.Plan, currentUserID(c))
+	sub, err := h.svc.Create(c.Request.Context(), tenantID, packageID, currentUserID(c))
 	if err != nil {
 		handleErr(c, err)
 		return
@@ -56,7 +60,7 @@ func (h *SubscriptionHandler) Get(c *gin.Context) {
 	response.OK(c, sub)
 }
 
-func (h *SubscriptionHandler) UpdatePlan(c *gin.Context) {
+func (h *SubscriptionHandler) UpdatePackage(c *gin.Context) {
 	tenantID, err := primitive.ObjectIDFromHex(c.Param("id"))
 	if err != nil {
 		response.Error(c, http.StatusBadRequest, "invalid tenant id")
@@ -64,14 +68,19 @@ func (h *SubscriptionHandler) UpdatePlan(c *gin.Context) {
 	}
 
 	var body struct {
-		Plan models.SubscriptionPlan `json:"plan" binding:"required"`
+		PackageID string `json:"package_id" binding:"required"`
 	}
 	if err := c.ShouldBindJSON(&body); err != nil {
 		response.Error(c, http.StatusBadRequest, err.Error())
 		return
 	}
+	packageID, err := primitive.ObjectIDFromHex(body.PackageID)
+	if err != nil {
+		response.Error(c, http.StatusBadRequest, "invalid package_id")
+		return
+	}
 
-	if err := h.svc.UpdatePlan(c.Request.Context(), tenantID, body.Plan, currentUserID(c)); err != nil {
+	if err := h.svc.UpdatePackage(c.Request.Context(), tenantID, packageID, currentUserID(c)); err != nil {
 		handleErr(c, err)
 		return
 	}

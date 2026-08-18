@@ -3,13 +3,15 @@
   "info": {
     "title": "DigitalService API",
     "version": "1.0.0",
-    "description": "Multi-tenant Go/Gin + MongoDB travel API. All GET requests are open reads: tenant-scoped ones (destinations, blogs, cars, and every `/admin/*` list/get) only need `X-API-Key` to identify the tenant, and platform-level ones (`/platform/tenants`, `/platform/admins`) need no auth at all. Every mutating request (POST/PUT/PATCH/DELETE) still requires the appropriate auth: `X-API-Key` for tenant-scoped writes, additionally a Bearer token with the `admin` role for `/admin/*` writes, and a Bearer token with the `superadmin` role for `/platform/*` writes. Tenant-scoped writes also pass through SubscriptionMiddleware — a tenant with an inactive/expired subscription gets 402 — except the five customer-facing lead/capture forms (`/bookings`, `/rentals`, `/airport-transfers`, `/contact`, `/newsletter`), which are always accepted regardless of subscription state. If a tenant has a `domain` set (see `PUT /platform/tenants/{id}/domain`), every tenant-scoped request also passes through domain-bound key validation: a request carrying an `Origin` or `Referer` header that doesn't match that domain is rejected with 403, even with a valid `X-API-Key` — this only applies to browser-originated requests, since server-to-server calls send neither header."
+    "description": "Multi-tenant Go/Gin + MongoDB travel API. All GET requests are open reads: tenant-scoped ones (destinations, blogs, cars, packages, and every `/admin/*` list/get) only need `X-API-Key` to identify the tenant, and platform-level ones (`/platform/tenants`, `/platform/admins`, `/platform/projects`, `/platform/reviews`, `/platform/packages`, `/platform/quotes`) need no auth at all. Every mutating request (POST/PUT/PATCH/DELETE) still requires the appropriate auth: `X-API-Key` for tenant-scoped writes, additionally a Bearer token with the `admin` role for `/admin/*` writes, and a Bearer token with the `superadmin` role for `/platform/*` writes — except `POST /platform/quotes`, deliberately open with no auth at all (see below). Tenant-scoped writes also pass through SubscriptionMiddleware — a tenant with an inactive/expired subscription gets 402 — except the six customer-facing lead/capture forms (`/bookings`, `/rentals`, `/airport-transfers`, `/contact`, `/quotes`, `/newsletter`), which are always accepted regardless of subscription state. If a tenant has a `domain` set (see `PUT /platform/tenants/{id}/domain`), every tenant-scoped request also passes through domain-bound key validation: a request carrying an `Origin` or `Referer` header that doesn't match that domain is rejected with 403, even with a valid `X-API-Key` — this only applies to browser-originated requests, since server-to-server calls send neither header. `Package` is a platform-wide catalog managed only via `/platform/packages` (not tenant-owned) — which tenants show a given package on their own storefront is a separate many-to-many assignment, `TenantPackage`, managed via `/platform/tenants/{id}/packages`; the tenant-scoped `/packages` reads are filtered through that assignment. A tenant's `Subscription.package_id` references the same `Package` catalog (typically the platform operator's own price list) — see `POST /platform/tenants/{id}/subscription`. `/platform/reviews` (TenantReview) are testimonials *from* the platform's own onboarded tenants for the operator's own Review page — distinct from tenant-scoped `/reviews` (a tenant's own customers reviewing that tenant's tours/partners). `Quote.tenant_id` is optional — a quote is a lead for a *potential* tenant, not every one has (or ever gets) an existing tenant relationship, so `POST /platform/quotes` accepts tenant-less leads with no auth at all, alongside the existing tenant-scoped `POST /quotes` (which does set `tenant_id`, from the X-API-Key); `GET /platform/quotes` and `PUT /platform/quotes/{id}/status` work across both."
   },
   "servers": [ { "url": "/", "description": "Same host that serves this docs page" } ],
   "tags": [
     { "name": "Health" },
     { "name": "Platform · Admins" },
     { "name": "Platform · Tenants" },
+    { "name": "Platform · Projects" },
+    { "name": "Platform · Reviews" },
     { "name": "Platform · Subscriptions" },
     { "name": "Auth & Users" },
     { "name": "Account" },
@@ -19,9 +21,11 @@
     { "name": "Cars" },
     { "name": "Reviews" },
     { "name": "Partners" },
+    { "name": "Packages" },
     { "name": "Rentals" },
     { "name": "Airport Transfers" },
     { "name": "Contact Messages" },
+    { "name": "Quotes" },
     { "name": "Newsletter" },
     { "name": "Customers" },
     { "name": "Uploads" }
@@ -150,7 +154,7 @@
         }
       },
       "get": {
-        "tags": ["Platform · Tenants"], "summary": "List tenants", "description": "Public — no auth required.",
+        "tags": ["Platform · Tenants"], "summary": "List tenants", "description": "Public — no auth required. Each tenant embeds `project` — its linked TenantDetail record from the separate tenant_details table (see PUT .../project) — with full, unresolved locale maps, or omitted if the tenant has none yet.",
         "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
         "responses": {
           "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } }
@@ -159,7 +163,7 @@
     },
     "/api/v1/platform/tenants/{id}": {
       "get": {
-        "tags": ["Platform · Tenants"], "summary": "Get tenant by ID", "description": "Public — no auth required.",
+        "tags": ["Platform · Tenants"], "summary": "Get tenant by ID", "description": "Public — no auth required. Embeds `project` — see GET /platform/tenants.",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": {
           "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
@@ -202,20 +206,117 @@
         }
       }
     },
+    "/api/v1/platform/tenants/{id}/project": {
+      "put": {
+        "tags": ["Platform · Tenants"], "summary": "Update tenant project-showcase content", "description": "Partial update ($set) into this tenant's record in the separate tenant_details table (its \"Our Projects\" case-study content: tagline, description, category, website_url, cover_image, admin_cover, images, metrics, showcase, featured, sort_order) — deliberately a different table from the tenant's own identity/billing fields (status, domain, api key), which keep their own dedicated routes and are never touched by this one. Only the fields present in the body are changed; omitted fields are left as-is (matching the partial-update behavior of PUT /admin/partners/{id} etc.) — locale-map fields can be set per-locale via dot notation, e.g. `{\"tagline.mn\": \"...\"}`. website_url is the project's own live site shown as `live_url` on the public read (falling back to the tenant's bound Domain if unset); admin_cover is a separate image curated for front-page/list display, independent of cover_image (the case-study detail page's hero banner). Set showcase to true for the tenant to appear on GET /platform/projects, and the saved record is also embedded as `project` on GET /platform/tenants and /platform/tenants/{id}.",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": {
+          "tagline": { "en": "A modern travel storefront", "mn": "Орчин үеийн аяллын дэлгүүр" },
+          "description": { "en": "Rebuilt Nomad Trails' booking flow end-to-end." },
+          "category": "Travel", "website_url": "https://nomadtrails.example.com", "showcase": true, "featured": true, "sort_order": 1,
+          "cover_image": { "url": "https://cdn.example.com/projects/nomad-trails.jpg", "caption": "Nomad Trails homepage" },
+          "admin_cover": { "url": "https://cdn.example.com/projects/nomad-trails-grid.jpg", "caption": "Homepage grid image" },
+          "images": [], "metrics": [ { "label": { "en": "Faster checkout" }, "value": "40%" } ]
+        } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/platform/tenants/{id}/quotes": {
+      "get": {
+        "tags": ["Quotes"], "summary": "List quote requests for a tenant (platform)", "description": "Same data as GET /admin/quotes, but for a platform superadmin who has no tenant X-API-Key to send — the tenant comes from the path instead. Read-only: status changes still only happen through a tenant's own admin panel (PUT /admin/quotes/{id}/status).",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }, { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+
+    "/api/v1/platform/projects": {
+      "get": {
+        "tags": ["Platform · Projects"], "summary": "List showcased projects", "description": "Public — no auth required. Joins active tenants against their tenant_details record where showcase=true, sorted by sort_order. This is the \"Our Projects\" storefront listing — a distinct, curated, locale-resolved read from GET /platform/tenants, which stays the platform's own full-detail tenant management view (contact_email, status, api_key_last4, and the raw `project` object included) and is unfiltered by showcase. tagline/description/metric labels are resolved to a single locale per `lang`.",
+        "parameters": [{ "$ref": "#/components/parameters/Lang" }, { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } }
+        }
+      }
+    },
+    "/api/v1/platform/projects/{slug}": {
+      "get": {
+        "tags": ["Platform · Projects"], "summary": "Get a showcased project by tenant slug", "description": "Public — no auth required. 404 if the tenant isn't active or showcase isn't enabled. The case-study detail page. `live_url` is the project's website_url if set, otherwise falls back to the tenant's bound domain (see PUT /platform/tenants/{id}/domain). `admin_cover` is a separate, front-page-curated image distinct from `cover_image` (the detail page's hero banner).",
+        "parameters": [
+          { "name": "slug", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "$ref": "#/components/parameters/Lang" }
+        ],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+
+    "/api/v1/platform/reviews": {
+      "get": {
+        "tags": ["Platform · Reviews"], "summary": "List tenant reviews", "description": "Public — no auth required. Active testimonials only. Returns just what the Review page needs: id, rate, comment, company_name, company_owner_name. comment is resolved to a single locale per `lang`.",
+        "parameters": [{ "$ref": "#/components/parameters/Lang" }, { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" }, "example": { "success": true, "data": [ { "id": "665f1b2e8f1b2c0012a3b999", "rate": 5, "comment": "Inno Nomads shipped our site faster than we expected.", "company_name": "Nomad Retail LLC", "company_owner_name": "Bat-Erdene O." } ], "meta": { "total": 1, "page": 1, "limit": 20 } } } } }
+        }
+      },
+      "post": {
+        "tags": ["Platform · Reviews"], "summary": "Create tenant review", "description": "tenant_id must reference an existing tenant (see /platform/tenants); rate must be 1-5; comment (locale map) and company_name are required. company_owner_name is optional free text.",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": {
+          "tenant_id": "665f1b2e8f1b2c0012a3b111", "rate": 5,
+          "comment": { "en": "Inno Nomads shipped our site faster than we expected.", "mn": "Инно Номадс манай сайтыг хүлээснээс хурдан гаргаж өгсөн." },
+          "company_name": "Nomad Retail LLC", "company_owner_name": "Bat-Erdene O."
+        } } } },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/v1/platform/reviews/{id}": {
+      "put": {
+        "tags": ["Platform · Reviews"], "summary": "Update tenant review", "description": "Partial update. If rate is present it must be an integer between 1 and 5. comment can be updated per-locale via dot notation, e.g. `{\"comment.mn\": \"...\"}`.",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "rate": 4 } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "tags": ["Platform · Reviews"], "summary": "Delete tenant review", "description": "Soft delete — sets is_active to false, removing it from the public list.",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
 
     "/api/v1/platform/tenants/{id}/subscription": {
       "post": {
-        "tags": ["Platform · Subscriptions"], "summary": "Create tenant subscription", "description": "plan is one of free|basic|pro|enterprise, defaults to free. 409 if the tenant already has one. Status starts active with a 30-day period.",
+        "tags": ["Platform · Subscriptions"], "summary": "Create tenant subscription", "description": "package_id must reference an existing Package document (see /admin/packages) — typically one belonging to the platform operator's own tenant, i.e. its own price list sold to onboard other tenants. 400 if the package doesn't exist, 409 if the tenant already has a subscription. Status starts active with a 30-day period.",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "requestBody": { "content": { "application/json": { "example": { "plan": "pro" } } } },
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "package_id": "665f1b2e8f1b2c0012a3b777" } } } },
         "responses": {
           "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
           "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }, "409": { "$ref": "#/components/responses/Conflict" }
         }
       },
       "get": {
-        "tags": ["Platform · Subscriptions"], "summary": "Get tenant subscription", "description": "Public — no auth required. Includes `lastEditedBy` — the display name of the platform superadmin who last created/updated it (not a tenant user, since subscriptions are only ever managed via /platform routes) — when known.",
+        "tags": ["Platform · Subscriptions"], "summary": "Get tenant subscription", "description": "Public — no auth required. The response embeds the resolved `package` object (null if it was since deleted) alongside `package_id`. Includes `lastEditedBy` — the display name of the platform superadmin who last created/updated it (not a tenant user, since subscriptions are only ever managed via /platform routes) — when known.",
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": {
           "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
@@ -223,12 +324,12 @@
         }
       }
     },
-    "/api/v1/platform/tenants/{id}/subscription/plan": {
+    "/api/v1/platform/tenants/{id}/subscription/package": {
       "put": {
-        "tags": ["Platform · Subscriptions"], "summary": "Update tenant subscription plan", "description": "Starts a fresh 30-day billing period.",
+        "tags": ["Platform · Subscriptions"], "summary": "Move tenant subscription to a different package", "description": "package_id must reference an existing Package document. Starts a fresh 30-day billing period.",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
-        "requestBody": { "required": true, "content": { "application/json": { "example": { "plan": "enterprise" } } } },
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "package_id": "665f1b2e8f1b2c0012a3b778" } } } },
         "responses": {
           "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
           "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
@@ -237,7 +338,7 @@
     },
     "/api/v1/platform/tenants/{id}/subscription/cancel": {
       "post": {
-        "tags": ["Platform · Subscriptions"], "summary": "Cancel tenant subscription", "description": "Sets status to canceled; plan/period left intact. From this point the tenant's own writes get 402 until a superadmin sets a new plan.",
+        "tags": ["Platform · Subscriptions"], "summary": "Cancel tenant subscription", "description": "Sets status to canceled; package/period left intact. From this point the tenant's own writes get 402 until a superadmin sets a new package.",
         "security": [{ "BearerAuth": [] }],
         "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
         "responses": {
@@ -769,6 +870,117 @@
       }
     },
 
+    "/api/v1/packages": {
+      "get": {
+        "tags": ["Packages"], "summary": "List packages assigned to this tenant", "description": "Public read — X-API-Key only. Active packages assigned to this tenant only (see TenantPackage / POST /platform/tenants/{id}/packages), sorted by sort_order. This is the tenant's own storefront price list — a curated view into the platform's shared catalog, not a tenant-owned collection. name/tagline/billing_note/features are resolved to a single locale per `lang` — see `#/components/parameters/Lang`.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/Lang" }, { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/packages/{slug}": {
+      "get": {
+        "tags": ["Packages"], "summary": "Get an assigned package by slug", "description": "Public read — X-API-Key only. 404 if the package doesn't exist/is inactive, or isn't assigned to this tenant. Translatable fields are resolved to a single locale per `lang` — see `#/components/parameters/Lang`.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "slug", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "$ref": "#/components/parameters/Lang" }
+        ],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/platform/packages": {
+      "get": {
+        "tags": ["Packages"], "summary": "List all packages (platform catalog)", "description": "Public — no auth required. Every package in the platform's shared catalog, active and inactive, with translatable fields as full locale maps — the platform admin's management view of the whole price list, not scoped to any one tenant. Sorted by sort_order. Each item includes `lastEditedBy` — the display name of the platform superadmin who last created/updated it — when known.",
+        "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } }
+        }
+      },
+      "post": {
+        "tags": ["Packages"], "summary": "Create package (platform catalog)", "description": "Packages are managed platform-wide, not per-tenant — a new package isn't visible to any tenant's storefront until explicitly assigned (see POST /platform/tenants/{id}/packages). slug (globally unique) and name (locale map, at least `en`) are required. tagline, billing_note are locale maps; features is a locale map of string lists. price of 0 means \"not yet set\".",
+        "security": [{ "BearerAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": {
+          "slug": "growth", "name": { "en": "Growth", "mn": "Өсөлт" }, "tagline": { "en": "For teams scaling their web presence" },
+          "price": 4500000, "currency": "MNT", "billing_note": { "en": "one-time" },
+          "features": { "en": ["Up to 5 pages", "CMS integration", "Priority support"] },
+          "highlighted": true, "sort_order": 2
+        } } } },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+    "/api/v1/platform/packages/{id}": {
+      "get": {
+        "tags": ["Packages"], "summary": "Get package by id (platform catalog)", "description": "Public — no auth required. Returns the package regardless of active status, with translatable fields as full locale maps.",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "put": {
+        "tags": ["Packages"], "summary": "Update package (platform catalog)", "description": "Partial update. Translatable fields can be updated per-locale via dot notation, e.g. `{\"name.mn\": \"...\"}`.",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "price": 4200000, "highlighted": true } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      },
+      "delete": {
+        "tags": ["Packages"], "summary": "Delete package (platform catalog)", "description": "Soft delete — sets is_active to false, removing it from every tenant's storefront that had it assigned (the assignment itself is left intact).",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/platform/tenants/{id}/packages": {
+      "get": {
+        "tags": ["Packages"], "summary": "List a tenant's assigned packages (platform)", "description": "Public — no auth required. Every package assigned to this tenant regardless of active status — the platform admin's view of that tenant's assignments (see TenantPackage).",
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }, { "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } }
+        }
+      },
+      "post": {
+        "tags": ["Packages"], "summary": "Assign a package to a tenant", "description": "package_id must reference an existing platform catalog package. 400 if either id doesn't resolve, 409 if already assigned.",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "package_id": "665f1b2e8f1b2c0012a3b777" } } } },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "409": { "$ref": "#/components/responses/Conflict" }
+        }
+      }
+    },
+    "/api/v1/platform/tenants/{id}/packages/{package_id}": {
+      "delete": {
+        "tags": ["Packages"], "summary": "Unassign a package from a tenant", "description": "Removes the assignment only — the package itself is untouched in the platform catalog.",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [
+          { "name": "id", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "package_id", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+
     "/api/v1/rentals": {
       "post": {
         "tags": ["Rentals"], "summary": "Create rental", "description": "Customer requests a car rental. Always accepted regardless of the tenant's subscription state — exempt from SubscriptionMiddleware.",
@@ -905,6 +1117,76 @@
         }
       }
     },
+    "/api/v1/quotes": {
+      "post": {
+        "tags": ["Quotes"], "summary": "Create a quote request (tenant storefront)", "description": "\"Request a quote\" submission through a specific tenant's own storefront — richer than a contact message, carrying the structured details a sales quote needs. name and email are required; package_slug, budget, timeline are free-form and optional. tenant_id is set from the X-API-Key. Always accepted regardless of the tenant's subscription state — exempt from SubscriptionMiddleware.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": {
+          "name": "Nomin Batbayar", "email": "nomin@example.com", "company_name": "Nomad Retail LLC",
+          "package_slug": "growth", "budget": "$3,000-$6,000", "timeline": "1-2 months", "message": "Need a new e-commerce storefront."
+        } } } },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/admin/quotes": {
+      "get": {
+        "tags": ["Quotes"], "summary": "List quote requests (tenant)", "description": "This tenant's own leads only. X-API-Key only — no admin token needed to read. Each item includes `lastEditedBy` — the display name of the tenant user who last changed its status — when known.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } },
+          "401": { "$ref": "#/components/responses/Unauthorized" }
+        }
+      }
+    },
+    "/api/v1/admin/quotes/{id}/status": {
+      "put": {
+        "tags": ["Quotes"], "summary": "Update quote request status (tenant)", "description": "new → contacted → quoted, or closed. Scoped to this tenant's own leads — 404 if the id doesn't belong to it. A tenant-less quote (see POST /platform/quotes) can never be reached here; use PUT /platform/quotes/{id}/status instead.",
+        "security": [{ "ApiKeyAuth": [], "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "status": "contacted" } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "402": { "$ref": "#/components/responses/PaymentRequired" }, "403": { "$ref": "#/components/responses/Forbidden" }, "404": { "$ref": "#/components/responses/NotFound" }
+        }
+      }
+    },
+    "/api/v1/platform/quotes": {
+      "get": {
+        "tags": ["Quotes"], "summary": "List all quote requests (platform)", "description": "Public — no auth required. Every quote across the platform, tenant-linked and tenant-less alike — the consolidated lead list, mirroring GET /platform/packages for the Package catalog. Each item includes `lastEditedBy` when known (resolved against platform users; a lead updated through a tenant's own admin panel instead won't resolve a name here — see GET /admin/quotes for that tenant's own view).",
+        "parameters": [{ "$ref": "#/components/parameters/Page" }, { "$ref": "#/components/parameters/Limit" }],
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/ListResponse" } } } }
+        }
+      },
+      "post": {
+        "tags": ["Quotes"], "summary": "Create a quote request (no tenant)", "description": "\"Request a quote\" submission with no existing tenant relationship — a prospect inquiring before ever signing up. Fully public: no X-API-Key, no bearer token. name and email are required. The created quote has no tenant_id; manage its status via PUT /platform/quotes/{id}/status.",
+        "requestBody": { "required": true, "content": { "application/json": { "example": {
+          "name": "Prospective Client", "email": "prospect@example.com",
+          "message": "Interested in what you do — no existing account yet."
+        } } } },
+        "responses": {
+          "201": { "description": "Created", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }
+        }
+      }
+    },
+    "/api/v1/platform/quotes/{id}/status": {
+      "put": {
+        "tags": ["Quotes"], "summary": "Update quote request status (platform)", "description": "new → contacted → quoted, or closed. Works on any quote regardless of tenant — the only way to act on a tenant-less lead (see POST /platform/quotes).",
+        "security": [{ "BearerAuth": [] }],
+        "parameters": [{ "name": "id", "in": "path", "required": true, "schema": { "type": "string" } }],
+        "requestBody": { "required": true, "content": { "application/json": { "example": { "status": "contacted" } } } },
+        "responses": {
+          "200": { "description": "OK", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/SuccessResponse" } } } },
+          "400": { "$ref": "#/components/responses/BadRequest" }, "401": { "$ref": "#/components/responses/Unauthorized" }, "403": { "$ref": "#/components/responses/Forbidden" }
+        }
+      }
+    },
+
     "/api/v1/newsletter": {
       "post": {
         "tags": ["Newsletter"], "summary": "Subscribe to newsletter", "description": "Newsletter signup form. Always accepted regardless of the tenant's subscription state — exempt from SubscriptionMiddleware. Idempotent: resubmitting the same email is a no-op, not a duplicate error.",

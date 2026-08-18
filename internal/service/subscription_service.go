@@ -15,35 +15,27 @@ import (
 type SubscriptionService struct {
 	repo             *repository.SubscriptionRepo
 	platformUserRepo *repository.PlatformUserRepo
+	packageRepo      *repository.PackageRepo
 }
 
-func NewSubscriptionService(repo *repository.SubscriptionRepo, platformUserRepo *repository.PlatformUserRepo) *SubscriptionService {
-	return &SubscriptionService{repo: repo, platformUserRepo: platformUserRepo}
-}
-
-var validPlans = map[models.SubscriptionPlan]bool{
-	models.PlanFree:       true,
-	models.PlanBasic:      true,
-	models.PlanPro:        true,
-	models.PlanEnterprise: true,
+func NewSubscriptionService(repo *repository.SubscriptionRepo, platformUserRepo *repository.PlatformUserRepo, packageRepo *repository.PackageRepo) *SubscriptionService {
+	return &SubscriptionService{repo: repo, platformUserRepo: platformUserRepo, packageRepo: packageRepo}
 }
 
 const subscriptionPeriodDays = 30
 
-// Create starts a subscription for a tenant on the given plan, covering the
-// next 30 days from now. A tenant can only ever have one subscription
-// record - use UpdatePlan/Cancel to change it afterward.
-func (s *SubscriptionService) Create(ctx context.Context, tenantID primitive.ObjectID, plan models.SubscriptionPlan, userID *primitive.ObjectID) (*models.Subscription, error) {
-	if plan == "" {
-		plan = models.PlanFree
-	} else if !validPlans[plan] {
-		return nil, apierr.BadRequest("invalid plan")
+// Create starts a subscription for a tenant on the given package, covering
+// the next 30 days from now. A tenant can only ever have one subscription
+// record - use UpdatePackage/Cancel to change it afterward.
+func (s *SubscriptionService) Create(ctx context.Context, tenantID primitive.ObjectID, packageID primitive.ObjectID, userID *primitive.ObjectID) (*models.Subscription, error) {
+	if err := s.validatePackage(ctx, packageID); err != nil {
+		return nil, err
 	}
 
 	now := time.Now()
 	sub := &models.Subscription{
 		TenantID:           tenantID,
-		Plan:               plan,
+		PackageID:          packageID,
 		Status:             models.SubscriptionActive,
 		CurrentPeriodStart: now,
 		CurrentPeriodEnd:   now.AddDate(0, 0, subscriptionPeriodDays),
@@ -54,7 +46,20 @@ func (s *SubscriptionService) Create(ctx context.Context, tenantID primitive.Obj
 		}
 		return nil, apierr.Internal()
 	}
+	if err := s.resolvePackage(ctx, sub); err != nil {
+		return nil, apierr.Internal()
+	}
 	return sub, nil
+}
+
+func (s *SubscriptionService) validatePackage(ctx context.Context, packageID primitive.ObjectID) error {
+	if _, err := s.packageRepo.FindByID(ctx, packageID); err != nil {
+		if err == mongo.ErrNoDocuments {
+			return apierr.BadRequest("invalid package_id")
+		}
+		return apierr.Internal()
+	}
+	return nil
 }
 
 func (s *SubscriptionService) Get(ctx context.Context, tenantID primitive.ObjectID) (*models.Subscription, error) {
@@ -68,7 +73,25 @@ func (s *SubscriptionService) Get(ctx context.Context, tenantID primitive.Object
 	if err := s.resolveLastEditedBy(ctx, sub); err != nil {
 		return nil, apierr.Internal()
 	}
+	if err := s.resolvePackage(ctx, sub); err != nil {
+		return nil, apierr.Internal()
+	}
 	return sub, nil
+}
+
+// resolvePackage populates sub.Package with the referenced package, if it
+// still exists — left nil (not an error) if the package was since deleted,
+// so a subscription record never 500s just because its package went away.
+func (s *SubscriptionService) resolvePackage(ctx context.Context, sub *models.Subscription) error {
+	pkg, err := s.packageRepo.FindByID(ctx, sub.PackageID)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil
+		}
+		return err
+	}
+	sub.Package = pkg
+	return nil
 }
 
 // resolveLastEditedBy populates sub's LastEditedBy with the display name of
@@ -91,10 +114,11 @@ func (s *SubscriptionService) resolveLastEditedBy(ctx context.Context, sub *mode
 	return nil
 }
 
-// UpdatePlan changes the tenant's plan and starts a fresh billing period.
-func (s *SubscriptionService) UpdatePlan(ctx context.Context, tenantID primitive.ObjectID, plan models.SubscriptionPlan, userID *primitive.ObjectID) error {
-	if !validPlans[plan] {
-		return apierr.BadRequest("invalid plan")
+// UpdatePackage moves the tenant onto a different package and starts a
+// fresh billing period.
+func (s *SubscriptionService) UpdatePackage(ctx context.Context, tenantID primitive.ObjectID, packageID primitive.ObjectID, userID *primitive.ObjectID) error {
+	if err := s.validatePackage(ctx, packageID); err != nil {
+		return err
 	}
 	if _, err := s.repo.FindByTenantID(ctx, tenantID); err != nil {
 		if err == mongo.ErrNoDocuments {
@@ -104,7 +128,7 @@ func (s *SubscriptionService) UpdatePlan(ctx context.Context, tenantID primitive
 	}
 
 	now := time.Now()
-	return s.repo.UpdatePlan(ctx, tenantID, plan, now, now.AddDate(0, 0, subscriptionPeriodDays), userID)
+	return s.repo.UpdatePackage(ctx, tenantID, packageID, now, now.AddDate(0, 0, subscriptionPeriodDays), userID)
 }
 
 // Cancel marks the subscription canceled but leaves plan/period intact so

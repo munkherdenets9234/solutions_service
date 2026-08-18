@@ -125,3 +125,37 @@ func TestToReviewResponse(t *testing.T) {
 		t.Errorf("unsupported locale should fall back to en, got %q", fr.Review)
 	}
 }
+
+func TestToProjectResponse(t *testing.T) {
+	tenant := &models.Tenant{
+		Name:   "Acme Travel",
+		Slug:   "acme-travel",
+		Domain: "acmetravel.com",
+	}
+	detail := &models.TenantDetail{
+		TenantID: tenant.ID,
+		Tagline:  map[string]string{"en": "A modern storefront", "mn": "Орчин үеийн дэлгүүр"},
+		Metrics: []models.ProjectMetric{
+			{Label: map[string]string{"en": "Faster checkout"}, Value: "40%"},
+		},
+	}
+
+	en := ToProjectResponse(tenant, detail, "en")
+	if en.Name != "Acme Travel" {
+		t.Errorf("Name should stay untranslated, got %q", en.Name)
+	}
+	if en.LiveURL != "https://acmetravel.com" {
+		t.Errorf("LiveURL = %q, want derived from Domain", en.LiveURL)
+	}
+	if len(en.Metrics) != 1 || en.Metrics[0].Value != "40%" {
+		t.Errorf("Metrics = %+v", en.Metrics)
+	}
+
+	mn := ToProjectResponse(tenant, detail, "mn")
+	if mn.Tagline != "Орчин үеийн дэлгүүр" {
+		t.Errorf("Tagline = %q, want mn value", mn.Tagline)
+	}
+	if mn.Metrics[0].Label != "Faster checkout" {
+		t.Errorf("Metric label should fall back to en, got %q", mn.Metrics[0].Label)
+	}
+}

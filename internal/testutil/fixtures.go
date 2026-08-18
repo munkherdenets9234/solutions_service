@@ -37,6 +37,7 @@ func SuperadminToken(t testing.TB, app *App) string {
 // tenant: its API key and a logged-in admin token.
 type Tenant struct {
 	ID         string
+	Slug       string
 	APIKey     string
 	AdminEmail string
 	AdminToken string
@@ -85,7 +86,7 @@ func NewTenant(t testing.TB, app *App, superadminToken, namePrefix string) Tenan
 		t.Fatalf("tenant admin login returned no token: %s", loginResp.Raw)
 	}
 
-	return Tenant{ID: tenantID, APIKey: apiKey, AdminEmail: contactEmail, AdminToken: adminToken}
+	return Tenant{ID: tenantID, Slug: unique, APIKey: apiKey, AdminEmail: contactEmail, AdminToken: adminToken}
 }
 
 // CreateStaff adds a staff-role login profile to the tenant and logs in as

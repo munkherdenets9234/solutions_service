@@ -24,4 +24,9 @@ type Tenant struct {
 	Status       TenantStatus       `bson:"status" json:"status"`
 	CreatedAt    time.Time          `bson:"created_at" json:"created_at"`
 	UpdatedAt    time.Time          `bson:"updated_at" json:"updated_at"`
+	// Project is this tenant's linked case-study/showcase record (see
+	// TenantDetail, the separate tenant_details table), resolved by the
+	// service layer on read — not persisted on the tenant document itself,
+	// and nil if the tenant has none yet.
+	Project *TenantDetail `bson:"-" json:"project,omitempty"`
 }

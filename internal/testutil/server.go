@@ -63,7 +63,12 @@ func NewApp(t testing.TB, db *mongo.Database) *App {
 	newsletterRepo := repository.NewNewsletterRepo(db)
 	reviewRepo := repository.NewReviewRepo(db)
 	partnerRepo := repository.NewPartnerRepo(db)
+	packageRepo := repository.NewPackageRepo(db)
+	quoteRepo := repository.NewQuoteRepo(db)
 	tenantRepo := repository.NewTenantRepo(db)
+	tenantDetailRepo := repository.NewTenantDetailRepo(db)
+	tenantReviewRepo := repository.NewTenantReviewRepo(db)
+	tenantPackageRepo := repository.NewTenantPackageRepo(db)
 	tenantUserRepo := repository.NewTenantUserRepo(db)
 	platformUserRepo := repository.NewPlatformUserRepo(db)
 	subscriptionRepo := repository.NewSubscriptionRepo(db)
@@ -79,10 +84,14 @@ func NewApp(t testing.TB, db *mongo.Database) *App {
 	customerSvc := service.NewCustomerService(customerRepo, bookingRepo, rentalRepo, airportTransferRepo, tenantUserRepo)
 	reviewSvc := service.NewReviewService(reviewRepo, tenantUserRepo)
 	partnerSvc := service.NewPartnerService(partnerRepo, tenantUserRepo)
-	tenantSvc := service.NewTenantService(tenantRepo)
+	packageSvc := service.NewPackageService(packageRepo, tenantPackageRepo, platformUserRepo)
+	quoteSvc := service.NewQuoteService(quoteRepo, tenantUserRepo, platformUserRepo)
+	tenantSvc := service.NewTenantService(tenantRepo, tenantDetailRepo, platformUserRepo)
+	tenantReviewSvc := service.NewTenantReviewService(tenantReviewRepo, tenantRepo)
+	tenantPackageSvc := service.NewTenantPackageService(tenantPackageRepo, tenantRepo, packageRepo)
 	tenantUserSvc := service.NewTenantUserService(tenantUserRepo, maker, 24)
 	platformUserSvc := service.NewPlatformUserService(platformUserRepo, maker, 24)
-	subscriptionSvc := service.NewSubscriptionService(subscriptionRepo, platformUserRepo)
+	subscriptionSvc := service.NewSubscriptionService(subscriptionRepo, platformUserRepo, packageRepo)
 	uploadSvc, err := service.NewUploadService("cloudinary://key:secret@test-cloud")
 	if err != nil {
 		t.Fatalf("new upload service: %v", err)
@@ -104,7 +113,11 @@ func NewApp(t testing.TB, db *mongo.Database) *App {
 		handler.NewCustomerHandler(customerSvc),
 		handler.NewReviewHandler(reviewSvc),
 		handler.NewPartnerHandler(partnerSvc),
+		handler.NewPackageHandler(packageSvc),
+		handler.NewQuoteHandler(quoteSvc),
 		handler.NewTenantHandler(tenantSvc, tenantUserSvc),
+		handler.NewTenantReviewHandler(tenantReviewSvc),
+		handler.NewTenantPackageHandler(tenantPackageSvc),
 		handler.NewTenantUserHandler(tenantUserSvc),
 		handler.NewPlatformUserHandler(platformUserSvc),
 		handler.NewSubscriptionHandler(subscriptionSvc),

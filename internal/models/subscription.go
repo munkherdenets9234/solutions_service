@@ -6,15 +6,6 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-type SubscriptionPlan string
-
-const (
-	PlanFree       SubscriptionPlan = "free"
-	PlanBasic      SubscriptionPlan = "basic"
-	PlanPro        SubscriptionPlan = "pro"
-	PlanEnterprise SubscriptionPlan = "enterprise"
-)
-
 type SubscriptionStatus string
 
 const (
@@ -24,13 +15,17 @@ const (
 	SubscriptionTrialing SubscriptionStatus = "trialing"
 )
 
-// Subscription tracks a tenant's plan and billing state. There is no live
-// payment provider wired in yet — plan and status are set directly through
-// this API by a platform superadmin.
+// Subscription tracks which Package a tenant is on and its billing state.
+// PackageID references a Package document — typically one belonging to the
+// platform operator's own tenant (their own price list) — rather than a
+// generic plan name, so a subscription always carries real pricing/feature
+// content instead of a disconnected label. There is no live payment provider
+// wired in yet — the package and status are set directly through this API by
+// a platform superadmin.
 type Subscription struct {
 	ID                 primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	TenantID           primitive.ObjectID `bson:"tenant_id" json:"tenant_id"`
-	Plan               SubscriptionPlan   `bson:"plan" json:"plan"`
+	PackageID          primitive.ObjectID `bson:"package_id" json:"package_id"`
 	Status             SubscriptionStatus `bson:"status" json:"status"`
 	CurrentPeriodStart time.Time          `bson:"current_period_start" json:"current_period_start"`
 	CurrentPeriodEnd   time.Time          `bson:"current_period_end" json:"current_period_end"`
@@ -45,4 +40,7 @@ type Subscription struct {
 	// LastEditedBy is UserID resolved to a display name, populated by the
 	// service layer on read — not persisted.
 	LastEditedBy *string `bson:"-" json:"lastEditedBy,omitempty"`
+	// Package is the referenced package, resolved by the service layer on
+	// read — not persisted. Left nil if the package was since deleted.
+	Package *Package `bson:"-" json:"package,omitempty"`
 }
