@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"net/http"
 	"time"
 
 	"github.com/eandstravel/digitalservice/internal/models"
@@ -42,7 +41,7 @@ func (s *TenantUserService) Create(ctx context.Context, tenantID primitive.Objec
 		var err error
 		rawPassword, err = password.GenerateRandom()
 		if err != nil {
-			return nil, "", apierr.Internal()
+			return nil, "", apierr.Internal(err)
 		}
 	} else if len(rawPassword) < 8 {
 		return nil, "", apierr.BadRequest("password must be at least 8 characters")
@@ -50,7 +49,7 @@ func (s *TenantUserService) Create(ctx context.Context, tenantID primitive.Objec
 
 	hash, err := password.Hash(rawPassword)
 	if err != nil {
-		return nil, "", apierr.Internal()
+		return nil, "", apierr.Internal(err)
 	}
 
 	u := &models.TenantUser{
@@ -62,9 +61,9 @@ func (s *TenantUserService) Create(ctx context.Context, tenantID primitive.Objec
 	}
 	if err := s.repo.Create(ctx, u); err != nil {
 		if mongo.IsDuplicateKeyError(err) {
-			return nil, "", apierr.New(http.StatusConflict, "a login profile with this email already exists for this tenant")
+			return nil, "", apierr.Conflict("a login profile with this email already exists for this tenant")
 		}
-		return nil, "", apierr.Internal()
+		return nil, "", apierr.Internal(err)
 	}
 	return u, rawPassword, nil
 }
@@ -86,20 +85,20 @@ func (s *TenantUserService) Login(ctx context.Context, tenantID primitive.Object
 	u, err := s.repo.FindByTenantAndEmail(ctx, tenantID, email)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return "", apierr.Unauthorized()
+			return "", apierr.Unauthorized("")
 		}
-		return "", apierr.Internal()
+		return "", apierr.Internal(err)
 	}
 	if u.Status != models.TenantUserActive {
-		return "", apierr.New(http.StatusForbidden, "login profile suspended")
+		return "", apierr.Forbidden("login profile suspended")
 	}
 	if !password.Verify(u.PasswordHash, plainPassword) {
-		return "", apierr.Unauthorized()
+		return "", apierr.Unauthorized("")
 	}
 
 	tok, _, err := s.maker.CreateToken(u.ID.Hex(), string(u.Role), tenantID.Hex(), s.tokenExpiry)
 	if err != nil {
-		return "", apierr.Internal()
+		return "", apierr.Internal(err)
 	}
 	return tok, nil
 }
@@ -120,10 +119,10 @@ func (s *TenantUserService) ChangePassword(ctx context.Context, tenantID, userID
 		if err == mongo.ErrNoDocuments {
 			return apierr.NotFound("login profile not found")
 		}
-		return apierr.Internal()
+		return apierr.Internal(err)
 	}
 	if !password.Verify(u.PasswordHash, currentPassword) {
-		return apierr.Unauthorized()
+		return apierr.Unauthorized("")
 	}
 	if len(newPassword) < 8 {
 		return apierr.BadRequest("password must be at least 8 characters")
@@ -131,7 +130,7 @@ func (s *TenantUserService) ChangePassword(ctx context.Context, tenantID, userID
 
 	hash, err := password.Hash(newPassword)
 	if err != nil {
-		return apierr.Internal()
+		return apierr.Internal(err)
 	}
 	return s.repo.UpdatePassword(ctx, tenantID, userID, hash)
 }
@@ -149,13 +148,13 @@ func (s *TenantUserService) ResetPassword(ctx context.Context, tenantID primitiv
 		if err == mongo.ErrNoDocuments {
 			return "", apierr.NotFound("login profile not found")
 		}
-		return "", apierr.Internal()
+		return "", apierr.Internal(err)
 	}
 
 	if newPassword == "" {
 		newPassword, err = password.GenerateRandom()
 		if err != nil {
-			return "", apierr.Internal()
+			return "", apierr.Internal(err)
 		}
 	} else if len(newPassword) < 8 {
 		return "", apierr.BadRequest("password must be at least 8 characters")
@@ -163,10 +162,10 @@ func (s *TenantUserService) ResetPassword(ctx context.Context, tenantID primitiv
 
 	hash, err := password.Hash(newPassword)
 	if err != nil {
-		return "", apierr.Internal()
+		return "", apierr.Internal(err)
 	}
 	if err := s.repo.UpdatePassword(ctx, tenantID, id, hash); err != nil {
-		return "", apierr.Internal()
+		return "", apierr.Internal(err)
 	}
 	return newPassword, nil
 }

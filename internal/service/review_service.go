@@ -49,7 +49,7 @@ func (s *ReviewService) List(ctx context.Context, tenantID primitive.ObjectID, f
 		return nil, 0, err
 	}
 	if err := s.resolveLastEditedBy(ctx, tenantID, reviews); err != nil {
-		return nil, 0, apierr.Internal()
+		return nil, 0, apierr.Internal(err)
 	}
 	return reviews, total, nil
 }
@@ -64,10 +64,10 @@ func (s *ReviewService) GetByID(ctx context.Context, tenantID primitive.ObjectID
 		if err == mongo.ErrNoDocuments {
 			return nil, apierr.NotFound("review not found")
 		}
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	if err := s.resolveLastEditedBy(ctx, tenantID, []*models.Review{rev}); err != nil {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	return rev, nil
 }
@@ -142,7 +142,7 @@ func (s *ReviewService) Delete(ctx context.Context, tenantID primitive.ObjectID,
 	}
 	deleted, err := s.repo.Delete(ctx, tenantID, id)
 	if err != nil {
-		return apierr.Internal()
+		return apierr.Internal(err)
 	}
 	if deleted == 0 {
 		return apierr.NotFound("review not found")

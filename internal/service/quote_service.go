@@ -45,7 +45,7 @@ func (s *QuoteService) List(ctx context.Context, tenantID primitive.ObjectID, pa
 		return nil, 0, err
 	}
 	if err := s.resolveLastEditedByTenantUser(ctx, tenantID, quotes); err != nil {
-		return nil, 0, apierr.Internal()
+		return nil, 0, apierr.Internal(err)
 	}
 	return quotes, total, nil
 }
@@ -64,7 +64,7 @@ func (s *QuoteService) ListAll(ctx context.Context, page, limit int) ([]*models.
 		return nil, 0, err
 	}
 	if err := s.resolveLastEditedByPlatformUser(ctx, quotes); err != nil {
-		return nil, 0, apierr.Internal()
+		return nil, 0, apierr.Internal(err)
 	}
 	return quotes, total, nil
 }

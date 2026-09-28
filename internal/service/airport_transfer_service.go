@@ -47,7 +47,7 @@ func (s *AirportTransferService) Create(ctx context.Context, tenantID primitive.
 
 	customer, err := s.customerRepo.Upsert(ctx, tenantID, &input.Customer)
 	if err != nil {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 
 	t := input.Transfer
@@ -55,7 +55,7 @@ func (s *AirportTransferService) Create(ctx context.Context, tenantID primitive.
 	t.ConfirmationID = uuid.NewString()
 
 	if err := s.repo.Create(ctx, tenantID, &t); err != nil {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	return &AirportTransferDetail{AirportTransfer: t, Customer: customer}, nil
 }
@@ -72,7 +72,7 @@ func (s *AirportTransferService) List(ctx context.Context, tenantID primitive.Ob
 		return nil, 0, err
 	}
 	if err := s.resolveLastEditedBy(ctx, tenantID, transfers); err != nil {
-		return nil, 0, apierr.Internal()
+		return nil, 0, apierr.Internal(err)
 	}
 
 	ids := make([]primitive.ObjectID, 0, len(transfers))
@@ -85,7 +85,7 @@ func (s *AirportTransferService) List(ctx context.Context, tenantID primitive.Ob
 	}
 	customers, err := s.customerRepo.FindByIDs(ctx, tenantID, ids)
 	if err != nil {
-		return nil, 0, apierr.Internal()
+		return nil, 0, apierr.Internal(err)
 	}
 	byID := make(map[primitive.ObjectID]*models.Customer, len(customers))
 	for _, c := range customers {
@@ -109,15 +109,15 @@ func (s *AirportTransferService) GetByID(ctx context.Context, tenantID primitive
 		if err == mongo.ErrNoDocuments {
 			return nil, apierr.NotFound("airport transfer not found")
 		}
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 
 	customer, err := s.customerRepo.FindByID(ctx, tenantID, t.CustomerID)
 	if err != nil && err != mongo.ErrNoDocuments {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	if err := s.resolveLastEditedBy(ctx, tenantID, []*models.AirportTransfer{t}); err != nil {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	return &AirportTransferDetail{AirportTransfer: *t, Customer: customer}, nil
 }

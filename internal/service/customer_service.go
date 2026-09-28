@@ -56,7 +56,7 @@ func (s *CustomerService) List(ctx context.Context, tenantID primitive.ObjectID,
 
 	customers, total, err := s.repo.FindAll(ctx, tenantID, page, limit)
 	if err != nil {
-		return nil, 0, apierr.Internal()
+		return nil, 0, apierr.Internal(err)
 	}
 
 	ids := make([]primitive.ObjectID, len(customers))
@@ -66,18 +66,18 @@ func (s *CustomerService) List(ctx context.Context, tenantID primitive.ObjectID,
 
 	bookingCounts, err := s.bookingRepo.CountByCustomerIDs(ctx, tenantID, ids)
 	if err != nil {
-		return nil, 0, apierr.Internal()
+		return nil, 0, apierr.Internal(err)
 	}
 	rentalCounts, err := s.rentalRepo.CountByCustomerIDs(ctx, tenantID, ids)
 	if err != nil {
-		return nil, 0, apierr.Internal()
+		return nil, 0, apierr.Internal(err)
 	}
 	transferCounts, err := s.transferRepo.CountByCustomerIDs(ctx, tenantID, ids)
 	if err != nil {
-		return nil, 0, apierr.Internal()
+		return nil, 0, apierr.Internal(err)
 	}
 	if err := s.resolveLastEditedBy(ctx, tenantID, customers); err != nil {
-		return nil, 0, apierr.Internal()
+		return nil, 0, apierr.Internal(err)
 	}
 
 	summaries := make([]*CustomerSummary, len(customers))
@@ -103,23 +103,23 @@ func (s *CustomerService) GetByID(ctx context.Context, tenantID primitive.Object
 		if err == mongo.ErrNoDocuments {
 			return nil, apierr.NotFound("customer not found")
 		}
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 
 	bookings, _, err := s.bookingRepo.FindAll(ctx, tenantID, bson.M{"customer_id": id}, 1, maxRelatedRecords)
 	if err != nil {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	rentals, _, err := s.rentalRepo.FindAll(ctx, tenantID, bson.M{"customer_id": id}, 1, maxRelatedRecords)
 	if err != nil {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	transfers, _, err := s.transferRepo.FindAll(ctx, tenantID, bson.M{"customer_id": id}, 1, maxRelatedRecords)
 	if err != nil {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	if err := s.resolveLastEditedBy(ctx, tenantID, []*models.Customer{c}); err != nil {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 
 	return &CustomerDetail{

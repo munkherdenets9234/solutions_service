@@ -1,0 +1,5199 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "DigitalService API",
+    "version": "1.0.0",
+    "description": "Multi-tenant Go/Gin + MongoDB travel API. All GET requests are open reads: tenant-scoped ones (destinations, blogs, cars, packages, and every `/admin/*` list/get) only need `X-API-Key` to identify the tenant, and platform-level ones (`/platform/tenants`, `/platform/admins`, `/platform/projects`, `/platform/reviews`, `/platform/packages`, `/platform/quotes`) need no auth at all. Every mutating request (POST/PUT/PATCH/DELETE) still requires the appropriate auth: `X-API-Key` for tenant-scoped writes, additionally a Bearer token with the `admin` role for `/admin/*` writes, and a Bearer token with the `superadmin` role for `/platform/*` writes — except `POST /platform/quotes`, deliberately open with no auth at all (see below). Tenant-scoped writes also pass through SubscriptionMiddleware, which asks tenantcore (NOT this service, which no longer stores subscriptions) what the tenant is entitled to — a tenant with an inactive/expired subscription gets 402, a tenant with no subscription record at all is not held to any subscription state, and a failed lookup is a 500, never a 402 — except the six customer-facing lead/capture forms (`/bookings`, `/rentals`, `/airport-transfers`, `/contact`, `/quotes`, `/newsletter`), which are always accepted regardless of subscription state. If a tenant has a `domain` set (see `PUT /platform/tenants/{id}/domain`), every tenant-scoped request also passes through domain-bound key validation: a request carrying an `Origin` or `Referer` header that doesn't match that domain is rejected with 403, even with a valid `X-API-Key` — this only applies to browser-originated requests, since server-to-server calls send neither header. `Package` is a platform-wide catalog managed only via `/platform/packages` (not tenant-owned) — which tenants show a given package on their own storefront is a separate many-to-many assignment, `TenantPackage`, managed via `/platform/tenants/{id}/packages`; the tenant-scoped `/packages` reads are filtered through that assignment. `/platform/reviews` (TenantReview) are testimonials *from* the platform's own onboarded tenants for the operator's own Review page — distinct from tenant-scoped `/reviews` (a tenant's own customers reviewing that tenant's tours/partners). `Quote.tenant_id` is optional — a quote is a lead for a *potential* tenant, not every one has (or ever gets) an existing tenant relationship, so `POST /platform/quotes` accepts tenant-less leads with no auth at all, alongside the existing tenant-scoped `POST /quotes` (which does set `tenant_id`, from the X-API-Key); `GET /platform/quotes` and `PUT /platform/quotes/{id}/status` work across both."
+  },
+  "servers": [
+    {
+      "url": "/",
+      "description": "Same host that serves this docs page"
+    }
+  ],
+  "tags": [
+    {
+      "name": "Health"
+    },
+    {
+      "name": "Platform · Admins"
+    },
+    {
+      "name": "Platform · Tenants"
+    },
+    {
+      "name": "Platform · Projects"
+    },
+    {
+      "name": "Platform · Reviews"
+    },
+    {
+      "name": "Platform · Subscriptions"
+    },
+    {
+      "name": "Auth & Users"
+    },
+    {
+      "name": "Account"
+    },
+    {
+      "name": "Destinations"
+    },
+    {
+      "name": "Blogs"
+    },
+    {
+      "name": "Bookings"
+    },
+    {
+      "name": "Cars"
+    },
+    {
+      "name": "Reviews"
+    },
+    {
+      "name": "Partners"
+    },
+    {
+      "name": "Packages"
+    },
+    {
+      "name": "Rentals"
+    },
+    {
+      "name": "Airport Transfers"
+    },
+    {
+      "name": "Contact Messages"
+    },
+    {
+      "name": "Quotes"
+    },
+    {
+      "name": "Newsletter"
+    },
+    {
+      "name": "Customers"
+    },
+    {
+      "name": "Uploads"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key",
+        "description": "Identifies the tenant. Format sk_live_<64 hex>, shown once at tenant creation / rotate-key. If the tenant has a domain set, this key is only accepted from requests whose Origin/Referer matches it (see PUT /platform/tenants/{id}/domain)."
+      },
+      "BearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Carries user_id, role, tenant_id. Obtained from /login (tenant users) or /platform/login (superadmin)."
+      }
+    },
+    "schemas": {
+      "SuccessResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "data": {
+            "type": "object"
+          }
+        }
+      },
+      "ListMeta": {
+        "type": "object",
+        "properties": {
+          "total": {
+            "type": "integer",
+            "example": 42
+          },
+          "page": {
+            "type": "integer",
+            "example": 1
+          },
+          "limit": {
+            "type": "integer",
+            "example": 20
+          }
+        }
+      },
+      "ListResponse": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": true
+          },
+          "data": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          },
+          "meta": {
+            "$ref": "#/components/schemas/ListMeta"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "description": "Every error response has this shape. Branch on error.code, which is stable; the message is prose and may be reworded or translated. The top-level message repeats error.message and is kept for existing clients.",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "example": false
+          },
+          "message": {
+            "type": "string",
+            "example": "destination not found"
+          },
+          "error": {
+            "type": "object",
+            "properties": {
+              "domain": {
+                "type": "string",
+                "enum": [
+                  "GENERAL",
+                  "AUTH",
+                  "TENANT",
+                  "SUBSCRIPTION",
+                  "DB",
+                  "UPLOAD"
+                ],
+                "description": "Subsystem the error came from.",
+                "example": "GENERAL"
+              },
+              "code": {
+                "type": "string",
+                "enum": [
+                  "INTERNAL_ERROR",
+                  "BAD_REQUEST",
+                  "UNAUTHORIZED",
+                  "FORBIDDEN",
+                  "NOT_FOUND",
+                  "CONFLICT",
+                  "VALIDATION_FAILED",
+                  "UPSTREAM_ERROR",
+                  "RATE_LIMITED",
+                  "FEATURE_UNAVAILABLE",
+                  "SUBSCRIPTION_REQUIRED"
+                ],
+                "description": "Machine-readable identifier. RATE_LIMITED (429) is accompanied by a Retry-After header. FEATURE_UNAVAILABLE (503) means an optional dependency is not configured on this deployment - see GET /readyz - not that the request was wrong.",
+                "example": "NOT_FOUND"
+              },
+              "message": {
+                "type": "string",
+                "example": "destination not found"
+              },
+              "stack_trace": {
+                "type": "string",
+                "description": "Development builds only; never present in production."
+              }
+            }
+          }
+        }
+      }
+    },
+    "responses": {
+      "BadRequest": {
+        "description": "Validation error",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Unauthorized": {
+        "description": "Missing/invalid API key or bearer token",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Forbidden": {
+        "description": "Token role/tenant does not match what this route requires",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "NotFound": {
+        "description": "Resource not found",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "Conflict": {
+        "description": "Resource already exists",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      },
+      "PaymentRequired": {
+        "description": "Tenant subscription is inactive or expired",
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorResponse"
+            }
+          }
+        }
+      }
+    },
+    "parameters": {
+      "Page": {
+        "name": "page",
+        "in": "query",
+        "schema": {
+          "type": "integer",
+          "default": 1
+        }
+      },
+      "Limit": {
+        "name": "limit",
+        "in": "query",
+        "schema": {
+          "type": "integer",
+          "default": 20,
+          "maximum": 100
+        }
+      },
+      "Lang": {
+        "name": "lang",
+        "in": "query",
+        "description": "Locale for translatable fields. Falls back to the Accept-Language header, then to \"en\" if omitted or unsupported.",
+        "schema": {
+          "type": "string",
+          "enum": [
+            "en",
+            "mn"
+          ]
+        }
+      }
+    }
+  },
+  "paths": {
+    "/healthz": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Liveness check",
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/readyz": {
+      "get": {
+        "tags": [
+          "Health"
+        ],
+        "summary": "Readiness and feature report",
+        "description": "Reports which optional features this deployment actually has. Optional dependencies degrade rather than crash the service, so a feature can be switched off by configuration without anything else failing - this endpoint is how that stays visible. Always 200: a deployment missing an optional feature is degraded, not unhealthy, and returning a failure status here would make an orchestrator restart a process that is working as configured. Alert on degraded=true, not on the status code.",
+        "responses": {
+          "200": {
+            "description": "ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    },
+                    "env": {
+                      "type": "string",
+                      "example": "production"
+                    },
+                    "degraded": {
+                      "type": "boolean",
+                      "description": "true when any feature is disabled.",
+                      "example": true
+                    },
+                    "features": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "name": {
+                            "type": "string",
+                            "example": "uploads"
+                          },
+                          "enabled": {
+                            "type": "boolean",
+                            "example": false
+                          },
+                          "detail": {
+                            "type": "string",
+                            "description": "Present only when disabled. Names the setting that re-enables it.",
+                            "example": "CLOUDINARY_URL is not set - POST /admin/uploads returns 503 FEATURE_UNAVAILABLE"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/platform/login": {
+      "post": {
+        "tags": [
+          "Platform · Admins"
+        ],
+        "summary": "Platform login",
+        "description": "Public. Returns a Bearer token with role `superadmin`.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              },
+              "example": {
+                "email": "ops@eandstravel.example.com",
+                "password": "changeme"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                },
+                "example": {
+                  "success": true,
+                  "data": {
+                    "token": "eyJ..."
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/api/v1/platform/admins": {
+      "post": {
+        "tags": [
+          "Platform · Admins"
+        ],
+        "summary": "Create platform user",
+        "description": "Omit `password` to auto-generate one (returned once).",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object"
+              },
+              "example": {
+                "name": "Second Superadmin",
+                "email": "ops2@eandstravel.example.com"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Platform · Admins"
+        ],
+        "summary": "List platform users",
+        "description": "Public — no auth required.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/platform/admins/{id}/status": {
+      "put": {
+        "tags": [
+          "Platform · Admins"
+        ],
+        "summary": "Update platform user status",
+        "description": "Refuses to suspend the last active user.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "status": "suspended"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/platform/admins/{id}/password": {
+      "put": {
+        "tags": [
+          "Platform · Admins"
+        ],
+        "summary": "Reset platform user password",
+        "description": "Omit new_password to auto-generate one, returned once. Provided values need 8+ chars.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "new_password": ""
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/platform/account/password": {
+      "put": {
+        "tags": [
+          "Platform · Admins"
+        ],
+        "summary": "Change own platform password",
+        "description": "Verifies current_password first; new_password must be 8+ chars.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "current_password": "changeme",
+                "new_password": "a-new-strong-password"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/platform/tenants": {
+      "post": {
+        "tags": [
+          "Platform · Tenants"
+        ],
+        "summary": "Create tenant",
+        "description": "Returns the tenant's raw api_key exactly once. If contact_email is set, also bootstraps a first admin tenant-user login and returns login.password once.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "name": "Nomad Trails LLC",
+                "slug": "nomad-trails",
+                "contact_email": "ops@nomadtrails.example.com"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Platform · Tenants"
+        ],
+        "summary": "List tenants",
+        "description": "Public — no auth required. Each tenant embeds `project` — its linked TenantDetail record from the separate tenant_details table (see PUT .../project) — with full, unresolved locale maps, or omitted if the tenant has none yet.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/platform/tenants/{id}": {
+      "get": {
+        "tags": [
+          "Platform · Tenants"
+        ],
+        "summary": "Get tenant by ID",
+        "description": "Public — no auth required. Embeds `project` — see GET /platform/tenants.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/platform/tenants/{id}/status": {
+      "put": {
+        "tags": [
+          "Platform · Tenants"
+        ],
+        "summary": "Update tenant status",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "status": "suspended"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/platform/tenants/{id}/rotate-key": {
+      "post": {
+        "tags": [
+          "Platform · Tenants"
+        ],
+        "summary": "Rotate tenant API key",
+        "description": "Invalidates the old key immediately.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/platform/tenants/{id}/domain": {
+      "put": {
+        "tags": [
+          "Platform · Tenants"
+        ],
+        "summary": "Set tenant domain",
+        "description": "Binds this tenant's X-API-Key to a domain. Once set, TenantMiddleware rejects requests whose Origin/Referer doesn't match it, even with a valid key. Stored lowercase, without scheme/path/port.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "domain": "acme.yourapp.com"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/api/v1/platform/tenants/{id}/project": {
+      "put": {
+        "tags": [
+          "Platform · Tenants"
+        ],
+        "summary": "Update tenant project-showcase content",
+        "description": "Partial update ($set) into this tenant's record in the separate tenant_details table (its \"Our Projects\" case-study content: tagline, description, category, website_url, cover_image, admin_cover, images, metrics, showcase, featured, sort_order) — deliberately a different table from the tenant's own identity/billing fields (status, domain, api key), which keep their own dedicated routes and are never touched by this one. Only the fields present in the body are changed; omitted fields are left as-is (matching the partial-update behavior of PUT /admin/partners/{id} etc.) — locale-map fields can be set per-locale via dot notation, e.g. `{\"tagline.mn\": \"...\"}`. website_url is the project's own live site shown as `live_url` on the public read (falling back to the tenant's bound Domain if unset); admin_cover is a separate image curated for front-page/list display, independent of cover_image (the case-study detail page's hero banner). Set showcase to true for the tenant to appear on GET /platform/projects, and the saved record is also embedded as `project` on GET /platform/tenants and /platform/tenants/{id}.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "tagline": {
+                  "en": "A modern travel storefront",
+                  "mn": "Орчин үеийн аяллын дэлгүүр"
+                },
+                "description": {
+                  "en": "Rebuilt Nomad Trails' booking flow end-to-end."
+                },
+                "category": "Travel",
+                "website_url": "https://nomadtrails.example.com",
+                "showcase": true,
+                "featured": true,
+                "sort_order": 1,
+                "cover_image": {
+                  "url": "https://cdn.example.com/projects/nomad-trails.jpg",
+                  "caption": "Nomad Trails homepage"
+                },
+                "admin_cover": {
+                  "url": "https://cdn.example.com/projects/nomad-trails-grid.jpg",
+                  "caption": "Homepage grid image"
+                },
+                "images": [],
+                "metrics": [
+                  {
+                    "label": {
+                      "en": "Faster checkout"
+                    },
+                    "value": "40%"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/platform/tenants/{id}/quotes": {
+      "get": {
+        "tags": [
+          "Quotes"
+        ],
+        "summary": "List quote requests for a tenant (platform)",
+        "description": "Same data as GET /admin/quotes, but for a platform superadmin who has no tenant X-API-Key to send — the tenant comes from the path instead. Read-only: status changes still only happen through a tenant's own admin panel (PUT /admin/quotes/{id}/status).",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/platform/projects": {
+      "get": {
+        "tags": [
+          "Platform · Projects"
+        ],
+        "summary": "List showcased projects",
+        "description": "Public — no auth required. Joins active tenants against their tenant_details record where showcase=true, sorted by sort_order. This is the \"Our Projects\" storefront listing — a distinct, curated, locale-resolved read from GET /platform/tenants, which stays the platform's own full-detail tenant management view (contact_email, status, api_key_last4, and the raw `project` object included) and is unfiltered by showcase. tagline/description/metric labels are resolved to a single locale per `lang`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Lang"
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/platform/projects/{slug}": {
+      "get": {
+        "tags": [
+          "Platform · Projects"
+        ],
+        "summary": "Get a showcased project by tenant slug",
+        "description": "Public — no auth required. 404 if the tenant isn't active or showcase isn't enabled. The case-study detail page. `live_url` is the project's website_url if set, otherwise falls back to the tenant's bound domain (see PUT /platform/tenants/{id}/domain). `admin_cover` is a separate, front-page-curated image distinct from `cover_image` (the detail page's hero banner).",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Lang"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/platform/reviews": {
+      "get": {
+        "tags": [
+          "Platform · Reviews"
+        ],
+        "summary": "List tenant reviews",
+        "description": "Public — no auth required. Active testimonials only. Returns just what the Review page needs: id, rate, comment, company_name, company_owner_name. comment is resolved to a single locale per `lang`.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Lang"
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                },
+                "example": {
+                  "success": true,
+                  "data": [
+                    {
+                      "id": "665f1b2e8f1b2c0012a3b999",
+                      "rate": 5,
+                      "comment": "Inno Nomads shipped our site faster than we expected.",
+                      "company_name": "Nomad Retail LLC",
+                      "company_owner_name": "Bat-Erdene O."
+                    }
+                  ],
+                  "meta": {
+                    "total": 1,
+                    "page": 1,
+                    "limit": 20
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Platform · Reviews"
+        ],
+        "summary": "Create tenant review",
+        "description": "tenant_id must reference an existing tenant (see /platform/tenants); rate must be 1-5; comment (locale map) and company_name are required. company_owner_name is optional free text.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "tenant_id": "665f1b2e8f1b2c0012a3b111",
+                "rate": 5,
+                "comment": {
+                  "en": "Inno Nomads shipped our site faster than we expected.",
+                  "mn": "Инно Номадс манай сайтыг хүлээснээс хурдан гаргаж өгсөн."
+                },
+                "company_name": "Nomad Retail LLC",
+                "company_owner_name": "Bat-Erdene O."
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/platform/reviews/{id}": {
+      "put": {
+        "tags": [
+          "Platform · Reviews"
+        ],
+        "summary": "Update tenant review",
+        "description": "Partial update. If rate is present it must be an integer between 1 and 5. comment can be updated per-locale via dot notation, e.g. `{\"comment.mn\": \"...\"}`.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "rate": 4
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Platform · Reviews"
+        ],
+        "summary": "Delete tenant review",
+        "description": "Soft delete — sets is_active to false, removing it from the public list.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/login": {
+      "post": {
+        "tags": [
+          "Auth & Users"
+        ],
+        "summary": "Tenant user login",
+        "description": "Public but still requires X-API-Key to identify which tenant to authenticate against.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "email": "ops@nomadtrails.example.com",
+                "password": "changeme"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/users": {
+      "post": {
+        "tags": [
+          "Auth & Users"
+        ],
+        "summary": "Create tenant user",
+        "description": "role must be admin|staff (defaults to staff). Any other value, including superadmin, returns 400 invalid role. Omit password to auto-generate.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "name": "Bataar Ganbold",
+                "email": "bataar@nomadtrails.example.com",
+                "role": "staff"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "get": {
+        "tags": [
+          "Auth & Users"
+        ],
+        "summary": "List tenant users",
+        "description": "X-API-Key only — no admin token needed to read.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/users/{id}/status": {
+      "put": {
+        "tags": [
+          "Auth & Users"
+        ],
+        "summary": "Update tenant user status",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "status": "suspended"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/users/{id}/password": {
+      "put": {
+        "tags": [
+          "Auth & Users"
+        ],
+        "summary": "Reset tenant user password",
+        "description": "Omit new_password to auto-generate one, returned once. Provided values need 8+ chars.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "example": {
+                "new_password": ""
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/account/password": {
+      "put": {
+        "tags": [
+          "Account"
+        ],
+        "summary": "Change own password",
+        "description": "Admin or staff. Verifies current_password first; new_password must be 8+ chars.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "current_password": "changeme",
+                "new_password": "a-new-strong-password"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          }
+        }
+      }
+    },
+    "/api/v1/destinations": {
+      "get": {
+        "tags": [
+          "Destinations"
+        ],
+        "summary": "List destinations",
+        "description": "All query params are optional and combine as AND filters. Only active destinations are returned. Translatable fields (overview, highlights, activities, inclusions, exclusions, accommodation, meal_plan, difficulty, itinerary day text) are resolved to a single locale per `lang` — see `#/components/parameters/Lang`.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "category",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "example": "cultural"
+          },
+          {
+            "name": "region",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "example": "gobi"
+          },
+          {
+            "name": "season",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "example": "summer"
+          },
+          {
+            "name": "featured",
+            "in": "query",
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Lang"
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/destinations/{slug}": {
+      "get": {
+        "tags": [
+          "Destinations"
+        ],
+        "summary": "Get destination by slug",
+        "description": "Translatable fields are resolved to a single locale per `lang` — see `#/components/parameters/Lang`.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Lang"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/destinations": {
+      "get": {
+        "tags": [
+          "Destinations"
+        ],
+        "summary": "List all destinations (admin)",
+        "description": "Active and inactive, with translatable fields returned as full locale maps (e.g. `{\"en\": \"...\", \"mn\": \"...\"}`) rather than resolved to one language, so the CMS can edit every language at once. Each item includes `lastEditedBy` — the display name of the tenant user who last created/updated it — when known.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Destinations"
+        ],
+        "summary": "Create destination",
+        "description": "Full model — unset fields default to zero value. Translatable fields (overview, highlights, activities, inclusions, exclusions, accommodation, meal_plan, difficulty, and itinerary day title/description/overnight/activities/meals) are locale maps keyed by language code, e.g. `{\"en\": \"...\", \"mn\": \"...\"}`. A locale may be omitted; reads fall back to `en`.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "name": "Gobi Desert Classic",
+                "slug": "gobi-desert-classic",
+                "overview": {
+                  "en": "A 7-day journey through the dunes, canyons and nomadic camps of the Gobi.",
+                  "mn": "Говийн элсэн манхан, хавцал, нүүдэлчдийн буудлаар дамжих 7 хоногийн аялал."
+                },
+                "region": "gobi",
+                "location": {
+                  "lat": 43.5,
+                  "lng": 103.8
+                },
+                "duration_days": 7,
+                "group_size": {
+                  "min": 2,
+                  "max": 12
+                },
+                "prices": [
+                  {
+                    "min_people": 2,
+                    "max_people": 4,
+                    "price_usd": 1250
+                  },
+                  {
+                    "min_people": 5,
+                    "max_people": 12,
+                    "price_usd": 990
+                  }
+                ],
+                "best_seasons": [
+                  "spring",
+                  "summer",
+                  "autumn"
+                ],
+                "departures": [
+                  {
+                    "start_date": "2026-08-01T00:00:00Z",
+                    "end_date": "2026-08-07T00:00:00Z",
+                    "available": true
+                  }
+                ],
+                "highlights": {
+                  "en": [
+                    "Camel trek through the Khongoryn Els dunes",
+                    "Overnight in a nomadic ger camp",
+                    "Explore Yolyn Am ice canyon"
+                  ]
+                },
+                "activities": {
+                  "en": [
+                    "Camel riding",
+                    "Hiking",
+                    "Wildlife spotting"
+                  ]
+                },
+                "inclusions": {
+                  "en": [
+                    "All accommodation",
+                    "Private driver-guide",
+                    "All meals"
+                  ]
+                },
+                "exclusions": {
+                  "en": [
+                    "International flights",
+                    "Travel insurance",
+                    "Personal expenses"
+                  ]
+                },
+                "itinerary": [
+                  {
+                    "day": 1,
+                    "title": {
+                      "en": "Arrival & Yolyn Am"
+                    },
+                    "description": {
+                      "en": "Drive to Yolyn Am ice canyon in the Gurvan Saikhan mountains."
+                    },
+                    "activities": {
+                      "en": [
+                        "Hiking",
+                        "Wildlife spotting"
+                      ]
+                    },
+                    "overnight": {
+                      "en": "Ger Camp"
+                    },
+                    "meals": {
+                      "en": [
+                        "lunch",
+                        "dinner"
+                      ]
+                    }
+                  },
+                  {
+                    "day": 2,
+                    "title": {
+                      "en": "Khongoryn Els Dunes"
+                    },
+                    "description": {
+                      "en": "Camel trek among Mongolia's largest sand dunes."
+                    },
+                    "activities": {
+                      "en": [
+                        "Camel riding"
+                      ]
+                    },
+                    "overnight": {
+                      "en": "Ger Camp"
+                    },
+                    "meals": {
+                      "en": [
+                        "breakfast",
+                        "lunch",
+                        "dinner"
+                      ]
+                    }
+                  }
+                ],
+                "accommodation": {
+                  "en": "4-star hotel + ger camps"
+                },
+                "meal_plan": {
+                  "en": "all meals included"
+                },
+                "difficulty": {
+                  "en": "moderate"
+                },
+                "featured": true,
+                "categories": [
+                  "adventure",
+                  "scenic"
+                ],
+                "tags": [
+                  "desert",
+                  "camel-trekking"
+                ],
+                "cover_image": {
+                  "url": "https://res.cloudinary.com/demo/image/upload/v1699999999/destinations/gobi-cover.jpg",
+                  "caption": "Khongoryn Els dunes at sunset"
+                },
+                "images": [
+                  {
+                    "url": "https://res.cloudinary.com/demo/image/upload/v1699999999/destinations/gobi-1.jpg",
+                    "caption": "Camel trekking"
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/destinations/{id}": {
+      "get": {
+        "tags": [
+          "Destinations"
+        ],
+        "summary": "Get destination by id (admin)",
+        "description": "Returns the destination regardless of active status, with translatable fields as full locale maps. Includes `lastEditedBy` — the display name of the tenant user who last created/updated it — when known.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Destinations"
+        ],
+        "summary": "Update destination",
+        "description": "Partial update ($set). Translatable fields can be updated per-locale via dot notation, e.g. `{\"overview.mn\": \"...\"}`.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "overview.en": "Updated overview text.",
+                "is_active": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Destinations"
+        ],
+        "summary": "Delete destination",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/blogs": {
+      "get": {
+        "tags": [
+          "Blogs"
+        ],
+        "summary": "List published blogs",
+        "description": "Published only. Translatable fields (title, excerpt, content, quote) are resolved to a single locale per `lang` — see `#/components/parameters/Lang`.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Lang"
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/blogs/{slug}": {
+      "get": {
+        "tags": [
+          "Blogs"
+        ],
+        "summary": "Get blog by slug",
+        "description": "Translatable fields are resolved to a single locale per `lang` — see `#/components/parameters/Lang`.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Lang"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/blogs": {
+      "get": {
+        "tags": [
+          "Blogs"
+        ],
+        "summary": "List all blogs (admin)",
+        "description": "Drafts and published, for management views. Optional status query param filters to \"draft\" or \"published\". Each item includes `lastEditedBy` — the display name of the tenant user who last created/updated it — when known.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          },
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "draft",
+                "published"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Blogs"
+        ],
+        "summary": "Create blog",
+        "description": "Created as draft regardless of body. Title, excerpt, content, and quote are locale maps keyed by language code, e.g. `{\"en\": \"...\", \"mn\": \"...\"}`. A locale may be omitted; reads fall back to `en`.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "title": {
+                  "en": "When is the best time to visit Mongolia?",
+                  "mn": "Монголд аялахад тохиромжтой хугацаа хэзээ вэ?"
+                },
+                "slug": "best-time-to-visit-mongolia",
+                "category": "guides",
+                "read_time": 8,
+                "featured": true,
+                "excerpt": {
+                  "en": "A month-by-month guide to timing your journey."
+                },
+                "author": {
+                  "name": "Saraa B.",
+                  "role": "Lead guide"
+                },
+                "date": "2026-06-12",
+                "tags": [
+                  "seasons",
+                  "planning"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/blogs/{id}": {
+      "get": {
+        "tags": [
+          "Blogs"
+        ],
+        "summary": "Get blog by id (admin)",
+        "description": "Returns the blog regardless of status, including full content. Includes `lastEditedBy` — the display name of the tenant user who last created/updated it — when known.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Blogs"
+        ],
+        "summary": "Update blog",
+        "description": "Partial update. Translatable fields can be updated per-locale via dot notation, e.g. `{\"title.mn\": \"...\"}`.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "title.en": "Best Time to Visit Mongolia (Updated 2026)",
+                "tags": [
+                  "travel-tips",
+                  "seasons",
+                  "2026"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/blogs/{id}/publish": {
+      "post": {
+        "tags": [
+          "Blogs"
+        ],
+        "summary": "Publish blog",
+        "description": "No body.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/bookings": {
+      "post": {
+        "tags": [
+          "Bookings"
+        ],
+        "summary": "Create booking",
+        "description": "Customer submits a tour booking. Always accepted regardless of the tenant's subscription state — exempt from SubscriptionMiddleware.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "destination_id": "665f1b2e8f1b2c0012a3b111",
+                "customer": {
+                  "name": "Sarah Connor",
+                  "email": "sarah.connor@example.com",
+                  "phone": "+1-555-0142",
+                  "nationality": "USA"
+                },
+                "booking": {
+                  "travel_dates": {
+                    "start": "2026-08-10T00:00:00Z",
+                    "end": "2026-08-17T00:00:00Z"
+                  },
+                  "travelers": {
+                    "adults": 2,
+                    "children": 0
+                  },
+                  "total_price_usd": 2480
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/bookings": {
+      "get": {
+        "tags": [
+          "Bookings"
+        ],
+        "summary": "List bookings",
+        "description": "X-API-Key only — no admin token needed to read. Each item includes `lastEditedBy` — the display name of the tenant user who last changed its status — when known.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/bookings/{id}": {
+      "get": {
+        "tags": [
+          "Bookings"
+        ],
+        "summary": "Get booking by ID",
+        "description": "X-API-Key only — no admin token needed to read. Includes `lastEditedBy` — the display name of the tenant user who last changed its status — when known.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/bookings/{id}/status": {
+      "put": {
+        "tags": [
+          "Bookings"
+        ],
+        "summary": "Update booking status",
+        "description": "pending → confirmed → completed, or cancelled.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "status": "confirmed"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/cars": {
+      "get": {
+        "tags": [
+          "Cars"
+        ],
+        "summary": "List cars",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "type",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "example": "4x4"
+          },
+          {
+            "name": "fuel",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "example": "diesel"
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/cars/{slug}": {
+      "get": {
+        "tags": [
+          "Cars"
+        ],
+        "summary": "Get car by slug",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/cars": {
+      "post": {
+        "tags": [
+          "Cars"
+        ],
+        "summary": "Create car",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "slug": "toyota-land-cruiser-4x4",
+                "name": "Toyota Land Cruiser 4x4",
+                "type": "4x4",
+                "seats": 6,
+                "fuel": "diesel",
+                "price_per_day_usd": 95,
+                "tags": [
+                  "off-road",
+                  "popular"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/cars/{id}": {
+      "put": {
+        "tags": [
+          "Cars"
+        ],
+        "summary": "Update car",
+        "description": "Partial update.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "price_per_day_usd": 85
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Cars"
+        ],
+        "summary": "Delete car",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/reviews": {
+      "get": {
+        "tags": [
+          "Reviews"
+        ],
+        "summary": "List reviews",
+        "description": "Public read — X-API-Key only. Optional tour/partner query params filter by related_tour/related_partner. `review` is resolved to a single locale per `lang` — see `#/components/parameters/Lang`.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tour",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "example": "gobi-desert-5-days"
+          },
+          {
+            "name": "partner",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "example": "Nomad Camp LLC"
+          },
+          {
+            "$ref": "#/components/parameters/Lang"
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/reviews": {
+      "get": {
+        "tags": [
+          "Reviews"
+        ],
+        "summary": "List all reviews (admin)",
+        "description": "With `review` returned as a full locale map (e.g. `{\"en\": \"...\", \"mn\": \"...\"}`) rather than resolved to one language, so the CMS can edit every language at once. Each item includes `lastEditedBy` — the display name of the tenant user who last created/updated it — when known.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tour",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "example": "gobi-desert-5-days"
+          },
+          {
+            "name": "partner",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "example": "Nomad Camp LLC"
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Reviews"
+        ],
+        "summary": "Create review",
+        "description": "star (1-5 integer) and review are required. review is a locale map keyed by language code, e.g. `{\"en\": \"...\", \"mn\": \"...\"}` — a locale may be omitted; reads fall back to `en`. The related_* fields are free-form references — a name or an external id.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "related_customer": "Anna K.",
+                "star": 5,
+                "review": {
+                  "en": "The Gobi tour exceeded every expectation."
+                },
+                "related_tour": "gobi-desert-5-days",
+                "related_partner": "Nomad Camp LLC"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/reviews/{id}": {
+      "get": {
+        "tags": [
+          "Reviews"
+        ],
+        "summary": "Get review by id (admin)",
+        "description": "Returns the review with its full locale map intact — not exposed publicly (the storefront only ever lists reviews). Includes `lastEditedBy` — the display name of the tenant user who last created/updated it — when known.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Reviews"
+        ],
+        "summary": "Update review",
+        "description": "Partial update. If star is present it must be an integer between 1 and 5. review can be updated per-locale via dot notation, e.g. `{\"review.mn\": \"...\"}`.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "star": 4,
+                "review.en": "Updated review text."
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Reviews"
+        ],
+        "summary": "Delete review",
+        "description": "Hard delete.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/partners": {
+      "get": {
+        "tags": [
+          "Partners"
+        ],
+        "summary": "List partners",
+        "description": "Public read — X-API-Key only. Active partners; optional tag query param filters by tag. Title and description are resolved to a single locale per `lang` — see `#/components/parameters/Lang`.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tag",
+            "in": "query",
+            "schema": {
+              "type": "string"
+            },
+            "example": "accommodation"
+          },
+          {
+            "$ref": "#/components/parameters/Lang"
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/partners/{slug}": {
+      "get": {
+        "tags": [
+          "Partners"
+        ],
+        "summary": "Get partner by slug",
+        "description": "Public read — X-API-Key only. Title and description are resolved to a single locale per `lang` — see `#/components/parameters/Lang`.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Lang"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/partners": {
+      "get": {
+        "tags": [
+          "Partners"
+        ],
+        "summary": "List all partners (admin)",
+        "description": "Active and inactive, with title/description returned as full locale maps (e.g. `{\"en\": \"...\", \"mn\": \"...\"}`) rather than resolved to one language, so the CMS can edit every language at once. Each item includes `lastEditedBy` — the display name of the tenant user who last created/updated it — when known.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Partners"
+        ],
+        "summary": "Create partner",
+        "description": "name and slug are required. name and tag are plain strings (not translated). title and description are locale maps keyed by language code, e.g. `{\"en\": \"...\", \"mn\": \"...\"}`. products is a list of the partner's offerings (not translated); related_review optionally links a featured review by id.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "name": "Nomad Camp LLC",
+                "slug": "nomad-camp-llc",
+                "tag": "accommodation",
+                "title": {
+                  "en": "Authentic ger camps in the Gobi",
+                  "mn": "Говь дахь жинхэнэ гэр буудал"
+                },
+                "description": {
+                  "en": "Family-run ger camps across the southern Gobi."
+                },
+                "image": "https://cdn.example.com/partners/nomad-camp.jpg",
+                "web_url": "https://nomadcamp.example.com",
+                "products": [
+                  {
+                    "name": "Standard ger stay",
+                    "image": "https://cdn.example.com/products/ger.jpg",
+                    "description": "Twin-bed traditional ger with shared facilities."
+                  }
+                ],
+                "related_review": "665f1b2e8f1b2c0012a3b555"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/partners/{id}": {
+      "get": {
+        "tags": [
+          "Partners"
+        ],
+        "summary": "Get partner by id (admin)",
+        "description": "Returns the partner regardless of active status, with title/description as full locale maps. Includes `lastEditedBy` — the display name of the tenant user who last created/updated it — when known.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Partners"
+        ],
+        "summary": "Update partner",
+        "description": "Partial update. Translatable fields can be updated per-locale via dot notation, e.g. `{\"title.mn\": \"...\"}`.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "title.en": "Award-winning ger camps in the Gobi",
+                "tag": "featured-partner"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Partners"
+        ],
+        "summary": "Delete partner",
+        "description": "Soft delete — sets is_active to false, removing it from public reads.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/packages": {
+      "get": {
+        "tags": [
+          "Packages"
+        ],
+        "summary": "List packages assigned to this tenant",
+        "description": "Public read — X-API-Key only. Active packages assigned to this tenant only (see TenantPackage / POST /platform/tenants/{id}/packages), sorted by sort_order. This is the tenant's own storefront price list — a curated view into the platform's shared catalog, not a tenant-owned collection. name/tagline/billing_note/features are resolved to a single locale per `lang` — see `#/components/parameters/Lang`.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Lang"
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/packages/{slug}": {
+      "get": {
+        "tags": [
+          "Packages"
+        ],
+        "summary": "Get an assigned package by slug",
+        "description": "Public read — X-API-Key only. 404 if the package doesn't exist/is inactive, or isn't assigned to this tenant. Translatable fields are resolved to a single locale per `lang` — see `#/components/parameters/Lang`.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Lang"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/platform/packages": {
+      "get": {
+        "tags": [
+          "Packages"
+        ],
+        "summary": "List all packages (platform catalog)",
+        "description": "Public — no auth required. Every package in the platform's shared catalog, active and inactive, with translatable fields as full locale maps — the platform admin's management view of the whole price list, not scoped to any one tenant. Sorted by sort_order. Each item includes `lastEditedBy` — the display name of the platform superadmin who last created/updated it — when known.",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Packages"
+        ],
+        "summary": "Create package (platform catalog)",
+        "description": "Packages are managed platform-wide, not per-tenant — a new package isn't visible to any tenant's storefront until explicitly assigned (see POST /platform/tenants/{id}/packages). slug (globally unique) and name (locale map, at least `en`) are required. tagline, billing_note are locale maps; features is a locale map of string lists. price of 0 means \"not yet set\".",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "slug": "growth",
+                "name": {
+                  "en": "Growth",
+                  "mn": "Өсөлт"
+                },
+                "tagline": {
+                  "en": "For teams scaling their web presence"
+                },
+                "price": 4500000,
+                "currency": "MNT",
+                "billing_note": {
+                  "en": "one-time"
+                },
+                "features": {
+                  "en": [
+                    "Up to 5 pages",
+                    "CMS integration",
+                    "Priority support"
+                  ]
+                },
+                "highlighted": true,
+                "sort_order": 2
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/platform/packages/{id}": {
+      "get": {
+        "tags": [
+          "Packages"
+        ],
+        "summary": "Get package by id (platform catalog)",
+        "description": "Public — no auth required. Returns the package regardless of active status, with translatable fields as full locale maps.",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Packages"
+        ],
+        "summary": "Update package (platform catalog)",
+        "description": "Partial update. Translatable fields can be updated per-locale via dot notation, e.g. `{\"name.mn\": \"...\"}`.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "price": 4200000,
+                "highlighted": true
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "Packages"
+        ],
+        "summary": "Delete package (platform catalog)",
+        "description": "Soft delete — sets is_active to false, removing it from every tenant's storefront that had it assigned (the assignment itself is left intact).",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/platform/tenants/{id}/packages": {
+      "get": {
+        "tags": [
+          "Packages"
+        ],
+        "summary": "List a tenant's assigned packages (platform)",
+        "description": "Public — no auth required. Every package assigned to this tenant regardless of active status — the platform admin's view of that tenant's assignments (see TenantPackage).",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Packages"
+        ],
+        "summary": "Assign a package to a tenant",
+        "description": "package_id must reference an existing platform catalog package. 400 if either id doesn't resolve, 409 if already assigned.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "package_id": "665f1b2e8f1b2c0012a3b777"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          }
+        }
+      }
+    },
+    "/api/v1/platform/tenants/{id}/packages/{package_id}": {
+      "delete": {
+        "tags": [
+          "Packages"
+        ],
+        "summary": "Unassign a package from a tenant",
+        "description": "Removes the assignment only — the package itself is untouched in the platform catalog.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "package_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/rentals": {
+      "post": {
+        "tags": [
+          "Rentals"
+        ],
+        "summary": "Create rental",
+        "description": "Customer requests a car rental. Always accepted regardless of the tenant's subscription state — exempt from SubscriptionMiddleware.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "car_id": "665f1b2e8f1b2c0012a3b444",
+                "customer": {
+                  "name": "John Miller",
+                  "email": "john.miller@example.com",
+                  "phone": "+44-7700-900142",
+                  "nationality": "UK"
+                },
+                "rental": {
+                  "mode": "with_driver",
+                  "pickup_date": "2026-09-01T09:00:00Z",
+                  "return_date": "2026-09-05T18:00:00Z"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/rentals": {
+      "get": {
+        "tags": [
+          "Rentals"
+        ],
+        "summary": "List rentals",
+        "description": "X-API-Key only — no admin token needed to read. Each item includes `lastEditedBy` — the display name of the tenant user who last changed its status — when known.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/rentals/{id}": {
+      "get": {
+        "tags": [
+          "Rentals"
+        ],
+        "summary": "Get rental by ID",
+        "description": "X-API-Key only — no admin token needed to read. Includes `lastEditedBy` — the display name of the tenant user who last changed its status — when known.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/rentals/{id}/status": {
+      "put": {
+        "tags": [
+          "Rentals"
+        ],
+        "summary": "Update rental status",
+        "description": "pending → confirmed → completed, or cancelled.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "status": "confirmed"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/airport-transfers": {
+      "post": {
+        "tags": [
+          "Airport Transfers"
+        ],
+        "summary": "Create airport transfer",
+        "description": "Customer requests a pickup/drop-off. Always accepted regardless of the tenant's subscription state — exempt from SubscriptionMiddleware.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "customer": {
+                  "name": "Elena Petrova",
+                  "email": "elena.petrova@example.com",
+                  "phone": "+7-916-1234567",
+                  "nationality": "Russia"
+                },
+                "transfer": {
+                  "tier": "premium",
+                  "flight_number": "OM207",
+                  "arrival_at": "2026-09-01T07:45:00Z",
+                  "passengers": 3
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/airport-transfers": {
+      "get": {
+        "tags": [
+          "Airport Transfers"
+        ],
+        "summary": "List airport transfers",
+        "description": "X-API-Key only — no admin token needed to read. Each item includes `lastEditedBy` — the display name of the tenant user who last changed its status — when known.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/airport-transfers/{id}": {
+      "get": {
+        "tags": [
+          "Airport Transfers"
+        ],
+        "summary": "Get airport transfer by ID",
+        "description": "X-API-Key only — no admin token needed to read. Includes `lastEditedBy` — the display name of the tenant user who last changed its status — when known.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/airport-transfers/{id}/status": {
+      "put": {
+        "tags": [
+          "Airport Transfers"
+        ],
+        "summary": "Update airport transfer status",
+        "description": "pending → confirmed → completed, or cancelled.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "status": "confirmed"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/contact": {
+      "post": {
+        "tags": [
+          "Contact Messages"
+        ],
+        "summary": "Create contact message",
+        "description": "Contact form submission. Always accepted regardless of the tenant's subscription state — exempt from SubscriptionMiddleware.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "name": "Tomás Ibarra",
+                "email": "tomas.ibarra@example.com",
+                "subject": "Group booking for 15 people",
+                "message": "Hi, we're a university alumni group looking to book the Gobi Desert Classic for 15 people in July 2027."
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/contact-messages": {
+      "get": {
+        "tags": [
+          "Contact Messages"
+        ],
+        "summary": "List contact messages",
+        "description": "X-API-Key only — no admin token needed to read. Each item includes `lastEditedBy` — the display name of the tenant user who last changed its status — when known.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/contact-messages/{id}/status": {
+      "put": {
+        "tags": [
+          "Contact Messages"
+        ],
+        "summary": "Update contact message status",
+        "description": "new → read → responded.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "status": "read"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/quotes": {
+      "post": {
+        "tags": [
+          "Quotes"
+        ],
+        "summary": "Create a quote request (tenant storefront)",
+        "description": "\"Request a quote\" submission through a specific tenant's own storefront — richer than a contact message, carrying the structured details a sales quote needs. name and email are required; package_slug, budget, timeline are free-form and optional. tenant_id is set from the X-API-Key. Always accepted regardless of the tenant's subscription state — exempt from SubscriptionMiddleware.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "name": "Nomin Batbayar",
+                "email": "nomin@example.com",
+                "company_name": "Nomad Retail LLC",
+                "package_slug": "growth",
+                "budget": "$3,000-$6,000",
+                "timeline": "1-2 months",
+                "message": "Need a new e-commerce storefront."
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/quotes": {
+      "get": {
+        "tags": [
+          "Quotes"
+        ],
+        "summary": "List quote requests (tenant)",
+        "description": "This tenant's own leads only. X-API-Key only — no admin token needed to read. Each item includes `lastEditedBy` — the display name of the tenant user who last changed its status — when known.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/quotes/{id}/status": {
+      "put": {
+        "tags": [
+          "Quotes"
+        ],
+        "summary": "Update quote request status (tenant)",
+        "description": "new → contacted → quoted, or closed. Scoped to this tenant's own leads — 404 if the id doesn't belong to it. A tenant-less quote (see POST /platform/quotes) can never be reached here; use PUT /platform/quotes/{id}/status instead.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "status": "contacted"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/platform/quotes": {
+      "get": {
+        "tags": [
+          "Quotes"
+        ],
+        "summary": "List all quote requests (platform)",
+        "description": "Public — no auth required. Every quote across the platform, tenant-linked and tenant-less alike — the consolidated lead list, mirroring GET /platform/packages for the Package catalog. Each item includes `lastEditedBy` when known (resolved against platform users; a lead updated through a tenant's own admin panel instead won't resolve a name here — see GET /admin/quotes for that tenant's own view).",
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "post": {
+        "tags": [
+          "Quotes"
+        ],
+        "summary": "Create a quote request (no tenant)",
+        "description": "\"Request a quote\" submission with no existing tenant relationship — a prospect inquiring before ever signing up. Fully public: no X-API-Key, no bearer token. name and email are required. The created quote has no tenant_id; manage its status via PUT /platform/quotes/{id}/status.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "name": "Prospective Client",
+                "email": "prospect@example.com",
+                "message": "Interested in what you do — no existing account yet."
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          }
+        }
+      }
+    },
+    "/api/v1/platform/quotes/{id}/status": {
+      "put": {
+        "tags": [
+          "Quotes"
+        ],
+        "summary": "Update quote request status (platform)",
+        "description": "new → contacted → quoted, or closed. Works on any quote regardless of tenant — the only way to act on a tenant-less lead (see POST /platform/quotes).",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "status": "contacted"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/newsletter": {
+      "post": {
+        "tags": [
+          "Newsletter"
+        ],
+        "summary": "Subscribe to newsletter",
+        "description": "Newsletter signup form. Always accepted regardless of the tenant's subscription state — exempt from SubscriptionMiddleware. Idempotent: resubmitting the same email is a no-op, not a duplicate error.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "example": {
+                "email": "traveler@example.com"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/newsletter": {
+      "get": {
+        "tags": [
+          "Newsletter"
+        ],
+        "summary": "List newsletter subscribers",
+        "description": "X-API-Key only — no admin token needed to read.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/newsletter/{id}": {
+      "delete": {
+        "tags": [
+          "Newsletter"
+        ],
+        "summary": "Remove a newsletter subscriber",
+        "description": "Unsubscribes/removes the subscriber. Requires an admin-role Bearer token.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/customers": {
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "List customers",
+        "description": "Requires an admin-role Bearer token (unlike other admin lists, which are X-API-Key only). Each customer includes counts of its related bookings/rentals/airport transfers, not the records themselves — see the detail endpoint for full related data. Also includes `lastEditedBy` — the display name of the tenant user who last created/updated it — when known.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "$ref": "#/components/parameters/Page"
+          },
+          {
+            "$ref": "#/components/parameters/Limit"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ListResponse"
+                },
+                "example": {
+                  "success": true,
+                  "data": [
+                    {
+                      "id": "665f1b2e8f1b2c0012a3b222",
+                      "name": "Sarah Connor",
+                      "email": "sarah.connor@example.com",
+                      "phone": "+1-555-0142",
+                      "booking_count": 2,
+                      "rental_count": 0,
+                      "airport_transfer_count": 1,
+                      "lastEditedBy": "Bataar Ganbold"
+                    }
+                  ],
+                  "meta": {
+                    "total": 1,
+                    "page": 1,
+                    "limit": 20
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/customers/{id}": {
+      "get": {
+        "tags": [
+          "Customers"
+        ],
+        "summary": "Get customer by ID",
+        "description": "Requires an admin-role Bearer token (unlike other admin detail reads, which are X-API-Key only). Returns the customer with its full related bookings, rentals, and airport transfers. Includes `lastEditedBy` — the display name of the tenant user who last created/updated it — when known.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                },
+                "example": {
+                  "success": true,
+                  "data": {
+                    "id": "665f1b2e8f1b2c0012a3b222",
+                    "name": "Sarah Connor",
+                    "email": "sarah.connor@example.com",
+                    "phone": "+1-555-0142",
+                    "bookings": [],
+                    "rentals": [],
+                    "airport_transfers": [],
+                    "lastEditedBy": "Bataar Ganbold"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/uploads": {
+      "post": {
+        "tags": [
+          "Uploads"
+        ],
+        "summary": "Upload a file",
+        "description": "Streams the file to Cloudinary and returns its public URL. `folder` is optional; omit it to upload to Cloudinary's root.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "file": {
+                    "type": "string",
+                    "format": "binary",
+                    "description": "The file to upload."
+                  },
+                  "folder": {
+                    "type": "string",
+                    "description": "Optional Cloudinary folder, e.g. \"destinations\"."
+                  }
+                },
+                "required": [
+                  "file"
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Created",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                },
+                "example": {
+                  "success": true,
+                  "data": {
+                    "url": "https://res.cloudinary.com/demo/image/upload/v1699999999/destinations/abc123.jpg",
+                    "public_id": "destinations/abc123"
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "502": {
+            "description": "Upload to Cloudinary failed"
+          }
+        }
+      }
+    }
+  }
+}

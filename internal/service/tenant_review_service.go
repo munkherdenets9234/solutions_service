@@ -41,7 +41,7 @@ func (s *TenantReviewService) Create(ctx context.Context, rev *models.TenantRevi
 		if err == mongo.ErrNoDocuments {
 			return apierr.BadRequest("invalid tenant_id")
 		}
-		return apierr.Internal()
+		return apierr.Internal(err)
 	}
 	if rev.Rate < 1 || rev.Rate > 5 {
 		return apierr.BadRequest("rate must be between 1 and 5")
@@ -71,7 +71,7 @@ func (s *TenantReviewService) Update(ctx context.Context, idStr string, update b
 		if err == mongo.ErrNoDocuments {
 			return apierr.NotFound("tenant review not found")
 		}
-		return apierr.Internal()
+		return apierr.Internal(err)
 	}
 	return s.repo.Update(ctx, id, update, userID)
 }

@@ -41,14 +41,14 @@ type TenantDetail struct {
 	// shape as CoverImage but chosen independently, since the best image for
 	// a compact front-page card isn't always the same as the full
 	// case-study detail page's hero banner.
-	AdminCover  Image             `bson:"admin_cover,omitempty" json:"admin_cover,omitempty"`
-	Images      []Image           `bson:"images,omitempty" json:"images,omitempty"`
-	Metrics     []ProjectMetric   `bson:"metrics,omitempty" json:"metrics,omitempty"`
-	Showcase    bool              `bson:"showcase" json:"showcase"`
-	Featured    bool              `bson:"featured" json:"featured"`
-	SortOrder   int               `bson:"sort_order,omitempty" json:"sort_order,omitempty"`
-	CreatedAt   time.Time         `bson:"created_at" json:"created_at"`
-	UpdatedAt   time.Time         `bson:"updated_at" json:"updated_at"`
+	AdminCover Image           `bson:"admin_cover,omitempty" json:"admin_cover,omitempty"`
+	Images     []Image         `bson:"images,omitempty" json:"images,omitempty"`
+	Metrics    []ProjectMetric `bson:"metrics,omitempty" json:"metrics,omitempty"`
+	Showcase   bool            `bson:"showcase" json:"showcase"`
+	Featured   bool            `bson:"featured" json:"featured"`
+	SortOrder  int             `bson:"sort_order,omitempty" json:"sort_order,omitempty"`
+	CreatedAt  time.Time       `bson:"created_at" json:"created_at"`
+	UpdatedAt  time.Time       `bson:"updated_at" json:"updated_at"`
 	// UserID is the platform_users._id of the superadmin who last
 	// created/updated this record. Nil if never touched.
 	UserID *primitive.ObjectID `bson:"user_id,omitempty" json:"user_id,omitempty"`

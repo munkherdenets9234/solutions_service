@@ -5,6 +5,10 @@ services:
     dockerfilePath: ./Dockerfile
     dockerContext: .
     plan: starter
+    # healthCheckPath stays /healthz: it answers "is the process up" and
+    # nothing else, so a slow database cannot turn into a restart loop.
+    # /readyz is the one that reports which optional features this deployment
+    # actually has — check it after every deploy, and alert on degraded=true.
     healthCheckPath: /healthz
     envVars:
       - key: APP_ENV
@@ -18,11 +22,30 @@ services:
         generateValue: true # must be at least 32 characters; Render generates a random one
       - key: TOKEN_EXPIRY_HOURS
         value: "24"
+
+      # Optional. Blank leaves POST /api/v1/admin/uploads answering
+      # 503 FEATURE_UNAVAILABLE, and /readyz reports it as disabled.
       - key: CLOUDINARY_URL
         sync: false
+      - key: UPLOAD_MAX_BYTES
+        value: "10485760"
+
       - key: SUPERADMIN_NAME
         value: Superadmin
       - key: SUPERADMIN_EMAIL
         sync: false
       - key: SUPERADMIN_PASSWORD
         sync: false
+
+      # Rate limiting. The buckets are per-instance, so these limits hold as
+      # written only while this service runs a single replica. Scaling out
+      # multiplies the effective limit by the replica count — move the
+      # buckets to Redis before relying on them at more than one instance.
+      - key: RATE_LIMIT_ENABLED
+        value: "true"
+      - key: AUTH_RATE_PER_MINUTE
+        value: "10"
+      - key: LEAD_RATE_PER_MINUTE
+        value: "20"
+      - key: RATE_LIMIT_BURST
+        value: "5"
