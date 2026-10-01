@@ -1,0 +1,348 @@
+package service
+
+import (
+	"context"
+	"errors"
+	"strconv"
+	"strings"
+	"testing"
+
+	"github.com/eandstravel/digitalservice/internal/models"
+	"github.com/eandstravel/digitalservice/pkg/apierr"
+	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
+)
+
+// ── fake ─────────────────────────────────────────────────────────────────
+
+// fakeSiteStore keys pages by tenant, as the real collection does: the unique
+// index is (tenant_id, page).
+type fakeSiteStore struct {
+	pages map[string]*models.SitePage
+}
+
+func newFakeSiteStore() *fakeSiteStore { return &fakeSiteStore{pages: map[string]*models.SitePage{}} }
+
+func siteKey(t primitive.ObjectID, page string) string { return t.Hex() + "/" + page }
+
+func (f *fakeSiteStore) List(_ context.Context, t primitive.ObjectID) ([]*models.SitePage, error) {
+	var out []*models.SitePage
+	for _, p := range f.pages {
+		if p.TenantID == t {
+			out = append(out, p)
+		}
+	}
+	return out, nil
+}
+
+func (f *fakeSiteStore) Find(_ context.Context, t primitive.ObjectID, page string) (*models.SitePage, error) {
+	if p, ok := f.pages[siteKey(t, page)]; ok {
+		return p, nil
+	}
+	return nil, mongo.ErrNoDocuments
+}
+
+func (f *fakeSiteStore) Replace(_ context.Context, t primitive.ObjectID, page string, entries []models.ContentEntry, userID *primitive.ObjectID) error {
+	f.pages[siteKey(t, page)] = &models.SitePage{TenantID: t, Page: page, Entries: entries, UserID: userID}
+	return nil
+}
+
+func entry(path string, kv ...string) models.ContentEntry {
+	v := map[string]any{}
+	for i := 0; i+1 < len(kv); i += 2 {
+		v[kv[i]] = kv[i+1]
+	}
+	return models.ContentEntry{Path: path, Values: v}
+}
+
+func wantBadRequest(t *testing.T, err error, what string) {
+	t.Helper()
+	if err == nil {
+		t.Fatalf("%s: expected an error, got nil", what)
+	}
+	var ae *apierr.APIError
+	if !errors.As(err, &ae) || ae.HTTPStatus != 400 {
+		t.Fatalf("%s: expected a 400 apierr, got %v", what, err)
+	}
+}
+
+func newSiteSvc() (*SitePageService, *fakeSiteStore, primitive.ObjectID) {
+	st := newFakeSiteStore()
+	return NewSitePageService(st), st, primitive.NewObjectID()
+}
+
+// ── Save: validation ─────────────────────────────────────────────────────
+
+func TestSaveRejectsABadPageName(t *testing.T) {
+	svc, _, tn := newSiteSvc()
+	for _, p := range []string{"", strings.Repeat("a", 65), "a b", "a.b", "a/b", "../x", "Сайн"} {
+		_, err := svc.Save(context.Background(), tn, p, nil, nil)
+		wantBadRequest(t, err, "page "+p)
+	}
+	for _, p := range []string{"hero", "tour-Detail_2", strings.Repeat("a", 64)} {
+		if _, err := svc.Save(context.Background(), tn, p, nil, nil); err != nil {
+			t.Fatalf("page %q should be accepted: %v", p, err)
+		}
+	}
+}
+
+func TestSaveRejectsABadPath(t *testing.T) {
+	svc, _, tn := newSiteSvc()
+	for _, p := range []string{"", strings.Repeat("a", 201), "a..b", "a b", ".a", "a.", "a$b"} {
+		_, err := svc.Save(context.Background(), tn, "hero", []models.ContentEntry{entry(p, "en", "x")}, nil)
+		wantBadRequest(t, err, "path "+p)
+	}
+}
+
+func TestSaveRejectsDuplicatePaths(t *testing.T) {
+	svc, _, tn := newSiteSvc()
+	_, err := svc.Save(context.Background(), tn, "hero", []models.ContentEntry{entry("title", "en", "a"), entry("title", "mn", "b")}, nil)
+	wantBadRequest(t, err, "duplicate path")
+}
+
+func TestSaveRejectsMoreThan1000Entries(t *testing.T) {
+	svc, _, tn := newSiteSvc()
+	mk := func(n int) []models.ContentEntry {
+		es := make([]models.ContentEntry, 0, n)
+		for i := 0; i < n; i++ {
+			es = append(es, entry("k"+strconv.Itoa(i), "en", "v"))
+		}
+		return es
+	}
+	if _, err := svc.Save(context.Background(), tn, "hero", mk(1000), nil); err != nil {
+		t.Fatalf("1000 entries should pass: %v", err)
+	}
+	_, err := svc.Save(context.Background(), tn, "hero", mk(1001), nil)
+	wantBadRequest(t, err, "1001 entries")
+}
+
+func TestSaveRejectsAnUnknownLanguage(t *testing.T) {
+	svc, _, tn := newSiteSvc()
+	_, err := svc.Save(context.Background(), tn, "hero", []models.ContentEntry{entry("title", "fr", "Bonjour")}, nil)
+	wantBadRequest(t, err, "fr")
+}
+
+func TestSaveRejectsABadValueType(t *testing.T) {
+	svc, _, tn := newSiteSvc()
+	over := make([]any, 101)
+	for i := range over {
+		over[i] = "x"
+	}
+	bad := map[string]any{
+		"number":         float64(3),
+		"bool":           true,
+		"nested object":  map[string]any{"a": "b"},
+		"array of nums":  []any{float64(1), float64(2)},
+		"obj non-string": []any{map[string]any{"a": float64(1)}},
+		"obj nested":     []any{map[string]any{"a": map[string]any{"b": "c"}}},
+		"5001 chars":     strings.Repeat("a", 5001),
+		"101 items":      over,
+		"mixed array":    []any{"a", map[string]any{"a": "b"}},
+		"null":           nil,
+	}
+	for name, v := range bad {
+		_, err := svc.Save(context.Background(), tn, "hero", []models.ContentEntry{{Path: "t", Values: map[string]any{"en": v}}}, nil)
+		wantBadRequest(t, err, name)
+	}
+}
+
+func TestSaveAcceptsStringsArraysAndFlatObjectArrays(t *testing.T) {
+	svc, st, tn := newSiteSvc()
+	max := make([]any, 100)
+	for i := range max {
+		max[i] = "x"
+	}
+	es := []models.ContentEntry{
+		{Path: "a", Values: map[string]any{"en": strings.Repeat("a", 5000)}},
+		{Path: "b", Values: map[string]any{"en": []any{"one", "two"}}},
+		{Path: "c", Values: map[string]any{"en": []any{map[string]any{"q": "Q?", "a": "A."}}}},
+		{Path: "d", Values: map[string]any{"en": max}},
+	}
+	n, err := svc.Save(context.Background(), tn, "faq", es, nil)
+	if err != nil || n != 4 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	if got := st.pages[siteKey(tn, "faq")]; got == nil || len(got.Entries) != 4 {
+		t.Fatalf("not stored: %+v", got)
+	}
+}
+
+// ── Save: semantics ──────────────────────────────────────────────────────
+
+// Review Focus 1: a language left blank means "use the shipped wording", so it
+// must not be stored as an empty override that would blank the site.
+func TestSaveDropsEntriesWhoseLanguagesAreAllBlank(t *testing.T) {
+	svc, st, tn := newSiteSvc()
+	es := []models.ContentEntry{
+		entry("all.blank", "en", "", "mn", "   \n\t", "ko", ""),
+		{Path: "empty.array", Values: map[string]any{"en": []any{}}},
+		entry("one.filled", "en", "Hello", "mn", "  ", "ko", ""),
+		entry("none"),
+	}
+	n, err := svc.Save(context.Background(), tn, "hero", es, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("stored count = %d, want 1", n)
+	}
+	got := st.pages[siteKey(tn, "hero")].Entries
+	if len(got) != 1 || got[0].Path != "one.filled" {
+		t.Fatalf("entries = %+v", got)
+	}
+	if len(got[0].Values) != 1 || got[0].Values["en"] != "Hello" {
+		t.Fatalf("blank languages must be dropped from Values: %+v", got[0].Values)
+	}
+}
+
+// Review Focus 2: removing an override is saving without it.
+func TestSaveReplacesTheWholePage(t *testing.T) {
+	svc, st, tn := newSiteSvc()
+	n, err := svc.Save(context.Background(), tn, "hero", []models.ContentEntry{entry("a", "en", "1"), entry("b", "en", "2")}, nil)
+	if err != nil || n != 2 {
+		t.Fatalf("first save n=%d err=%v", n, err)
+	}
+	n, err = svc.Save(context.Background(), tn, "hero", []models.ContentEntry{entry("b", "en", "3")}, nil)
+	if err != nil || n != 1 {
+		t.Fatalf("second save n=%d err=%v", n, err)
+	}
+	got := st.pages[siteKey(tn, "hero")].Entries
+	if len(got) != 1 || got[0].Path != "b" || got[0].Values["en"] != "3" {
+		t.Fatalf("page not replaced: %+v", got)
+	}
+	// Saving nothing clears the page.
+	if n, err = svc.Save(context.Background(), tn, "hero", nil, nil); err != nil || n != 0 {
+		t.Fatalf("clear n=%d err=%v", n, err)
+	}
+	if len(st.pages[siteKey(tn, "hero")].Entries) != 0 {
+		t.Fatal("page should be empty")
+	}
+}
+
+// Review Focus 3: text is data. Nothing is escaped, trimmed or normalised on
+// the way in; the site renders it as text.
+func TestSaveStoresRiskyTextVerbatim(t *testing.T) {
+	svc, st, tn := newSiteSvc()
+	vals := map[string]any{
+		"en": `<script>alert("x")</script> 'q' "dq" & ` + "\U0001F600",
+		"mn": "Сайн байна уу",
+		"ko": "  padded  ",
+	}
+	if _, err := svc.Save(context.Background(), tn, "hero", []models.ContentEntry{{Path: "t", Values: vals}}, nil); err != nil {
+		t.Fatal(err)
+	}
+	got := st.pages[siteKey(tn, "hero")].Entries[0].Values
+	for k, v := range vals {
+		if got[k] != v {
+			t.Fatalf("%s changed: %q -> %q", k, v, got[k])
+		}
+	}
+}
+
+func TestSaveRecordsTheActingUser(t *testing.T) {
+	svc, st, tn := newSiteSvc()
+	u := primitive.NewObjectID()
+	if _, err := svc.Save(context.Background(), tn, "hero", []models.ContentEntry{entry("a", "en", "1")}, &u); err != nil {
+		t.Fatal(err)
+	}
+	if got := st.pages[siteKey(tn, "hero")].UserID; got == nil || *got != u {
+		t.Fatalf("user = %v", got)
+	}
+}
+
+// ── Get / List ───────────────────────────────────────────────────────────
+
+func TestGetOfAnUnknownPageIsEmptyNotAnError(t *testing.T) {
+	svc, _, tn := newSiteSvc()
+	p, err := svc.Get(context.Background(), tn, "hero")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Page != "hero" || p.Entries == nil || len(p.Entries) != 0 {
+		t.Fatalf("page = %+v", p)
+	}
+	_, err = svc.Get(context.Background(), tn, "bad page")
+	wantBadRequest(t, err, "bad page name")
+}
+
+func TestListCountsEntriesPerPage(t *testing.T) {
+	svc, _, tn := newSiteSvc()
+	ctx := context.Background()
+	_, _ = svc.Save(ctx, tn, "hero", []models.ContentEntry{entry("a", "en", "1"), entry("b", "en", "2")}, nil)
+	_, _ = svc.Save(ctx, tn, "footer", []models.ContentEntry{entry("a", "en", "1")}, nil)
+	got, err := svc.List(ctx, tn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 2 || got[0].Page != "footer" || got[0].Entries != 1 || got[1].Page != "hero" || got[1].Entries != 2 {
+		t.Fatalf("summaries = %+v", got)
+	}
+}
+
+func TestListReturnsAnEmptySliceNotNil(t *testing.T) {
+	svc, _, tn := newSiteSvc()
+	got, err := svc.List(context.Background(), tn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got == nil || len(got) != 0 {
+		t.Fatalf("want empty non-nil slice, got %#v", got)
+	}
+}
+
+// ── Public ───────────────────────────────────────────────────────────────
+
+func TestPublicReturnsOnlyTheRequestedLanguage(t *testing.T) {
+	svc, _, tn := newSiteSvc()
+	ctx := context.Background()
+	_, _ = svc.Save(ctx, tn, "hero", []models.ContentEntry{
+		entry("title", "en", "Hello", "mn", "Сайн"),
+		entry("sub", "en", "Only English"),
+	}, nil)
+	_, _ = svc.Save(ctx, tn, "footer", []models.ContentEntry{entry("c", "en", "(c)")}, nil)
+
+	mn, err := svc.Public(ctx, tn, "mn")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(mn) != 1 || len(mn["hero"]) != 1 || mn["hero"]["title"] != "Сайн" {
+		t.Fatalf("mn = %+v", mn)
+	}
+	ko, err := svc.Public(ctx, tn, "ko")
+	if err != nil || ko == nil || len(ko) != 0 {
+		t.Fatalf("ko should be {} not nil: %#v err=%v", ko, err)
+	}
+}
+
+func TestPublicRejectsALanguageOutsideEnMnKo(t *testing.T) {
+	svc, _, tn := newSiteSvc()
+	for _, l := range []string{"EN", "fr", ""} {
+		_, err := svc.Public(context.Background(), tn, l)
+		wantBadRequest(t, err, "lang "+l)
+	}
+}
+
+// Review Focus 5.
+func TestTenantsDoNotSeeEachOthersPages(t *testing.T) {
+	svc, _, a := newSiteSvc()
+	b := primitive.NewObjectID()
+	ctx := context.Background()
+	if _, err := svc.Save(ctx, a, "hero", []models.ContentEntry{entry("t", "en", "A only")}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := svc.Public(ctx, b, "en"); len(got) != 0 {
+		t.Fatalf("public leaked: %+v", got)
+	}
+	if got, _ := svc.List(ctx, b); len(got) != 0 {
+		t.Fatalf("list leaked: %+v", got)
+	}
+	if p, _ := svc.Get(ctx, b, "hero"); len(p.Entries) != 0 {
+		t.Fatalf("get leaked: %+v", p)
+	}
+	if _, err := svc.Save(ctx, b, "hero", []models.ContentEntry{entry("t", "en", "B")}, nil); err != nil {
+		t.Fatal(err)
+	}
+	if p, _ := svc.Get(ctx, a, "hero"); p.Entries[0].Values["en"] != "A only" {
+		t.Fatalf("B's save overwrote A: %+v", p.Entries)
+	}
+}
