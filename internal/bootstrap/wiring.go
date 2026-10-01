@@ -38,6 +38,7 @@ type repos struct {
 	tenantPackage   *repository.TenantPackageRepo
 	tenantUser      *repository.TenantUserRepo
 	passwordReset   *repository.TenantPasswordResetRepo
+	sitePage        *repository.SitePageRepo
 	platformUser    *repository.PlatformUserRepo
 }
 
@@ -62,6 +63,7 @@ func newRepos(db *mongo.Database) repos {
 		tenantPackage:   repository.NewTenantPackageRepo(db),
 		tenantUser:      repository.NewTenantUserRepo(db),
 		passwordReset:   repository.NewTenantPasswordResetRepo(db),
+		sitePage:        repository.NewSitePageRepo(db),
 		platformUser:    repository.NewPlatformUserRepo(db),
 	}
 }
@@ -85,6 +87,7 @@ type services struct {
 	tenantPackage   *service.TenantPackageService
 	tenantUser      *service.TenantUserService
 	passwordReset   *service.TenantPasswordResetService
+	sitePage        *service.SitePageService
 	platformUser    *service.PlatformUserService
 
 	// entitlement is the seam the product split runs through. It is an
@@ -142,6 +145,7 @@ func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.
 			notify.NewClient(notify.Config{BaseURL: cfg.TenantcoreURL, ServiceKey: cfg.TenantcoreServiceKey}),
 			log,
 		),
+		sitePage:     service.NewSitePageService(r.sitePage),
 		platformUser: service.NewPlatformUserService(r.platformUser, tokenMaker, cfg.TokenExpiry),
 
 		entitlement:       entProvider,

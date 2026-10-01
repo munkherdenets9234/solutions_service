@@ -151,6 +151,7 @@ func NewForDatabase(ctx context.Context, cfg *config.Config, db *mongo.Database,
 		TenantPackage:   svcs.tenantPackage,
 		TenantUser:      svcs.tenantUser,
 		PasswordReset:   svcs.passwordReset,
+		SitePage:        svcs.sitePage,
 		PlatformUser:    svcs.platformUser,
 		Upload:          svcs.upload,
 	})

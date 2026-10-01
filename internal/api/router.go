@@ -71,6 +71,7 @@ func (s *Server) buildEngine() *gin.Engine {
 		Customer:        d.Customer,
 		TenantUser:      d.TenantUser,
 		PasswordReset:   d.PasswordReset,
+		SitePage:        d.SitePage,
 		Upload:          d.Upload,
 	})
 

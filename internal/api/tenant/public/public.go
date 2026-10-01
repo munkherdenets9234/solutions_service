@@ -37,6 +37,7 @@ type Deps struct {
 	Quote           *service.QuoteService
 	TenantUser      *service.TenantUserService
 	PasswordReset   *service.TenantPasswordResetService
+	SitePage        *service.SitePageService
 
 	// Subscription gates the storefront reads. Supplied by the caller rather
 	// than built here so this package cannot decide which of its own routes

@@ -37,6 +37,7 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 		// rather than "no such code", which is the more useful thing to tell
 		// someone typing one.
 		{"tenant_password_resets", mongo.IndexModel{Keys: bson.D{{Key: "expires_at", Value: 1}}, Options: options.Index().SetExpireAfterSeconds(3600)}},
+		{"site_pages", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "page", Value: 1}}, Options: options.Index().SetUnique(true)}},
 		{"bookings", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}}},
 		{"rentals", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}}},
 		{"airport_transfers", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}}},

@@ -40,6 +40,7 @@ type Deps struct {
 	Quote           *service.QuoteService
 	Customer        *service.CustomerService
 	TenantUser      *service.TenantUserService
+	SitePage        *service.SitePageService
 	Upload          *service.UploadService
 }
 
