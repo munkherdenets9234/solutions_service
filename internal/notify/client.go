@@ -89,7 +89,7 @@ func (c *Client) Send(ctx context.Context, to, template string, data map[string]
 	case res.StatusCode >= 200 && res.StatusCode < 300:
 		return nil
 	case res.StatusCode == http.StatusServiceUnavailable:
-		return errors.New("notify: tenantcore has no mail credentials configured (503)")
+		return errors.New("notify: mail is not configured on tenantcore (503)")
 	case res.StatusCode == http.StatusTooManyRequests:
 		return errors.New("notify: tenantcore rate limited the send (429)")
 	default:
