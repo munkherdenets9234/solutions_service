@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -289,6 +290,24 @@ func TestResetRequestMailsACodeToAnActiveUser(t *testing.T) {
 	}
 	if !stored.ExpiresAt.After(time.Now()) {
 		t.Fatal("stored code is already expired")
+	}
+}
+
+// tenantcore refuses a template whose data is blank, and a user can have no
+// name (the platform seeds some without one). That turned a valid request into
+// a 500 from tenantcore, so the code was stored but never mailed.
+func TestResetRequestMailsAUserWhoHasNoName(t *testing.T) {
+	f := newResetFixture()
+	f.users.add(f.tenantA, "noname@example.com", "", models.TenantUserActive)
+	if err := f.request(f.tenantA, "noname@example.com"); err != nil {
+		t.Fatalf("Request: %v", err)
+	}
+	sent := f.mail.all()
+	if len(sent) != 1 {
+		t.Fatalf("mails = %d, want 1", len(sent))
+	}
+	if strings.TrimSpace(sent[0].data["name"]) == "" {
+		t.Fatalf("name must not be blank, tenantcore rejects it: %+v", sent[0].data)
 	}
 }
 

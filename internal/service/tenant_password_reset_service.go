@@ -154,7 +154,7 @@ func (s *TenantPasswordResetService) issue(ctx context.Context, tenantID primiti
 
 	if err := s.mail.Send(ctx, email, "password_reset_code", map[string]string{
 		"app":        s.appName(ctx, tenantID),
-		"name":       user.Name,
+		"name":       greetingName(user),
 		"code":       code,
 		"expires_in": "10 minutes",
 	}); err != nil {
@@ -262,7 +262,7 @@ func (s *TenantPasswordResetService) Confirm(ctx context.Context, tenantID primi
 		defer cancel()
 		if err := s.mail.Send(nctx, email, "password_changed", map[string]string{
 			"app":  s.appName(nctx, tenantID),
-			"name": user.Name,
+			"name": greetingName(user),
 		}); err != nil {
 			s.log.Error("password changed but the notice could not be mailed", zap.Error(err))
 		}
@@ -301,4 +301,14 @@ func hashResetCode(code string) string {
 
 func normalizeResetEmail(s string) string {
 	return strings.ToLower(strings.TrimSpace(s))
+}
+
+// greetingName is what the email says after "Hello". tenantcore rejects a
+// template with a blank value, and a user can have no name, so an empty one
+// must not reach it or the code is stored but never mailed.
+func greetingName(u *models.TenantUser) string {
+	if n := strings.TrimSpace(u.Name); n != "" {
+		return n
+	}
+	return "there"
 }
