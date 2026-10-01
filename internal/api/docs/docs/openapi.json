@@ -1380,6 +1380,142 @@
         }
       }
     },
+    "/api/v1/password-reset/request": {
+      "post": {
+        "tags": [
+          "Auth & Users"
+        ],
+        "summary": "Mail a password reset code to a tenant user",
+        "description": "Mails a six-digit, single-use code to the address, if it belongs to an **active** user of the tenant the `X-API-Key` identifies. Reachable without a session, because someone who has forgotten their password has none; not reachable without a tenant.\n\n**Always `200`.** An unknown address, a suspended user and a failed send are indistinguishable to the caller, in the body AND in the time taken: everything that depends on the account happens after the response is sent. An identical body is not enough on its own. On the platform-admin version of this flow, waiting for the mail left a real account answering 1.7s later than a fake one, and moving only the send out still left about 250ms of database round trips, which an attacker averages out in a few dozen requests.\n\nThe one exception is `503 FEATURE_UNAVAILABLE`, when this deployment has no link to tenantcore (which sends the mail). That depends on deployment, never on the account, and hiding it would leave the caller waiting for an email that can never arrive.\n\nRequesting again invalidates earlier codes, so only the newest works. **Not subject to the subscription gate**, like login: a tenant whose subscription has lapsed still needs its admins to be able to get back in. Rate limited with login.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email"
+                ],
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  }
+                }
+              },
+              "example": {
+                "email": "enkhjin.erdenebuyan@gmail.com"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Always, whether or not the address belongs to an account",
+            "content": {
+              "application/json": {
+                "example": {
+                  "success": true,
+                  "data": {
+                    "sent": true,
+                    "message": "If that address belongs to an account, a reset code is on its way."
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Malformed email address"
+          },
+          "401": {
+            "description": "Missing or unknown X-API-Key"
+          },
+          "429": {
+            "description": "Rate limited"
+          },
+          "503": {
+            "description": "FEATURE_UNAVAILABLE: no link to tenantcore, so no code can be sent"
+          }
+        }
+      }
+    },
+    "/api/v1/password-reset/confirm": {
+      "post": {
+        "tags": [
+          "Auth & Users"
+        ],
+        "summary": "Set a new password using an emailed code",
+        "description": "Verifies the code and sets the new password.\n\n**Every failure is the same error**, with one message: a wrong code, an expired one, one already used, an address with no outstanding code, and a user who was suspended after the code was issued are not distinguishable from outside.\n\nA six-digit code is a million possibilities, which is only safe because of three limits together: it is **single-use**, it **expires in 10 minutes**, and it is **burned after 5 wrong guesses**. Remove any one and the other two stop being enough. Codes are stored hashed and compared in constant time.\n\nA code is looked up together with its tenant, and the user it was issued for must be the user found in the tenant being asked about, so a code issued for one tenant's user never works for another's, even with the same email.\n\nOn success, other outstanding codes are invalidated and a `password_changed` notice is mailed. **No token is returned**: sign in as a separate step. A reset does **not** end sessions already signed in; tokens are stateless and last until they expire. A new password under 8 characters is a specific `400`.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email",
+                  "code",
+                  "new_password"
+                ],
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  },
+                  "code": {
+                    "type": "string",
+                    "description": "The six-digit code from the email."
+                  },
+                  "new_password": {
+                    "type": "string",
+                    "minLength": 8
+                  }
+                }
+              },
+              "example": {
+                "email": "enkhjin.erdenebuyan@gmail.com",
+                "code": "048213",
+                "new_password": "a-new-strong-password"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Password changed",
+            "content": {
+              "application/json": {
+                "example": {
+                  "success": true,
+                  "data": {
+                    "reset": true
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Invalid, expired or used code (one message for all), or a password under 8 characters"
+          },
+          "401": {
+            "description": "Missing or unknown X-API-Key"
+          },
+          "429": {
+            "description": "Rate limited"
+          }
+        }
+      }
+    },
     "/api/v1/admin/users": {
       "post": {
         "tags": [

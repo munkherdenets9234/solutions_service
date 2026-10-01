@@ -70,6 +70,7 @@ func (s *Server) buildEngine() *gin.Engine {
 		Quote:           d.Quote,
 		Customer:        d.Customer,
 		TenantUser:      d.TenantUser,
+		PasswordReset:   d.PasswordReset,
 		Upload:          d.Upload,
 	})
 

@@ -30,6 +30,7 @@ import (
 	"github.com/eandstravel/digitalservice/internal/entitlement"
 	"github.com/eandstravel/digitalservice/internal/middleware"
 	"github.com/eandstravel/digitalservice/internal/repository"
+	"github.com/eandstravel/digitalservice/internal/service"
 	"github.com/eandstravel/digitalservice/pkg/logger"
 	"github.com/eandstravel/digitalservice/pkg/token"
 	"github.com/gin-gonic/gin"
@@ -49,6 +50,10 @@ type App struct {
 	// entitlement is nil when the platform link is off. Held only so Close
 	// can stop its cache janitor.
 	entitlement *entitlement.Client
+
+	// passwordReset sends its mail after responding, so shutdown drains it: a
+	// reset requested a moment before a restart should still arrive.
+	passwordReset *service.TenantPasswordResetService
 }
 
 // New wires everything from cfg.
@@ -145,6 +150,7 @@ func NewForDatabase(ctx context.Context, cfg *config.Config, db *mongo.Database,
 		TenantReview:    svcs.tenantReview,
 		TenantPackage:   svcs.tenantPackage,
 		TenantUser:      svcs.tenantUser,
+		PasswordReset:   svcs.passwordReset,
 		PlatformUser:    svcs.platformUser,
 		Upload:          svcs.upload,
 	})
@@ -155,6 +161,8 @@ func NewForDatabase(ctx context.Context, cfg *config.Config, db *mongo.Database,
 		Engine:      srv.Handler(),
 		limiter:     limiter,
 		entitlement: svcs.entitlementClient,
+
+		passwordReset: svcs.passwordReset,
 	}, nil
 }
 
@@ -201,6 +209,9 @@ func (a *App) Close(ctx context.Context) {
 		a.limiter.Close()
 	}
 	a.entitlement.Close() // nil-safe
+	if a.passwordReset != nil {
+		a.passwordReset.Drain()
+	}
 	if a.mongo != nil {
 		_ = a.mongo.Disconnect(ctx)
 	}

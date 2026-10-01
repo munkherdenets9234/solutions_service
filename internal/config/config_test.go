@@ -151,3 +151,51 @@ func TestGetEnvFallsBackOnBlank(t *testing.T) {
 		t.Errorf("a whitespace-only value should fall back; got %q", got)
 	}
 }
+
+// Password reset sends its mail through tenantcore, so it needs the same two
+// settings as the entitlement link. Either missing means no code can ever be
+// delivered, and the readiness entry must say so by name.
+func TestPasswordResetNeedsTheTenantcoreLink(t *testing.T) {
+	cases := []struct {
+		name string
+		url  string
+		key  string
+		want bool
+	}{
+		{"both set", "http://localhost:8092", "svc-key", true},
+		{"url only", "http://localhost:8092", "", false},
+		{"key only", "", "svc-key", false},
+		{"neither", "", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			c := validConfig()
+			c.TenantcoreURL, c.TenantcoreServiceKey = tc.url, tc.key
+
+			if got := c.PasswordResetEnabled(); got != tc.want {
+				t.Fatalf("PasswordResetEnabled() = %v, want %v", got, tc.want)
+			}
+
+			var feature *Feature
+			for _, f := range c.Features() {
+				if f.Name == "password_reset" {
+					f := f
+					feature = &f
+				}
+			}
+			if feature == nil {
+				t.Fatal("Features() has no password_reset entry")
+			}
+			if feature.Enabled != tc.want {
+				t.Fatalf("password_reset Enabled = %v, want %v", feature.Enabled, tc.want)
+			}
+			if !tc.want {
+				for _, name := range []string{"TENANTCORE_URL", "TENANTCORE_SERVICE_KEY"} {
+					if !strings.Contains(feature.Detail, name) {
+						t.Fatalf("disabled detail should name %s, got %q", name, feature.Detail)
+					}
+				}
+			}
+		})
+	}
+}

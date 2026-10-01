@@ -91,6 +91,13 @@ func (c Config) EntitlementEnabled() bool {
 	return c.TenantcoreURL != "" && c.TenantcoreServiceKey != ""
 }
 
+// PasswordResetEnabled reports whether a reset code can be delivered. The mail
+// goes through tenantcore, so it needs the same two settings as the entitlement
+// link; without them no code can ever arrive.
+func (c Config) PasswordResetEnabled() bool {
+	return c.TenantcoreURL != "" && c.TenantcoreServiceKey != ""
+}
+
 // Feature is one optional capability and whether this deployment has it.
 type Feature struct {
 	Name    string
@@ -126,6 +133,12 @@ func (c Config) Features() []Feature {
 			Enabled: c.EntitlementEnabled(),
 			Detail: "TENANTCORE_URL/TENANTCORE_SERVICE_KEY are not both set — subscription and " +
 				"module gates are UNENFORCED; every tenant is treated as unprovisioned",
+		},
+		{
+			Name:    "password_reset",
+			Enabled: c.PasswordResetEnabled(),
+			Detail: "TENANTCORE_URL/TENANTCORE_SERVICE_KEY are not both set — a tenant user who forgets their " +
+				"password cannot be sent a reset code, and POST /password-reset/request answers 503",
 		},
 	}
 }

@@ -36,6 +36,7 @@ type Deps struct {
 	Newsletter      *service.NewsletterService
 	Quote           *service.QuoteService
 	TenantUser      *service.TenantUserService
+	PasswordReset   *service.TenantPasswordResetService
 
 	// Subscription gates the storefront reads. Supplied by the caller rather
 	// than built here so this package cannot decide which of its own routes
@@ -58,6 +59,7 @@ func Register(base *gin.RouterGroup, d Deps) {
 		quote:    d.Quote,
 	}
 	auth := &authController{svc: d.TenantUser}
+	reset := &passwordResetController{svc: d.PasswordReset}
 	store := &storefrontController{
 		destination: d.Destination,
 		blog:        d.Blog,
@@ -83,7 +85,16 @@ func Register(base *gin.RouterGroup, d Deps) {
 
 	// Login answers differently for a known and an unknown email, which makes
 	// it an account-existence oracle as well as a guessing target.
-	exempt.Group("", d.AuthRateLimit).POST("/login", auth.Login)
+	authLimited := exempt.Group("", d.AuthRateLimit)
+	authLimited.POST("/login", auth.Login)
+
+	// Password reset sits beside login, OUTSIDE the subscription gate, for the
+	// same reason login does: the gate blocks every mutating method, and a
+	// tenant whose subscription has lapsed still needs its admins to be able to
+	// get back in to see their data. Both are rate limited together, the second
+	// being a guess against a six-digit code and the first costing a mail.
+	authLimited.POST("/password-reset/request", reset.Request)
+	authLimited.POST("/password-reset/confirm", reset.Confirm)
 
 	// ── Behind the subscription gate ─────────────────────────────────────
 	// The gate only blocks mutating methods (see SubscriptionMiddleware), so

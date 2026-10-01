@@ -339,3 +339,28 @@ func TestMountingAModuleLeavesTheBrochureSurfaceIntact(t *testing.T) {
 		}
 	}
 }
+
+// Password reset is reachable without a session (nobody who has forgotten their
+// password has one) but NOT without a tenant: it is scoped by X-API-Key like
+// every other tenant route, which is also what keeps one tenant's reset from
+// touching another's.
+func TestPasswordResetRoutesExistAndRequireAnAPIKey(t *testing.T) {
+	e := testEngine(t)
+
+	want := map[string]bool{
+		"POST /api/v1/password-reset/request": false,
+		"POST /api/v1/password-reset/confirm": false,
+	}
+	for _, r := range e.Routes() {
+		key := r.Method + " " + r.Path
+		if _, ok := want[key]; ok {
+			want[key] = true
+			assertUnauthorized(t, e, r.Method, r.Path, []byte(`{"email":"a@example.com"}`))
+		}
+	}
+	for route, found := range want {
+		if !found {
+			t.Fatalf("route %s is not registered", route)
+		}
+	}
+}

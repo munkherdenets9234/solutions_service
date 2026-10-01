@@ -71,6 +71,7 @@ type Deps struct {
 	Quote           *service.QuoteService
 	Customer        *service.CustomerService
 	TenantUser      *service.TenantUserService
+	PasswordReset   *service.TenantPasswordResetService
 	Upload          *service.UploadService
 }
 
@@ -96,6 +97,7 @@ func Register(base *gin.RouterGroup, d Deps) {
 		Newsletter:      d.Newsletter,
 		Quote:           d.Quote,
 		TenantUser:      d.TenantUser,
+		PasswordReset:   d.PasswordReset,
 		Subscription:    subscription,
 		AuthRateLimit:   d.AuthRateLimit,
 		LeadRateLimit:   d.LeadRateLimit,

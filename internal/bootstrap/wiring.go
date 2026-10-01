@@ -5,6 +5,7 @@ import (
 
 	"github.com/eandstravel/digitalservice/internal/config"
 	"github.com/eandstravel/digitalservice/internal/entitlement"
+	"github.com/eandstravel/digitalservice/internal/notify"
 	"github.com/eandstravel/digitalservice/internal/repository"
 	"github.com/eandstravel/digitalservice/internal/service"
 	"github.com/eandstravel/digitalservice/pkg/token"
@@ -36,6 +37,7 @@ type repos struct {
 	tenantReview    *repository.TenantReviewRepo
 	tenantPackage   *repository.TenantPackageRepo
 	tenantUser      *repository.TenantUserRepo
+	passwordReset   *repository.TenantPasswordResetRepo
 	platformUser    *repository.PlatformUserRepo
 }
 
@@ -59,6 +61,7 @@ func newRepos(db *mongo.Database) repos {
 		tenantReview:    repository.NewTenantReviewRepo(db),
 		tenantPackage:   repository.NewTenantPackageRepo(db),
 		tenantUser:      repository.NewTenantUserRepo(db),
+		passwordReset:   repository.NewTenantPasswordResetRepo(db),
 		platformUser:    repository.NewPlatformUserRepo(db),
 	}
 }
@@ -81,6 +84,7 @@ type services struct {
 	tenantReview    *service.TenantReviewService
 	tenantPackage   *service.TenantPackageService
 	tenantUser      *service.TenantUserService
+	passwordReset   *service.TenantPasswordResetService
 	platformUser    *service.PlatformUserService
 
 	// entitlement is the seam the product split runs through. It is an
@@ -130,7 +134,15 @@ func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.
 		tenantReview:    service.NewTenantReviewService(r.tenantReview, r.tenant),
 		tenantPackage:   service.NewTenantPackageService(r.tenantPackage, r.tenant, r.pkg),
 		tenantUser:      service.NewTenantUserService(r.tenantUser, tokenMaker, cfg.TokenExpiry),
-		platformUser:    service.NewPlatformUserService(r.platformUser, tokenMaker, cfg.TokenExpiry),
+		// Mail goes through tenantcore, over the same link entitlement uses, so
+		// this adds no configuration. A nil client means the link is off; Request
+		// then answers 503 rather than pretending to send.
+		passwordReset: service.NewTenantPasswordResetService(
+			r.tenantUser, r.passwordReset, r.tenant,
+			notify.NewClient(notify.Config{BaseURL: cfg.TenantcoreURL, ServiceKey: cfg.TenantcoreServiceKey}),
+			log,
+		),
+		platformUser: service.NewPlatformUserService(r.platformUser, tokenMaker, cfg.TokenExpiry),
 
 		entitlement:       entProvider,
 		entitlementClient: entClient,
