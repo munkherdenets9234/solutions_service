@@ -28,6 +28,15 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 		{"customers", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "email", Value: 1}}, Options: options.Index().SetUnique(true)}},
 		{"tenant_users", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "email", Value: 1}}, Options: options.Index().SetUnique(true)}},
 		{"platform_users", mongo.IndexModel{Keys: bson.D{{Key: "email", Value: 1}}, Options: options.Index().SetUnique(true)}},
+		// Reset lookups are by tenant and email, newest first.
+		{"tenant_password_resets", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "email", Value: 1}, {Key: "created_at", Value: -1}}}},
+		// A TTL index, so spent codes delete themselves an hour past expiry.
+		// A reset code is a credential, and a collection of old ones is a
+		// collection of hashed credentials sitting in every backup for no
+		// reason. The hour of slack means a stale code is answered "expired"
+		// rather than "no such code", which is the more useful thing to tell
+		// someone typing one.
+		{"tenant_password_resets", mongo.IndexModel{Keys: bson.D{{Key: "expires_at", Value: 1}}, Options: options.Index().SetExpireAfterSeconds(3600)}},
 		{"bookings", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}}},
 		{"rentals", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}}},
 		{"airport_transfers", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "created_at", Value: -1}}}},
