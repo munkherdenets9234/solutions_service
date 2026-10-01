@@ -77,6 +77,9 @@
     },
     {
       "name": "Uploads"
+    },
+    {
+      "name": "Translations"
     }
   ],
   "components": {
@@ -5327,6 +5330,284 @@
           },
           "502": {
             "description": "Upload to Cloudinary failed"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/translations": {
+      "get": {
+        "tags": [
+          "Translations"
+        ],
+        "summary": "List pages with wording overrides",
+        "description": "Tenant admin. Returns the pages that have at least one stored entry, sorted by page, with an entry count. An empty list is `[]`.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                },
+                "example": {
+                  "success": true,
+                  "data": [
+                    {
+                      "page": "home",
+                      "entries": 3,
+                      "updated_at": "2026-10-01T09:30:00Z"
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
+    },
+    "/api/v1/admin/translations/{page}": {
+      "get": {
+        "tags": [
+          "Translations"
+        ],
+        "summary": "Get one page's overrides",
+        "description": "Tenant admin. A page with nothing stored returns an empty `entries` array, not 404.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            "description": "Page key, 1-64 characters of letters, digits, - and _.",
+            "example": "home"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                },
+                "example": {
+                  "success": true,
+                  "data": {
+                    "page": "home",
+                    "entries": [
+                      {
+                        "path": "hero.title",
+                        "values": {
+                          "en": "Discover Mongolia",
+                          "mn": "Монголыг нээ"
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      },
+      "put": {
+        "tags": [
+          "Translations"
+        ],
+        "summary": "Replace one page's overrides",
+        "description": "Tenant admin. Replaces the whole page with the submitted entries; removing an override is saving without it. A language whose value is blank (an empty or whitespace-only string, or an array with no non-blank text) is dropped, and so is an entry left with no language. Values are a string, an array of strings, or an array of flat objects of strings (field names 1-64 characters of letters, digits, - and _, at most 20 per object). Limits: 1000 entries, 5000 characters per string, 100 items per array, 512 KB request body. Languages are en, mn, ko. `entries` in the response is the count stored after cleaning.",
+        "security": [
+          {
+            "ApiKeyAuth": [],
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "page",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[A-Za-z0-9_-]{1,64}$"
+            },
+            "description": "Page key, 1-64 characters of letters, digits, - and _.",
+            "example": "home"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "entries"
+                ],
+                "properties": {
+                  "entries": {
+                    "type": "array",
+                    "maxItems": 1000,
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "path",
+                        "values"
+                      ],
+                      "properties": {
+                        "path": {
+                          "type": "string",
+                          "description": "Dot-separated key, 1-200 characters; each segment letters, digits, - and _.",
+                          "example": "hero.title"
+                        },
+                        "values": {
+                          "type": "object",
+                          "description": "Language code (en, mn, ko) to a string, an array of strings, or an array of flat objects of strings.",
+                          "additionalProperties": true
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "example": {
+                "entries": [
+                  {
+                    "path": "hero.title",
+                    "values": {
+                      "en": "Discover Mongolia",
+                      "mn": "Монголыг нээ"
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                },
+                "example": {
+                  "success": true,
+                  "data": {
+                    "saved": true,
+                    "entries": 1
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "402": {
+            "$ref": "#/components/responses/PaymentRequired"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "413": {
+            "description": "Request body is larger than 512 KB"
+          }
+        }
+      }
+    },
+    "/api/v1/translations": {
+      "get": {
+        "tags": [
+          "Translations"
+        ],
+        "summary": "Storefront wording overrides for one language",
+        "description": "Returns `{page: {path: value}}` for the requested language. Pages and entries with nothing for that language are omitted; the result is `{}` when there are none. `lang` is required and must be exactly en, mn or ko.",
+        "security": [
+          {
+            "ApiKeyAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "lang",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "en",
+                "mn",
+                "ko"
+              ]
+            },
+            "example": "mn"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                },
+                "example": {
+                  "success": true,
+                  "data": {
+                    "home": {
+                      "hero.title": "Монголыг нээ"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
           }
         }
       }

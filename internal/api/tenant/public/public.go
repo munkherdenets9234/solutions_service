@@ -61,6 +61,7 @@ func Register(base *gin.RouterGroup, d Deps) {
 	}
 	auth := &authController{svc: d.TenantUser}
 	reset := &passwordResetController{svc: d.PasswordReset}
+	translations := &translationsController{svc: d.SitePage}
 	store := &storefrontController{
 		destination: d.Destination,
 		blog:        d.Blog,
@@ -121,6 +122,8 @@ func Register(base *gin.RouterGroup, d Deps) {
 	packages := scoped.Group("/packages")
 	packages.GET("", store.ListPackages)
 	packages.GET("/:slug", store.GetPackage)
+
+	scoped.GET("/translations", translations.Get)
 
 	reviews := scoped.Group("/reviews")
 	reviews.GET("", store.ListReviews)

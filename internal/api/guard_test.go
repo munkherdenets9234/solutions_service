@@ -364,3 +364,59 @@ func TestPasswordResetRoutesExistAndRequireAnAPIKey(t *testing.T) {
 		}
 	}
 }
+
+// The translation routes: three for the tenant admin (behind the token and the
+// subscription gate) and one public read for the storefront. All four sit under
+// the tenant's X-API-Key like every other route.
+func TestTranslationRoutesExistAndRequireAnAPIKey(t *testing.T) {
+	e := testEngine(t)
+
+	want := map[string]bool{
+		"GET /api/v1/admin/translations":       false,
+		"GET /api/v1/admin/translations/:page": false,
+		"PUT /api/v1/admin/translations/:page": false,
+		"GET /api/v1/translations":             false,
+	}
+	for _, r := range e.Routes() {
+		key := r.Method + " " + r.Path
+		if _, ok := want[key]; ok {
+			want[key] = true
+			assertUnauthorized(t, e, r.Method, fillParams(r.Path), []byte(`{"entries":[]}`))
+		}
+	}
+	for route, found := range want {
+		if !found {
+			t.Fatalf("route %s is not registered", route)
+		}
+	}
+}
+
+// The editor routes must live under /admin, the group that carries
+// Auth("admin"); the public read must not.
+func TestAdminTranslationRoutesAreInTheTokenGroup(t *testing.T) {
+	e := testEngine(t)
+
+	have := map[string]bool{}
+	for _, r := range e.Routes() {
+		have[r.Method+" "+r.Path] = true
+	}
+	for _, route := range []string{
+		"GET /api/v1/admin/translations",
+		"GET /api/v1/admin/translations/:page",
+		"PUT /api/v1/admin/translations/:page",
+		"GET /api/v1/translations",
+	} {
+		if !have[route] {
+			t.Errorf("route %s is not registered", route)
+		}
+	}
+	for _, route := range []string{
+		"PUT /api/v1/translations/:page",
+		"POST /api/v1/translations",
+		"DELETE /api/v1/translations/:page",
+	} {
+		if have[route] {
+			t.Errorf("unexpected public write route %s", route)
+		}
+	}
+}

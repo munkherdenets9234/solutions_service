@@ -66,6 +66,7 @@ func Register(base *gin.RouterGroup, d Deps) {
 		customer: d.Customer,
 	}
 	uploads := &uploadsController{svc: d.Upload}
+	translations := &translationsController{svc: d.SitePage}
 
 	// Self-service account routes sit OUTSIDE the subscription gate. A user
 	// locked out by an expired password must still be able to change it
@@ -124,4 +125,9 @@ func Register(base *gin.RouterGroup, d Deps) {
 	customers.GET("/:id", ops.GetCustomer)
 
 	admin.POST("/uploads", uploads.Upload)
+
+	tr := admin.Group("/translations")
+	tr.GET("", translations.List)
+	tr.GET("/:page", translations.Get)
+	tr.PUT("/:page", translations.Save)
 }
