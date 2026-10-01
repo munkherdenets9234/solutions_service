@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -154,21 +155,28 @@ func isSiteNameChar(r rune) bool {
 	return r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' || r == '-' || r == '_'
 }
 
-func validateSitePath(path string) error {
-	if path == "" || len(path) > sitePathMaxLen {
-		return apierr.BadRequest("path must be 1-200 characters")
+// validateSitePath returns the broken rule ("" when valid) without echoing the path;
+// it reports which rule a path breaks without echoing the path:
+// the editor shows this message to the user, and a path is user-submitted text.
+// The caller says which entry it was.
+func validateSitePath(path string) string {
+	if path == "" {
+		return ("the path is empty")
+	}
+	if len(path) > sitePathMaxLen {
+		return ("the path is too long (max 200 characters)")
 	}
 	for _, seg := range strings.Split(path, ".") {
 		if seg == "" {
-			return apierr.BadRequest("path " + path + " has an empty segment")
+			return ("the path has an empty segment")
 		}
 		for _, r := range seg {
 			if !isSiteNameChar(r) {
-				return apierr.BadRequest("path " + path + " may contain only letters, digits, -, _ and .")
+				return ("the path may contain only letters, digits, -, _ and .")
 			}
 		}
 	}
-	return nil
+	return ""
 }
 
 // validateEntries checks every rule on the submitted list and returns the
@@ -177,12 +185,12 @@ func validateSitePath(path string) error {
 // left with no language. Values are otherwise kept exactly as sent.
 func validateEntries(entries []models.ContentEntry) ([]models.ContentEntry, error) {
 	seen := make(map[string]struct{}, len(entries))
-	for _, e := range entries {
-		if err := validateSitePath(e.Path); err != nil {
-			return nil, err
+	for i, e := range entries {
+		if rule := validateSitePath(e.Path); rule != "" {
+			return nil, apierr.BadRequest("entry " + strconv.Itoa(i+1) + ": " + rule)
 		}
 		if _, dup := seen[e.Path]; dup {
-			return nil, apierr.BadRequest("duplicate path " + e.Path)
+			return nil, apierr.BadRequest("entry " + strconv.Itoa(i+1) + ": duplicate path")
 		}
 		seen[e.Path] = struct{}{}
 	}
@@ -191,15 +199,15 @@ func validateEntries(entries []models.ContentEntry) ([]models.ContentEntry, erro
 	}
 
 	cleaned := make([]models.ContentEntry, 0, len(entries))
-	for _, e := range entries {
+	for i, e := range entries {
 		values := make(map[string]any, len(e.Values))
 		for lang, v := range e.Values {
 			if !validSiteLocale(lang) {
-				return nil, apierr.BadRequest("unknown language at " + e.Path)
+				return nil, apierr.BadRequest("entry " + strconv.Itoa(i+1) + ": unknown language")
 			}
 			blank, err := checkSiteValue(v)
 			if err != nil {
-				return nil, apierr.BadRequest(err.Error() + " at " + e.Path + " (" + lang + ")")
+				return nil, apierr.BadRequest("entry " + strconv.Itoa(i+1) + " (" + lang + "): " + err.Error())
 			}
 			if !blank {
 				values[lang] = v

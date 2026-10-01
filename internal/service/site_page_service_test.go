@@ -426,3 +426,30 @@ func TestUnknownLanguageErrorDoesNotEchoTheKey(t *testing.T) {
 		t.Fatalf("error echoes the submitted key: %v", err)
 	}
 }
+
+func TestValidationMessagesDoNotEchoSubmittedPaths(t *testing.T) {
+	const secret = "Zq9distinctivepath"
+	svc, _, tn := newSiteSvc()
+	cases := map[string][]models.ContentEntry{
+		"bad char":  {entry(secret+"$x", "en", "v")},
+		"empty seg": {entry(secret+"..x", "en", "v")},
+		"too long":  {entry(secret+strings.Repeat("a", 201), "en", "v")},
+		"duplicate": {entry(secret, "en", "a"), entry(secret, "mn", "b")},
+		"language":  {entry(secret, "fr", "v")},
+		"value":     {entry(secret, "en", strings.Repeat("a", 5001))},
+	}
+	for name, es := range cases {
+		_, err := svc.Save(context.Background(), tn, "hero", es, nil)
+		wantBadRequest(t, err, name)
+		if strings.Contains(err.Error(), secret) {
+			t.Errorf("%s: message echoes the submitted path: %q", name, err.Error())
+		}
+		if !strings.Contains(err.Error(), "entry ") {
+			t.Errorf("%s: message should name the entry: %q", name, err.Error())
+		}
+	}
+	_, err := svc.Save(context.Background(), tn, "hero", []models.ContentEntry{entry("ok", "en", "v"), entry(secret+strings.Repeat("a", 201), "en", "v")}, nil)
+	if err == nil || !strings.Contains(err.Error(), "entry 2: the path is too long (max 200 characters)") {
+		t.Errorf("unexpected message: %v", err)
+	}
+}
