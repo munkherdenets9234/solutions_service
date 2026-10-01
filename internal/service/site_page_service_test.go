@@ -346,3 +346,83 @@ func TestTenantsDoNotSeeEachOthersPages(t *testing.T) {
 		t.Fatalf("B's save overwrote A: %+v", p.Entries)
 	}
 }
+
+// ── Save: hardening ──────────────────────────────────────────────────────
+
+func TestSaveRejects1001EntriesEvenWhenAllAreBlank(t *testing.T) {
+	svc, _, tn := newSiteSvc()
+	es := make([]models.ContentEntry, 0, 1001)
+	for i := 0; i < 1001; i++ {
+		es = append(es, entry("k"+strconv.Itoa(i), "en", ""))
+	}
+	_, err := svc.Save(context.Background(), tn, "hero", es, nil)
+	wantBadRequest(t, err, "1001 blank entries")
+}
+
+func TestSaveRejectsAMixedArrayObjectFirst(t *testing.T) {
+	svc, _, tn := newSiteSvc()
+	v := []any{map[string]any{"a": "b"}, "text"}
+	_, err := svc.Save(context.Background(), tn, "hero", []models.ContentEntry{{Path: "t", Values: map[string]any{"en": v}}}, nil)
+	wantBadRequest(t, err, "object then string")
+}
+
+func TestSaveRejectsBadObjectKeys(t *testing.T) {
+	svc, _, tn := newSiteSvc()
+	many := map[string]any{}
+	for i := 0; i < 21; i++ {
+		many["k"+strconv.Itoa(i)] = "v"
+	}
+	bad := map[string]map[string]any{
+		"dot":       {"a.b": "v"},
+		"dollar":    {"$where": "v"},
+		"empty":     {"": "v"},
+		"space":     {"a b": "v"},
+		"65 chars":  {strings.Repeat("k", 65): "v"},
+		"21 keys":   many,
+		"non-ascii": {"ключ": "v"},
+	}
+	for name, obj := range bad {
+		v := []any{obj}
+		_, err := svc.Save(context.Background(), tn, "hero", []models.ContentEntry{{Path: "t", Values: map[string]any{"en": v}}}, nil)
+		wantBadRequest(t, err, name)
+	}
+	ok := map[string]any{"q-1_A": "x", strings.Repeat("k", 64): "y"}
+	if _, err := svc.Save(context.Background(), tn, "hero", []models.ContentEntry{{Path: "t", Values: map[string]any{"en": []any{ok}}}}, nil); err != nil {
+		t.Fatalf("valid keys rejected: %v", err)
+	}
+}
+
+func TestSaveTreatsArraysWithNoTextAsBlank(t *testing.T) {
+	svc, st, tn := newSiteSvc()
+	blanks := map[string]any{
+		"empty":         []any{},
+		"empty string":  []any{""},
+		"spaces":        []any{"  ", "\t"},
+		"blank objects": []any{map[string]any{"q": "", "a": ""}},
+		"empty object":  []any{map[string]any{}},
+	}
+	for name, v := range blanks {
+		n, err := svc.Save(context.Background(), tn, "hero", []models.ContentEntry{{Path: "t", Values: map[string]any{"en": v}}}, nil)
+		if err != nil || n != 0 {
+			t.Fatalf("%s: want dropped (0, nil), got (%d, %v)", name, n, err)
+		}
+		if got := st.pages[siteKey(tn, "hero")]; len(got.Entries) != 0 {
+			t.Fatalf("%s: stored %v", name, got.Entries)
+		}
+	}
+	// one non-blank field keeps the array
+	n, err := svc.Save(context.Background(), tn, "hero", []models.ContentEntry{{Path: "t", Values: map[string]any{"en": []any{map[string]any{"q": "", "a": "yes"}}}}}, nil)
+	if err != nil || n != 1 {
+		t.Fatalf("want kept, got (%d, %v)", n, err)
+	}
+}
+
+func TestUnknownLanguageErrorDoesNotEchoTheKey(t *testing.T) {
+	svc, _, tn := newSiteSvc()
+	secret := "zz<script>secret"
+	_, err := svc.Save(context.Background(), tn, "hero", []models.ContentEntry{entry("title", secret, "x")}, nil)
+	wantBadRequest(t, err, "unknown lang")
+	if strings.Contains(err.Error(), secret) || strings.Contains(err.Error(), "zz") {
+		t.Fatalf("error echoes the submitted key: %v", err)
+	}
+}

@@ -20,6 +20,8 @@ const (
 	siteMaxEntries  = 1000
 	siteMaxText     = 5000 // characters in one string
 	siteMaxArrayLen = 100
+	siteMaxObjKeys  = 20
+	siteMaxKeyLen   = 64
 )
 
 // sitePageStore is the persistence this service needs, narrow for the same
@@ -193,7 +195,7 @@ func validateEntries(entries []models.ContentEntry) ([]models.ContentEntry, erro
 		values := make(map[string]any, len(e.Values))
 		for lang, v := range e.Values {
 			if !validSiteLocale(lang) {
-				return nil, apierr.BadRequest("unknown language " + lang + " at " + e.Path)
+				return nil, apierr.BadRequest("unknown language at " + e.Path)
 			}
 			blank, err := checkSiteValue(v)
 			if err != nil {
@@ -227,6 +229,7 @@ func checkSiteValue(v any) (blank bool, err error) {
 			return true, nil
 		}
 		_, firstIsText := x[0].(string)
+		hasText := false
 		for _, item := range x {
 			switch it := item.(type) {
 			case string:
@@ -236,11 +239,20 @@ func checkSiteValue(v any) (blank bool, err error) {
 				if utf8.RuneCountInString(it) > siteMaxText {
 					return false, errors.New("text is longer than 5000 characters")
 				}
+				if strings.TrimSpace(it) != "" {
+					hasText = true
+				}
 			case map[string]any:
 				if firstIsText {
 					return false, errors.New("an array must hold only strings or only objects")
 				}
-				for _, f := range it {
+				if len(it) > siteMaxObjKeys {
+					return false, errors.New("an object may have at most 20 fields")
+				}
+				for k, f := range it {
+					if !validSiteObjKey(k) {
+						return false, errors.New("object field names must be 1-64 characters of letters, digits, - and _")
+					}
 					fs, ok := f.(string)
 					if !ok {
 						return false, errors.New("object fields must be strings")
@@ -248,13 +260,30 @@ func checkSiteValue(v any) (blank bool, err error) {
 					if utf8.RuneCountInString(fs) > siteMaxText {
 						return false, errors.New("text is longer than 5000 characters")
 					}
+					if strings.TrimSpace(fs) != "" {
+						hasText = true
+					}
 				}
 			default:
 				return false, errors.New("an array may hold only strings or flat objects of strings")
 			}
 		}
-		return false, nil
+		return !hasText, nil
 	default:
 		return false, errors.New("a value must be a string or an array")
 	}
+}
+
+// validSiteObjKey keeps object field names inert: no '.', no leading '$', so a
+// stored key can never be read as a Mongo path or operator.
+func validSiteObjKey(k string) bool {
+	if k == "" || len(k) > siteMaxKeyLen {
+		return false
+	}
+	for _, r := range k {
+		if !isSiteNameChar(r) {
+			return false
+		}
+	}
+	return true
 }
