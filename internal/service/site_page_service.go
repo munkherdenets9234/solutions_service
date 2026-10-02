@@ -121,6 +121,12 @@ func (s *SitePageService) Public(ctx context.Context, tenantID primitive.ObjectI
 			if !ok {
 				continue
 			}
+			// A value equal to the shipped wording it was written from is not
+			// an override: leave it out so a later change to the shipped
+			// wording reaches the site.
+			if b, has := e.Base[lang]; has && siteValuesEqual(v, b) {
+				continue
+			}
 			if out[p.Page] == nil {
 				out[p.Page] = map[string]any{}
 			}
@@ -213,11 +219,64 @@ func validateEntries(entries []models.ContentEntry) ([]models.ContentEntry, erro
 				values[lang] = v
 			}
 		}
+		var base map[string]any
+		for lang, v := range e.Base {
+			if !validSiteLocale(lang) {
+				return nil, apierr.BadRequest("entry " + strconv.Itoa(i+1) + ": unknown language")
+			}
+			blank, err := checkSiteValue(v)
+			if err != nil {
+				return nil, apierr.BadRequest("entry " + strconv.Itoa(i+1) + " (" + lang + ") base: " + err.Error())
+			}
+			if !blank {
+				if base == nil {
+					base = map[string]any{}
+				}
+				base[lang] = v
+			}
+		}
 		if len(values) > 0 {
-			cleaned = append(cleaned, models.ContentEntry{Path: e.Path, Values: values})
+			cleaned = append(cleaned, models.ContentEntry{Path: e.Path, Values: values, Base: base})
 		}
 	}
 	return cleaned, nil
+}
+
+// siteValuesEqual compares two stored values as the site sees them: strings by
+// content, arrays element-wise in order, objects key-wise. A difference in type
+// is a difference in value. Values only ever arrive as string, []any and
+// map[string]any (JSON decoding, and the repository's normalizeBSON).
+func siteValuesEqual(a, b any) bool {
+	switch x := a.(type) {
+	case string:
+		y, ok := b.(string)
+		return ok && x == y
+	case []any:
+		y, ok := b.([]any)
+		if !ok || len(x) != len(y) {
+			return false
+		}
+		for i := range x {
+			if !siteValuesEqual(x[i], y[i]) {
+				return false
+			}
+		}
+		return true
+	case map[string]any:
+		y, ok := b.(map[string]any)
+		if !ok || len(x) != len(y) {
+			return false
+		}
+		for k, xv := range x {
+			yv, has := y[k]
+			if !has || !siteValuesEqual(xv, yv) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
 }
 
 // checkSiteValue validates one language's value and reports whether it is blank.

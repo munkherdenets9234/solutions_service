@@ -5500,6 +5500,11 @@
                           "type": "object",
                           "description": "Language code (en, mn, ko) to a string, an array of strings, or an array of flat objects of strings.",
                           "additionalProperties": true
+                        },
+                        "base": {
+                          "type": "object",
+                          "description": "Optional. Language code (en, mn, ko) to the shipped wording the value was written from, same shapes as `values`. Stored as sent, never derived by the server. The public read omits a value equal to its base; a blank base language is dropped; an entry with no non-blank value is dropped together with its base.",
+                          "additionalProperties": true
                         }
                       }
                     }
@@ -5562,7 +5567,7 @@
           "Translations"
         ],
         "summary": "Storefront wording overrides for one language",
-        "description": "Returns `{page: {path: value}}` for the requested language. Pages and entries with nothing for that language are omitted; the result is `{}` when there are none. `lang` is required and must be exactly en, mn or ko.",
+        "description": "Returns `{page: {path: value}}` for the requested language. Pages and entries with nothing for that language are omitted; the result is `{}` when there are none. `lang` is required and must be exactly en, mn or ko. A value equal to the entry's `base` for that language is omitted, because it is not an override.",
         "security": [
           {
             "ApiKeyAuth": []

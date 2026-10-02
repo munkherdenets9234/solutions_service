@@ -453,3 +453,239 @@ func TestValidationMessagesDoNotEchoSubmittedPaths(t *testing.T) {
 		t.Errorf("unexpected message: %v", err)
 	}
 }
+
+// ── base snapshot ────────────────────────────────────────────────────────
+
+func withBase(e models.ContentEntry, kv ...any) models.ContentEntry {
+	b := map[string]any{}
+	for i := 0; i+1 < len(kv); i += 2 {
+		b[kv[i].(string)] = kv[i+1]
+	}
+	e.Base = b
+	return e
+}
+
+func TestSiteValuesEqualTreatsDifferentTypesAsDifferent(t *testing.T) {
+	cases := []struct{ a, b any }{
+		{"1", []any{"1"}},
+		{"a", map[string]any{"a": "a"}},
+		{[]any{"a"}, []any{map[string]any{"a": "x"}}},
+		{[]any{"a"}, "a"},
+		{nil, "a"},
+	}
+	for i, c := range cases {
+		if siteValuesEqual(c.a, c.b) || siteValuesEqual(c.b, c.a) {
+			t.Fatalf("case %d: %#v and %#v must differ", i, c.a, c.b)
+		}
+	}
+	if !siteValuesEqual("a", "a") {
+		t.Fatal("equal strings must be equal")
+	}
+}
+
+func TestSiteValuesEqualComparesArraysInOrder(t *testing.T) {
+	if !siteValuesEqual([]any{"a", "b"}, []any{"a", "b"}) {
+		t.Fatal("same order must be equal")
+	}
+	if siteValuesEqual([]any{"a", "b"}, []any{"b", "a"}) {
+		t.Fatal("different order must differ")
+	}
+	if siteValuesEqual([]any{"a"}, []any{"a", "b"}) {
+		t.Fatal("different length must differ")
+	}
+}
+
+func TestSiteValuesEqualIgnoresObjectKeyOrder(t *testing.T) {
+	a := []any{map[string]any{"q": "1", "a": "2"}}
+	b := []any{map[string]any{"a": "2", "q": "1"}}
+	if !siteValuesEqual(a, b) {
+		t.Fatal("key order must not matter")
+	}
+	if siteValuesEqual(a, []any{map[string]any{"q": "1", "a": "3"}}) {
+		t.Fatal("different field value must differ")
+	}
+	if siteValuesEqual(a, []any{map[string]any{"q": "1"}}) {
+		t.Fatal("different key set must differ")
+	}
+}
+
+func TestPublicOmitsAValueEqualToItsBase(t *testing.T) {
+	svc, _, tn := newSiteSvc()
+	ctx := context.Background()
+	_, err := svc.Save(ctx, tn, "faq", []models.ContentEntry{
+		withBase(entry("s", "en", "Same"), "en", "Same"),
+		{Path: "arr", Values: map[string]any{"en": []any{"x", "y"}}, Base: map[string]any{"en": []any{"x", "y"}}},
+		{Path: "objs",
+			Values: map[string]any{"en": []any{map[string]any{"q": "Q", "a": "A"}}},
+			Base:   map[string]any{"en": []any{map[string]any{"a": "A", "q": "Q"}}}},
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := svc.Public(ctx, tn, "en")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("every value equals its base, want {}: %#v", got)
+	}
+}
+
+func TestPublicKeepsAValueThatDiffersFromItsBase(t *testing.T) {
+	svc, _, tn := newSiteSvc()
+	ctx := context.Background()
+	_, _ = svc.Save(ctx, tn, "hero", []models.ContentEntry{
+		withBase(entry("title", "en", "Edited"), "en", "Original"),
+	}, nil)
+	got, _ := svc.Public(ctx, tn, "en")
+	if got["hero"]["title"] != "Edited" {
+		t.Fatalf("got %#v", got)
+	}
+}
+
+func TestPublicKeepsAValueWithNoBase(t *testing.T) {
+	svc, _, tn := newSiteSvc()
+	ctx := context.Background()
+	_, _ = svc.Save(ctx, tn, "hero", []models.ContentEntry{
+		entry("title", "en", "Hello"),
+		withBase(entry("sub", "en", "Hi", "mn", "Сайн"), "mn", "Сайн"),
+	}, nil)
+	got, _ := svc.Public(ctx, tn, "en")
+	if got["hero"]["title"] != "Hello" || got["hero"]["sub"] != "Hi" {
+		t.Fatalf("got %#v", got)
+	}
+}
+
+func TestPublicDecidesPerLanguage(t *testing.T) {
+	svc, _, tn := newSiteSvc()
+	ctx := context.Background()
+	_, _ = svc.Save(ctx, tn, "hero", []models.ContentEntry{
+		withBase(entry("title", "en", "Hello", "mn", "Засвар"), "en", "Hello", "mn", "Сайн"),
+	}, nil)
+	en, _ := svc.Public(ctx, tn, "en")
+	if len(en) != 0 {
+		t.Fatalf("en equals base, want {}: %#v", en)
+	}
+	mn, _ := svc.Public(ctx, tn, "mn")
+	if mn["hero"]["title"] != "Засвар" {
+		t.Fatalf("mn = %#v", mn)
+	}
+}
+
+func TestSaveStoresBase(t *testing.T) {
+	svc, st, tn := newSiteSvc()
+	_, err := svc.Save(context.Background(), tn, "hero", []models.ContentEntry{
+		withBase(entry("title", "en", "Edited"), "en", "Original", "mn", "  "),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	b := st.pages[siteKey(tn, "hero")].Entries[0].Base
+	if len(b) != 1 || b["en"] != "Original" {
+		t.Fatalf("base = %#v (blank base language must be dropped)", b)
+	}
+}
+
+func TestSaveRejectsAnUnknownBaseLanguage(t *testing.T) {
+	svc, _, tn := newSiteSvc()
+	_, err := svc.Save(context.Background(), tn, "hero", []models.ContentEntry{
+		withBase(entry("title", "en", "x"), "xx-SECRET", "v"),
+	}, nil)
+	wantBadRequest(t, err, "unknown base language")
+	if !strings.Contains(err.Error(), "entry 1: unknown language") {
+		t.Fatalf("message = %v", err)
+	}
+	if strings.Contains(err.Error(), "SECRET") {
+		t.Fatalf("message echoes input: %v", err)
+	}
+}
+
+func TestSaveRejectsABadBaseValue(t *testing.T) {
+	items := make([]any, 101)
+	for i := range items {
+		items[i] = "ZZ"
+	}
+	cases := map[string]any{
+		"number":  42.0,
+		"nested":  []any{map[string]any{"a": map[string]any{"b": "ZZ"}}},
+		"toolong": strings.Repeat("ZZ", 2501),
+		"items":   items,
+	}
+	for name, v := range cases {
+		svc, _, tn := newSiteSvc()
+		_, err := svc.Save(context.Background(), tn, "hero", []models.ContentEntry{
+			withBase(entry("title", "en", "x"), "en", v),
+		}, nil)
+		wantBadRequest(t, err, name)
+		if !strings.Contains(err.Error(), "entry 1 (en) base: ") {
+			t.Fatalf("%s: message = %v", name, err)
+		}
+		if strings.Contains(err.Error(), "ZZ") || strings.Contains(err.Error(), "42") {
+			t.Fatalf("%s: message echoes input: %v", name, err)
+		}
+	}
+}
+
+func TestSaveKeepsBaseForALanguageWhoseValueIsBlank(t *testing.T) {
+	svc, st, tn := newSiteSvc()
+	_, err := svc.Save(context.Background(), tn, "hero", []models.ContentEntry{
+		withBase(entry("title", "en", "Edited", "mn", ""), "en", "Original", "mn", "Сайн"),
+	}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := st.pages[siteKey(tn, "hero")].Entries[0]
+	if _, ok := e.Values["mn"]; ok {
+		t.Fatalf("blank mn value must be dropped: %#v", e.Values)
+	}
+	if e.Base["mn"] != "Сайн" || e.Base["en"] != "Original" {
+		t.Fatalf("base = %#v", e.Base)
+	}
+}
+
+func TestSaveDropsBaseWithAnEntryThatIsBlankInEveryLanguage(t *testing.T) {
+	svc, st, tn := newSiteSvc()
+	n, err := svc.Save(context.Background(), tn, "hero", []models.ContentEntry{
+		withBase(entry("title", "en", " "), "en", "Original"),
+	}, nil)
+	if err != nil || n != 0 {
+		t.Fatalf("n=%d err=%v", n, err)
+	}
+	if len(st.pages[siteKey(tn, "hero")].Entries) != 0 {
+		t.Fatal("entry and its base must be dropped")
+	}
+}
+
+func TestGetReturnsBaseUnfiltered(t *testing.T) {
+	svc, _, tn := newSiteSvc()
+	ctx := context.Background()
+	_, _ = svc.Save(ctx, tn, "hero", []models.ContentEntry{
+		withBase(entry("title", "en", "Same"), "en", "Same"),
+	}, nil)
+	p, err := svc.Get(ctx, tn, "hero")
+	if err != nil || len(p.Entries) != 1 {
+		t.Fatalf("p=%#v err=%v", p, err)
+	}
+	if p.Entries[0].Values["en"] != "Same" || p.Entries[0].Base["en"] != "Same" {
+		t.Fatalf("entry = %#v", p.Entries[0])
+	}
+}
+
+func TestEditedThenResetToBaseDropsOutOfThePublicRead(t *testing.T) {
+	svc, _, tn := newSiteSvc()
+	ctx := context.Background()
+	_, _ = svc.Save(ctx, tn, "hero", []models.ContentEntry{
+		withBase(entry("title", "en", "Edited"), "en", "Original"),
+	}, nil)
+	got, _ := svc.Public(ctx, tn, "en")
+	if got["hero"]["title"] != "Edited" {
+		t.Fatalf("edited should show: %#v", got)
+	}
+	_, _ = svc.Save(ctx, tn, "hero", []models.ContentEntry{
+		withBase(entry("title", "en", "Original"), "en", "Original"),
+	}, nil)
+	got, _ = svc.Public(ctx, tn, "en")
+	if len(got) != 0 {
+		t.Fatalf("reset to base should drop out: %#v", got)
+	}
+}

@@ -79,6 +79,9 @@ func normalizePage(p *models.SitePage) *models.SitePage {
 		for k, v := range p.Entries[i].Values {
 			p.Entries[i].Values[k] = normalizeBSON(v)
 		}
+		for k, v := range p.Entries[i].Base {
+			p.Entries[i].Base[k] = normalizeBSON(v)
+		}
 	}
 	return p
 }

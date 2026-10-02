@@ -5,6 +5,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/eandstravel/digitalservice/internal/models"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
@@ -47,5 +48,21 @@ func TestSitePageFiltersAlwaysCarryTheTenant(t *testing.T) {
 	l := sitePageListFilter(tenant)
 	if l["tenant_id"] != tenant || len(l) != 1 {
 		t.Fatalf("list filter = %#v", l)
+	}
+}
+
+func TestNormalizePageNormalizesBase(t *testing.T) {
+	p := &models.SitePage{Entries: []models.ContentEntry{{
+		Path:   "faq",
+		Values: map[string]any{"en": primitive.A{primitive.D{{Key: "q", Value: "v"}}}},
+		Base:   map[string]any{"en": primitive.A{primitive.D{{Key: "q", Value: "b"}}}},
+	}}}
+	normalizePage(p)
+	b, err := json.Marshal(p.Entries[0].Base)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(b) != `{"en":[{"q":"b"}]}` {
+		t.Fatalf("base json = %s", b)
 	}
 }
