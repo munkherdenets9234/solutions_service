@@ -22,9 +22,10 @@ type Users interface {
 	GetAdmin(ctx context.Context, tenantID primitive.ObjectID, idStr string) (*models.TenantUser, error)
 }
 
-// Resetter starts the emailed-code reset (TenantPasswordResetService).
+// Resetter starts the emailed-code reset (TenantPasswordResetService.RequestNow:
+// synchronous, so a mail that cannot go out is reported to the operator).
 type Resetter interface {
-	Request(ctx context.Context, tenantID primitive.ObjectID, email string) error
+	RequestNow(ctx context.Context, tenantID primitive.ObjectID, user *models.TenantUser) error
 }
 
 // Deps bundles what the group needs.
@@ -105,7 +106,7 @@ func (h *adminUsersController) ResetPassword(c *gin.Context) error {
 	if u.Status != models.TenantUserActive {
 		return apierr.Conflict("this admin account is suspended")
 	}
-	if err := h.reset.Request(c.Request.Context(), tid, u.Email); err != nil {
+	if err := h.reset.RequestNow(c.Request.Context(), tid, u); err != nil {
 		return err
 	}
 	response.OK(c, gin.H{"message": "A reset code was emailed."})

@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sort"
@@ -77,11 +78,11 @@ type fakeReset struct {
 	err   error
 }
 
-func (f *fakeReset) Request(_ context.Context, tenantID primitive.ObjectID, email string) error {
+func (f *fakeReset) RequestNow(_ context.Context, tenantID primitive.ObjectID, u *models.TenantUser) error {
 	if f.err != nil {
 		return f.err
 	}
-	f.calls = append(f.calls, resetCall{tenantID, email})
+	f.calls = append(f.calls, resetCall{tenantID, u.Email})
 	return nil
 }
 
@@ -331,5 +332,17 @@ func TestResetPassword_MailUnavailableIs503(t *testing.T) {
 	w := h.do(http.MethodPost, h.resetPath(h.admin), h.tcToken(t, "superadmin"))
 	if w.Code != http.StatusServiceUnavailable {
 		t.Fatalf("got %d, want 503", w.Code)
+	}
+}
+
+func TestResetPassword_SendFailureIsAnErrorNotASuccess(t *testing.T) {
+	h := newHarness(t, true)
+	h.reset.err = apierr.Upstream(apierr.DomainGeneral, errors.New("tenantcore answered 500"))
+	w := h.do(http.MethodPost, h.resetPath(h.admin), h.tcToken(t, "superadmin"))
+	if w.Code != http.StatusBadGateway {
+		t.Fatalf("got %d, want 502", w.Code)
+	}
+	if strings.Contains(w.Body.String(), "A reset code was emailed") {
+		t.Fatalf("an error response must not claim success: %s", w.Body.String())
 	}
 }

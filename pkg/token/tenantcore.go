@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 )
@@ -92,6 +93,8 @@ func (v *TenantcoreVerifier) Verify(tokenStr string) (*TenantcoreClaims, error) 
 		return v.public, nil
 	},
 		jwt.WithIssuer(TenantcoreIssuer),
+		// Two machines, two clocks: tolerate a few seconds of drift.
+		jwt.WithLeeway(30*time.Second),
 		jwt.WithValidMethods([]string{jwt.SigningMethodEdDSA.Alg()}),
 	)
 	if err != nil || !t.Valid {

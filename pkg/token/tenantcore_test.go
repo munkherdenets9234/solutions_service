@@ -126,3 +126,38 @@ func TestNewVerifier_RejectsBadKey(t *testing.T) {
 		t.Fatal("wrong length must fail")
 	}
 }
+
+// tcMintAt signs a token with explicit nbf and exp, for clock-skew cases.
+func tcMintAt(t *testing.T, priv ed25519.PrivateKey, nbf, exp time.Time) string {
+	t.Helper()
+	claims := TenantcoreClaims{
+		UserID: "u1",
+		Role:   TenantcoreRoleSuperadmin,
+		RegisteredClaims: jwt.RegisteredClaims{
+			Issuer:    TenantcoreIssuer,
+			NotBefore: jwt.NewNumericDate(nbf),
+			ExpiresAt: jwt.NewNumericDate(exp),
+		},
+	}
+	s, err := jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims).SignedString(priv)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return s
+}
+
+// tenantcore and this service run on different clocks; a token minted a moment
+// "in the future" by a fast clock must not bounce a valid operator, while a
+// token that is genuinely stale still must.
+func TestTenantcoreVerify_ToleratesSmallClockSkew(t *testing.T) {
+	priv, pub := tcKeys(t)
+	v := tcVerifier(t, pub)
+	now := time.Now()
+
+	if _, err := v.Verify(tcMintAt(t, priv, now.Add(10*time.Second), now.Add(time.Hour))); err != nil {
+		t.Fatalf("a token whose nbf is 10s ahead must be accepted: %v", err)
+	}
+	if _, err := v.Verify(tcMintAt(t, priv, now.Add(-time.Hour), now.Add(-60*time.Second))); err == nil {
+		t.Fatal("a token expired by 60s must still be rejected")
+	}
+}
