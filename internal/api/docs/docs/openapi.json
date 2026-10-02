@@ -873,6 +873,118 @@
         }
       }
     },
+    "/api/v1/platform/tenants/{id}/admin-users": {
+      "get": {
+        "tags": [
+          "Platform · Tenants"
+        ],
+        "summary": "List a tenant's admin users (tenantcore token)",
+        "description": "Authenticated with a tenantcore-issued superadmin token (Ed25519, verified here with the public key only) - NOT this service's own platform login token, which is refused with 401. The whole group answers 404 when TENANTCORE_PUBLIC_KEY is not set. Returns the users of this tenant whose role is `admin`, in any status, sorted by email. Never returns password hashes. A tenant with no admin users here (or one that does not exist in this service) returns an empty array.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Tenant id.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK. `data` is an array of `{id, email, name, status}`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "description": "The route group is off (TENANTCORE_PUBLIC_KEY not set)."
+          }
+        }
+      }
+    },
+    "/api/v1/platform/tenants/{id}/admin-users/{user_id}/reset-password": {
+      "post": {
+        "tags": [
+          "Platform · Tenants"
+        ],
+        "summary": "Email a password-reset code to a tenant admin (tenantcore token)",
+        "description": "Authenticated with a tenantcore-issued superadmin token, as for the list route. Starts the existing emailed-code reset for this admin user, addressed to the email stored on the user (the caller never supplies an address). The caller never sees or sets a password and the response carries no code. A user that does not exist, is not an `admin`, or belongs to another tenant is 404; a suspended user is 409. If mail is not configured the answer is 503 FEATURE_UNAVAILABLE. Rate limited like the other auth routes.",
+        "security": [
+          {
+            "BearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "required": true,
+            "description": "Tenant id.",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "user_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "OK. `data` is `{\"message\": \"A reset code was emailed.\"}`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SuccessResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "$ref": "#/components/responses/BadRequest"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "$ref": "#/components/responses/NotFound"
+          },
+          "409": {
+            "$ref": "#/components/responses/Conflict"
+          },
+          "503": {
+            "description": "Mail is not configured on this deployment (FEATURE_UNAVAILABLE)."
+          }
+        }
+      }
+    },
     "/api/v1/platform/tenants/{id}/domain": {
       "put": {
         "tags": [

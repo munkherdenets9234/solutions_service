@@ -119,6 +119,16 @@ func NewForDatabase(ctx context.Context, cfg *config.Config, db *mongo.Database,
 		}
 	}
 
+	// The tenantcore-token group exists only when the public key is set; with
+	// none, a nil verifier makes the group answer 404.
+	var tcVerifier *token.TenantcoreVerifier
+	if cfg.TenantcorePublicKey != "" {
+		tcVerifier, err = token.NewVerifier(cfg.TenantcorePublicKey)
+		if err != nil {
+			return nil, fmt.Errorf("tenantcore verifier: %w", err)
+		}
+	}
+
 	limiter := middleware.NewRateLimiter()
 
 	srv := api.NewServer(api.Deps{
@@ -126,6 +136,7 @@ func NewForDatabase(ctx context.Context, cfg *config.Config, db *mongo.Database,
 		Log:    log,
 
 		Auth:           middleware.NewAuthMiddleware(tokenMaker),
+		TenantcoreAuth: middleware.NewTenantcoreAuth(tcVerifier),
 		TenantMW:       middleware.NewTenantMiddleware(svcs.tenant),
 		SubscriptionMW: middleware.NewSubscriptionMiddleware(svcs.entitlement),
 		RateLimiter:    limiter,

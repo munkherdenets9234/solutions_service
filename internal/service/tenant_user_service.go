@@ -13,14 +13,71 @@ import (
 	"go.mongodb.org/mongo-driver/mongo"
 )
 
+// TenantUserStore is the part of the tenant_users collection this service
+// uses, as an interface so the admin-user rules can be tested without a
+// database. *repository.TenantUserRepo satisfies it.
+type TenantUserStore interface {
+	Create(ctx context.Context, u *models.TenantUser) error
+	FindAll(ctx context.Context, tenantID primitive.ObjectID, page, limit int) ([]*models.TenantUser, int64, error)
+	FindByTenantAndEmail(ctx context.Context, tenantID primitive.ObjectID, email string) (*models.TenantUser, error)
+	FindByID(ctx context.Context, tenantID, id primitive.ObjectID) (*models.TenantUser, error)
+	FindAdmins(ctx context.Context, tenantID primitive.ObjectID) ([]*models.TenantUser, error)
+	UpdatePassword(ctx context.Context, tenantID, id primitive.ObjectID, passwordHash string) error
+	UpdateStatus(ctx context.Context, tenantID, id primitive.ObjectID, status models.TenantUserStatus) error
+}
+
 type TenantUserService struct {
-	repo        *repository.TenantUserRepo
+	repo        TenantUserStore
 	maker       *token.Maker
 	tokenExpiry time.Duration
 }
 
 func NewTenantUserService(repo *repository.TenantUserRepo, maker *token.Maker, tokenExpiryHours int) *TenantUserService {
-	return &TenantUserService{repo: repo, maker: maker, tokenExpiry: time.Duration(tokenExpiryHours) * time.Hour}
+	return NewTenantUserServiceFromStore(repo, maker, tokenExpiryHours)
+}
+
+// NewTenantUserServiceFromStore builds the service over any store; tests use it
+// to supply a fake.
+func NewTenantUserServiceFromStore(store TenantUserStore, maker *token.Maker, tokenExpiryHours int) *TenantUserService {
+	return &TenantUserService{repo: store, maker: maker, tokenExpiry: time.Duration(tokenExpiryHours) * time.Hour}
+}
+
+// ListAdmins returns the tenant's admin-role users, any status. The store
+// already filters; this re-checks role and tenant so the result stays correct
+// whatever the store does.
+func (s *TenantUserService) ListAdmins(ctx context.Context, tenantID primitive.ObjectID) ([]*models.TenantUser, error) {
+	users, err := s.repo.FindAdmins(ctx, tenantID)
+	if err != nil {
+		return nil, apierr.Internal(err)
+	}
+	out := make([]*models.TenantUser, 0, len(users))
+	for _, u := range users {
+		if u.TenantID == tenantID && u.Role == models.TenantUserAdmin {
+			out = append(out, u)
+		}
+	}
+	return out, nil
+}
+
+// GetAdmin loads one admin-role user of the tenant. A user that is absent, is
+// not an admin, or belongs to another tenant is NotFound: the caller cannot
+// tell which, and a reset must never be started for any of them.
+func (s *TenantUserService) GetAdmin(ctx context.Context, tenantID primitive.ObjectID, idStr string) (*models.TenantUser, error) {
+	id, err := primitive.ObjectIDFromHex(idStr)
+	if err != nil {
+		return nil, apierr.BadRequest("invalid id")
+	}
+	u, err := s.repo.FindByID(ctx, tenantID, id)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, apierr.NotFound("admin user")
+		}
+		return nil, apierr.Internal(err)
+	}
+	if u.TenantID != tenantID || u.Role != models.TenantUserAdmin {
+		return nil, apierr.NotFound("admin user")
+	}
+	return u, nil
 }
 
 // Create adds a login profile for the tenant. If rawPassword is empty, one

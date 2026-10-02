@@ -104,6 +104,13 @@ func (c Config) PasswordResetEnabled() bool {
 	return c.TenantcoreURL != "" && c.TenantcoreServiceKey != ""
 }
 
+// TenantcoreAdminUsersEnabled reports whether the routes tenantcore's operators
+// call (tenant admin users, password reset) are on. They need the public key
+// to verify those operators' tokens.
+func (c Config) TenantcoreAdminUsersEnabled() bool {
+	return c.TenantcorePublicKey != ""
+}
+
 // Feature is one optional capability and whether this deployment has it.
 type Feature struct {
 	Name    string
@@ -145,6 +152,12 @@ func (c Config) Features() []Feature {
 			Enabled: c.PasswordResetEnabled(),
 			Detail: "TENANTCORE_URL/TENANTCORE_SERVICE_KEY are not both set — a tenant user who forgets their " +
 				"password cannot be sent a reset code, and POST /password-reset/request answers 503",
+		},
+		{
+			Name:    "tenantcore_admin_users",
+			Enabled: c.TenantcoreAdminUsersEnabled(),
+			Detail: "TENANTCORE_PUBLIC_KEY is not set — the /platform/tenants/{id}/admin-users routes " +
+				"(the core admin's tenant admin accounts and password reset) answer 404",
 		},
 	}
 }

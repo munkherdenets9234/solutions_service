@@ -37,6 +37,8 @@ func (s *Server) buildEngine() *gin.Engine {
 
 	platform.Register(api.Group("/platform"), platform.Deps{
 		Auth:          d.Auth,
+		Tenantcore:    d.TenantcoreAuth,
+		Reset:         d.PasswordReset,
 		Tenant:        d.Tenants,
 		TenantUser:    d.TenantUser,
 		TenantReview:  d.TenantReview,

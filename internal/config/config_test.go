@@ -227,3 +227,24 @@ func TestValidateTenantcorePublicKey(t *testing.T) {
 		}
 	}
 }
+
+func TestFeaturesReportTenantcoreAdminUsers(t *testing.T) {
+	find := func(c Config) Feature {
+		for _, f := range c.Features() {
+			if f.Name == "tenantcore_admin_users" {
+				return f
+			}
+		}
+		t.Fatal("Features() has no tenantcore_admin_users entry")
+		return Feature{}
+	}
+
+	cfg := validConfig()
+	if f := find(cfg); f.Enabled || !strings.Contains(f.Detail, "TENANTCORE_PUBLIC_KEY") {
+		t.Fatalf("unset key: want disabled and naming the setting, got %+v", f)
+	}
+	cfg.TenantcorePublicKey = "set"
+	if f := find(cfg); !f.Enabled {
+		t.Fatalf("set key: want enabled, got %+v", f)
+	}
+}

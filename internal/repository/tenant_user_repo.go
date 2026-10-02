@@ -69,6 +69,23 @@ func (r *TenantUserRepo) FindByID(ctx context.Context, tenantID, id primitive.Ob
 	return &u, nil
 }
 
+// FindAdmins returns the tenant's admin-role users in any status, by email.
+func (r *TenantUserRepo) FindAdmins(ctx context.Context, tenantID primitive.ObjectID) ([]*models.TenantUser, error) {
+	cur, err := r.col.Find(ctx,
+		bson.M{"tenant_id": tenantID, "role": models.TenantUserAdmin},
+		options.Find().SetSort(bson.D{{Key: "email", Value: 1}}))
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+
+	var results []*models.TenantUser
+	if err := cur.All(ctx, &results); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
 // FindByIDs bulk-resolves tenant users for list views that need to display
 // several audit-trail names at once without an N+1 query per row.
 func (r *TenantUserRepo) FindByIDs(ctx context.Context, tenantID primitive.ObjectID, ids []primitive.ObjectID) ([]*models.TenantUser, error) {
