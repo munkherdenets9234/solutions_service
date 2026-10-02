@@ -56,7 +56,7 @@ func (s *PartnerService) ListAdmin(ctx context.Context, tenantID primitive.Objec
 		return nil, 0, err
 	}
 	if err := s.resolveLastEditedBy(ctx, tenantID, partners); err != nil {
-		return nil, 0, apierr.Internal()
+		return nil, 0, apierr.Internal(err)
 	}
 	return partners, total, nil
 }
@@ -71,10 +71,10 @@ func (s *PartnerService) GetByID(ctx context.Context, tenantID primitive.ObjectI
 		if err == mongo.ErrNoDocuments {
 			return nil, apierr.NotFound("partner not found")
 		}
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	if err := s.resolveLastEditedBy(ctx, tenantID, []*models.Partner{p}); err != nil {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	return p, nil
 }
@@ -120,7 +120,7 @@ func (s *PartnerService) GetBySlug(ctx context.Context, tenantID primitive.Objec
 		if err == mongo.ErrNoDocuments {
 			return nil, apierr.NotFound("partner not found")
 		}
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	return p, nil
 }

@@ -1,13 +1,11 @@
 package middleware
 
 import (
-	"net/http"
 	"net/url"
 	"strings"
 
 	"github.com/eandstravel/digitalservice/internal/service"
 	"github.com/eandstravel/digitalservice/pkg/apierr"
-	"github.com/eandstravel/digitalservice/pkg/response"
 	"github.com/gin-gonic/gin"
 )
 
@@ -20,32 +18,30 @@ func NewTenantMiddleware(svc *service.TenantService) *TenantMiddleware {
 }
 
 // Require resolves the tenant from the X-API-Key header and stores its ID
-// in the gin context under "tenant_id" for downstream handlers/repos to
+// in the gin context under CtxTenantID for downstream handlers/repos to
 // scope all reads and writes by.
 func (t *TenantMiddleware) Require() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		apiKey := c.GetHeader("X-API-Key")
 		if apiKey == "" {
-			response.Error(c, http.StatusUnauthorized, "missing X-API-Key header")
+			fail(c, apierr.Unauthorized("missing X-API-Key header").In(apierr.DomainTenant))
 			return
 		}
 
 		tenant, err := t.svc.Resolve(c.Request.Context(), apiKey)
 		if err != nil {
-			if e, ok := err.(*apierr.APIError); ok {
-				response.Error(c, e.StatusCode, e.Message)
-				return
-			}
-			response.Error(c, http.StatusInternalServerError, "internal server error")
+			// Resolve already returns taxonomy errors; anything else becomes
+			// a 500 in ErrorHandler with the cause logged.
+			fail(c, err)
 			return
 		}
 
 		if tenant.Domain != "" && !requestMatchesDomain(c, tenant.Domain) {
-			response.Error(c, http.StatusForbidden, "API key is not authorized for this domain")
+			fail(c, apierr.Forbidden("API key is not authorized for this domain").In(apierr.DomainTenant))
 			return
 		}
 
-		c.Set("tenant_id", tenant.ID)
+		c.Set(CtxTenantID, tenant.ID)
 		c.Next()
 	}
 }

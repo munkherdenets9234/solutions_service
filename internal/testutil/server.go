@@ -6,10 +6,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/eandstravel/digitalservice/internal/handler"
-	"github.com/eandstravel/digitalservice/internal/middleware"
-	"github.com/eandstravel/digitalservice/internal/repository"
-	"github.com/eandstravel/digitalservice/internal/service"
+	"github.com/eandstravel/digitalservice/internal/bootstrap"
+	"github.com/eandstravel/digitalservice/internal/config"
 	"github.com/eandstravel/digitalservice/pkg/logger"
 	"github.com/eandstravel/digitalservice/pkg/token"
 	"github.com/gin-gonic/gin"
@@ -24,7 +22,8 @@ var initLoggerOnce sync.Once
 // TokenSecret is used to sign tokens for every test server, so tests can
 // mint tokens directly via pkg/token (e.g. to simulate a forged/smuggled
 // claim) without going through the HTTP login flow. Generated per test
-// binary run rather than hardcoded.
+// binary run rather than hardcoded. 40 hex characters, comfortably over the
+// 32-character minimum config.Validate enforces.
 var TokenSecret = randomHex(20)
 
 // App bundles a running test server with the pieces a test might want direct
@@ -35,103 +34,64 @@ type App struct {
 	Maker  *token.Maker
 }
 
-// NewApp wires the full application - repos, services, handlers, router -
-// against the given database, exactly as cmd/api/main.go does, and serves it
+// NewApp wires the full application against the given database and serves it
 // via an httptest.Server.
+//
+// It goes through bootstrap.NewForDatabase — the same wiring cmd/api uses —
+// rather than repeating the repo/service/handler graph here. The previous
+// version duplicated that graph, which meant a route added to the real router
+// was not necessarily present in the one the tests exercised, and the tests
+// would still pass.
 func NewApp(t testing.TB, db *mongo.Database) *App {
 	t.Helper()
 	gin.SetMode(gin.TestMode)
 	initLoggerOnce.Do(func() { logger.Init("test") })
 
-	if err := repository.EnsureIndexes(context.Background(), db); err != nil {
-		t.Fatalf("ensure indexes: %v", err)
-	}
+	cfg := TestConfig()
 
-	maker, err := token.NewMaker(TokenSecret)
+	app, err := bootstrap.NewForDatabase(context.Background(), cfg, db, logger.Log)
+	if err != nil {
+		t.Fatalf("bootstrap: %v", err)
+	}
+	t.Cleanup(func() { app.Close(context.Background()) })
+
+	maker, err := token.NewMaker(cfg.TokenSecret)
 	if err != nil {
 		t.Fatalf("new token maker: %v", err)
 	}
 
-	destRepo := repository.NewDestinationRepo(db)
-	bookingRepo := repository.NewBookingRepo(db)
-	blogRepo := repository.NewBlogRepo(db)
-	customerRepo := repository.NewCustomerRepo(db)
-	carRepo := repository.NewCarRepo(db)
-	rentalRepo := repository.NewRentalRepo(db)
-	airportTransferRepo := repository.NewAirportTransferRepo(db)
-	contactMessageRepo := repository.NewContactMessageRepo(db)
-	newsletterRepo := repository.NewNewsletterRepo(db)
-	reviewRepo := repository.NewReviewRepo(db)
-	partnerRepo := repository.NewPartnerRepo(db)
-	packageRepo := repository.NewPackageRepo(db)
-	quoteRepo := repository.NewQuoteRepo(db)
-	tenantRepo := repository.NewTenantRepo(db)
-	tenantDetailRepo := repository.NewTenantDetailRepo(db)
-	tenantReviewRepo := repository.NewTenantReviewRepo(db)
-	tenantPackageRepo := repository.NewTenantPackageRepo(db)
-	tenantUserRepo := repository.NewTenantUserRepo(db)
-	platformUserRepo := repository.NewPlatformUserRepo(db)
-	subscriptionRepo := repository.NewSubscriptionRepo(db)
-
-	destSvc := service.NewDestinationService(destRepo, tenantUserRepo)
-	bookingSvc := service.NewBookingService(bookingRepo, customerRepo, destRepo, tenantUserRepo)
-	blogSvc := service.NewBlogService(blogRepo, tenantUserRepo)
-	carSvc := service.NewCarService(carRepo, tenantUserRepo)
-	rentalSvc := service.NewRentalService(rentalRepo, customerRepo, carRepo, tenantUserRepo)
-	airportTransferSvc := service.NewAirportTransferService(airportTransferRepo, customerRepo, tenantUserRepo)
-	contactMessageSvc := service.NewContactMessageService(contactMessageRepo, tenantUserRepo)
-	newsletterSvc := service.NewNewsletterService(newsletterRepo)
-	customerSvc := service.NewCustomerService(customerRepo, bookingRepo, rentalRepo, airportTransferRepo, tenantUserRepo)
-	reviewSvc := service.NewReviewService(reviewRepo, tenantUserRepo)
-	partnerSvc := service.NewPartnerService(partnerRepo, tenantUserRepo)
-	packageSvc := service.NewPackageService(packageRepo, tenantPackageRepo, platformUserRepo)
-	quoteSvc := service.NewQuoteService(quoteRepo, tenantUserRepo, platformUserRepo)
-	tenantSvc := service.NewTenantService(tenantRepo, tenantDetailRepo, platformUserRepo)
-	tenantReviewSvc := service.NewTenantReviewService(tenantReviewRepo, tenantRepo)
-	tenantPackageSvc := service.NewTenantPackageService(tenantPackageRepo, tenantRepo, packageRepo)
-	tenantUserSvc := service.NewTenantUserService(tenantUserRepo, maker, 24)
-	platformUserSvc := service.NewPlatformUserService(platformUserRepo, maker, 24)
-	subscriptionSvc := service.NewSubscriptionService(subscriptionRepo, platformUserRepo, packageRepo)
-	uploadSvc, err := service.NewUploadService("cloudinary://key:secret@test-cloud")
-	if err != nil {
-		t.Fatalf("new upload service: %v", err)
-	}
-
-	if err := platformUserSvc.EnsureBootstrap(context.Background(), SuperadminName, SuperadminEmail, SuperadminPassword); err != nil {
-		t.Fatalf("bootstrap superadmin: %v", err)
-	}
-
-	router := handler.NewRouter(
-		handler.NewDestinationHandler(destSvc),
-		handler.NewBookingHandler(bookingSvc),
-		handler.NewBlogHandler(blogSvc),
-		handler.NewCarHandler(carSvc),
-		handler.NewRentalHandler(rentalSvc),
-		handler.NewAirportTransferHandler(airportTransferSvc),
-		handler.NewContactMessageHandler(contactMessageSvc),
-		handler.NewNewsletterHandler(newsletterSvc),
-		handler.NewCustomerHandler(customerSvc),
-		handler.NewReviewHandler(reviewSvc),
-		handler.NewPartnerHandler(partnerSvc),
-		handler.NewPackageHandler(packageSvc),
-		handler.NewQuoteHandler(quoteSvc),
-		handler.NewTenantHandler(tenantSvc, tenantUserSvc),
-		handler.NewTenantReviewHandler(tenantReviewSvc),
-		handler.NewTenantPackageHandler(tenantPackageSvc),
-		handler.NewTenantUserHandler(tenantUserSvc),
-		handler.NewPlatformUserHandler(platformUserSvc),
-		handler.NewSubscriptionHandler(subscriptionSvc),
-		handler.NewUploadHandler(uploadSvc),
-		middleware.NewAuthMiddleware(maker),
-		middleware.NewTenantMiddleware(tenantSvc),
-		middleware.NewSubscriptionMiddleware(subscriptionSvc),
-	)
-
-	engine := gin.New()
-	router.Register(engine)
-
-	srv := httptest.NewServer(engine)
+	srv := httptest.NewServer(app.Engine)
 	t.Cleanup(srv.Close)
 
 	return &App{Server: srv, Maker: maker}
+}
+
+// TestConfig is the configuration every test server runs on.
+//
+// Rate limiting is OFF here. A test suite makes hundreds of requests from one
+// address in seconds, which is precisely the shape the limiter exists to
+// refuse; leaving it on would make unrelated tests fail in whatever order
+// they happened to run. The limiter has its own targeted test instead.
+func TestConfig() *config.Config {
+	return &config.Config{
+		AppEnv:      config.EnvTest,
+		AppPort:     "0",
+		MongoURI:    "mongodb://test",
+		MongoDB:     "testdb",
+		TokenSecret: TokenSecret,
+		TokenExpiry: 24,
+
+		// Uploads are deliberately configured so the upload route is mounted
+		// and reachable. The credentials are fake: any test that gets as far
+		// as talking to Cloudinary fails at that call, which is the correct
+		// outcome for a suite that must not depend on a third party.
+		CloudinaryURL:  "cloudinary://key:secret@test-cloud",
+		UploadMaxBytes: 10 << 20,
+
+		SuperadminName:     SuperadminName,
+		SuperadminEmail:    SuperadminEmail,
+		SuperadminPassword: SuperadminPassword,
+
+		RateLimitEnabled: false,
+	}
 }

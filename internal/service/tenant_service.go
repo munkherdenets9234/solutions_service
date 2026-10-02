@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"net/http"
 	"strings"
 
 	"github.com/eandstravel/digitalservice/internal/models"
@@ -33,13 +32,13 @@ func (s *TenantService) Create(ctx context.Context, t *models.Tenant) (*models.T
 
 	raw, hash, err := apikey.Generate()
 	if err != nil {
-		return nil, "", apierr.Internal()
+		return nil, "", apierr.Internal(err)
 	}
 	t.APIKeyHash = hash
 	t.APIKeyLast4 = apikey.Last4(raw)
 
 	if err := s.repo.Create(ctx, t); err != nil {
-		return nil, "", apierr.Internal()
+		return nil, "", apierr.Internal(err)
 	}
 	return t, raw, nil
 }
@@ -56,7 +55,7 @@ func (s *TenantService) List(ctx context.Context, page, limit int) ([]*models.Te
 		return nil, 0, err
 	}
 	if err := s.attachProjects(ctx, tenants); err != nil {
-		return nil, 0, apierr.Internal()
+		return nil, 0, apierr.Internal(err)
 	}
 	return tenants, total, nil
 }
@@ -71,10 +70,10 @@ func (s *TenantService) GetByID(ctx context.Context, idStr string) (*models.Tena
 		if err == mongo.ErrNoDocuments {
 			return nil, apierr.NotFound("tenant not found")
 		}
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	if err := s.attachProjects(ctx, []*models.Tenant{t}); err != nil {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	return t, nil
 }
@@ -147,15 +146,15 @@ func (s *TenantService) RotateAPIKey(ctx context.Context, idStr string) (string,
 		if err == mongo.ErrNoDocuments {
 			return "", apierr.NotFound("tenant not found")
 		}
-		return "", apierr.Internal()
+		return "", apierr.Internal(err)
 	}
 
 	raw, hash, err := apikey.Generate()
 	if err != nil {
-		return "", apierr.Internal()
+		return "", apierr.Internal(err)
 	}
 	if err := s.repo.RotateAPIKey(ctx, id, hash, apikey.Last4(raw)); err != nil {
-		return "", apierr.Internal()
+		return "", apierr.Internal(err)
 	}
 	return raw, nil
 }
@@ -177,9 +176,9 @@ func (s *TenantService) UpdateDomain(ctx context.Context, idStr, domain string) 
 
 	if err := s.repo.UpdateDomain(ctx, id, domain); err != nil {
 		if mongo.IsDuplicateKeyError(err) {
-			return apierr.New(http.StatusConflict, "domain is already assigned to another tenant")
+			return apierr.Conflict("domain is already assigned to another tenant")
 		}
-		return apierr.Internal()
+		return apierr.Internal(err)
 	}
 	return nil
 }
@@ -211,7 +210,7 @@ func (s *TenantService) ListProjects(ctx context.Context, page, limit int) ([]*m
 
 	details, total, err := s.detailRepo.FindAllShowcase(ctx, page, limit)
 	if err != nil {
-		return nil, nil, 0, apierr.Internal()
+		return nil, nil, 0, apierr.Internal(err)
 	}
 
 	ids := make([]primitive.ObjectID, len(details))
@@ -220,7 +219,7 @@ func (s *TenantService) ListProjects(ctx context.Context, page, limit int) ([]*m
 	}
 	tenants, err := s.repo.FindByIDsActive(ctx, ids)
 	if err != nil {
-		return nil, nil, 0, apierr.Internal()
+		return nil, nil, 0, apierr.Internal(err)
 	}
 	byID := make(map[primitive.ObjectID]*models.Tenant, len(tenants))
 	for _, t := range tenants {
@@ -246,7 +245,7 @@ func (s *TenantService) GetProjectBySlug(ctx context.Context, slug string) (*mod
 		if err == mongo.ErrNoDocuments {
 			return nil, nil, apierr.NotFound("project not found")
 		}
-		return nil, nil, apierr.Internal()
+		return nil, nil, apierr.Internal(err)
 	}
 
 	d, err := s.detailRepo.FindByTenantID(ctx, t.ID)
@@ -254,7 +253,7 @@ func (s *TenantService) GetProjectBySlug(ctx context.Context, slug string) (*mod
 		if err == mongo.ErrNoDocuments {
 			return nil, nil, apierr.NotFound("project not found")
 		}
-		return nil, nil, apierr.Internal()
+		return nil, nil, apierr.Internal(err)
 	}
 	if !d.Showcase {
 		return nil, nil, apierr.NotFound("project not found")
@@ -275,7 +274,7 @@ func (s *TenantService) UpdateProject(ctx context.Context, idStr string, update 
 		if err == mongo.ErrNoDocuments {
 			return apierr.NotFound("tenant not found")
 		}
-		return apierr.Internal()
+		return apierr.Internal(err)
 	}
 	return s.detailRepo.Upsert(ctx, id, update, userID)
 }
@@ -286,12 +285,12 @@ func (s *TenantService) Resolve(ctx context.Context, rawAPIKey string) (*models.
 	t, err := s.repo.FindByAPIKeyHash(ctx, apikey.Hash(rawAPIKey))
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return nil, apierr.Unauthorized()
+			return nil, apierr.Unauthorized("")
 		}
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	if t.Status != models.TenantActive {
-		return nil, apierr.New(http.StatusForbidden, "tenant suspended")
+		return nil, apierr.Forbidden("tenant suspended").In(apierr.DomainTenant)
 	}
 	return t, nil
 }

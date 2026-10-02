@@ -68,7 +68,7 @@ func (s *DestinationService) ListAdmin(ctx context.Context, tenantID primitive.O
 		return nil, 0, err
 	}
 	if err := s.resolveLastEditedBy(ctx, tenantID, destinations); err != nil {
-		return nil, 0, apierr.Internal()
+		return nil, 0, apierr.Internal(err)
 	}
 	return destinations, total, nil
 }
@@ -83,10 +83,10 @@ func (s *DestinationService) GetByID(ctx context.Context, tenantID primitive.Obj
 		if err == mongo.ErrNoDocuments {
 			return nil, apierr.NotFound("destination not found")
 		}
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	if err := s.resolveLastEditedBy(ctx, tenantID, []*models.Destination{d}); err != nil {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	return d, nil
 }
@@ -133,7 +133,7 @@ func (s *DestinationService) GetBySlug(ctx context.Context, tenantID primitive.O
 		if err == mongo.ErrNoDocuments {
 			return nil, apierr.NotFound("destination not found")
 		}
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	return d, nil
 }

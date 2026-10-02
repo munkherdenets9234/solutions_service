@@ -21,27 +21,27 @@ type ProjectMetricResponse struct {
 // returns those in full, plus the raw TenantDetail embedded as `project`,
 // for the platform's own tenant management.
 type ProjectResponse struct {
-	ID          primitive.ObjectID      `json:"id"`
-	Name        string                  `json:"name"`
-	Slug        string                  `json:"slug"`
-	Tagline     string                  `json:"tagline"`
-	Description string                  `json:"description"`
-	Category    string                  `json:"category"`
+	ID          primitive.ObjectID `json:"id"`
+	Name        string             `json:"name"`
+	Slug        string             `json:"slug"`
+	Tagline     string             `json:"tagline"`
+	Description string             `json:"description"`
+	Category    string             `json:"category"`
 	// LiveURL is TenantDetail.WebsiteURL if set, otherwise falls back to
 	// the tenant's own bound Domain (see PUT /platform/tenants/{id}/domain) —
 	// so a project still shows a "visit website" link even before an admin
 	// fills in the explicit field.
-	LiveURL     string                  `json:"live_url,omitempty"`
-	CoverImage  models.Image            `json:"cover_image"`
+	LiveURL    string       `json:"live_url,omitempty"`
+	CoverImage models.Image `json:"cover_image"`
 	// AdminCover is a separate, admin-curated image for front-page/list
 	// display — see models.TenantDetail.AdminCover.
-	AdminCover  models.Image            `json:"admin_cover"`
-	Images      []models.Image          `json:"images"`
-	Metrics     []ProjectMetricResponse `json:"metrics"`
-	Featured    bool                    `json:"featured"`
-	SortOrder   int                     `json:"sort_order"`
-	CreatedAt   time.Time               `json:"created_at"`
-	UpdatedAt   time.Time               `json:"updated_at"`
+	AdminCover models.Image            `json:"admin_cover"`
+	Images     []models.Image          `json:"images"`
+	Metrics    []ProjectMetricResponse `json:"metrics"`
+	Featured   bool                    `json:"featured"`
+	SortOrder  int                     `json:"sort_order"`
+	CreatedAt  time.Time               `json:"created_at"`
+	UpdatedAt  time.Time               `json:"updated_at"`
 }
 
 func ToProjectResponse(t *models.Tenant, d *models.TenantDetail, locale string) ProjectResponse {

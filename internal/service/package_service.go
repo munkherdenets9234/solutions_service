@@ -13,9 +13,9 @@ import (
 )
 
 type PackageService struct {
-	repo             *repository.PackageRepo
+	repo              *repository.PackageRepo
 	tenantPackageRepo *repository.TenantPackageRepo
-	platformUserRepo *repository.PlatformUserRepo
+	platformUserRepo  *repository.PlatformUserRepo
 }
 
 func NewPackageService(repo *repository.PackageRepo, tenantPackageRepo *repository.TenantPackageRepo, platformUserRepo *repository.PlatformUserRepo) *PackageService {
@@ -33,7 +33,7 @@ func (s *PackageService) ListForTenant(ctx context.Context, tenantID primitive.O
 	}
 	ids, err := s.tenantPackageRepo.FindPackageIDsByTenant(ctx, tenantID)
 	if err != nil {
-		return nil, 0, apierr.Internal()
+		return nil, 0, apierr.Internal(err)
 	}
 	return s.repo.FindByIDsActive(ctx, ids, page, limit)
 }
@@ -46,11 +46,11 @@ func (s *PackageService) GetBySlugForTenant(ctx context.Context, tenantID primit
 		if err == mongo.ErrNoDocuments {
 			return nil, apierr.NotFound("package not found")
 		}
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	ids, err := s.tenantPackageRepo.FindPackageIDsByTenant(ctx, tenantID)
 	if err != nil {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	for _, id := range ids {
 		if id == p.ID {
@@ -74,7 +74,7 @@ func (s *PackageService) ListAll(ctx context.Context, page, limit int) ([]*model
 		return nil, 0, err
 	}
 	if err := s.resolveLastEditedBy(ctx, pkgs); err != nil {
-		return nil, 0, apierr.Internal()
+		return nil, 0, apierr.Internal(err)
 	}
 	return pkgs, total, nil
 }
@@ -89,10 +89,10 @@ func (s *PackageService) GetByID(ctx context.Context, idStr string) (*models.Pac
 		if err == mongo.ErrNoDocuments {
 			return nil, apierr.NotFound("package not found")
 		}
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	if err := s.resolveLastEditedBy(ctx, []*models.Package{p}); err != nil {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	return p, nil
 }

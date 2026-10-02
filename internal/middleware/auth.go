@@ -1,13 +1,21 @@
 package middleware
 
 import (
-	"net/http"
 	"strings"
 
-	"github.com/eandstravel/digitalservice/pkg/response"
+	"github.com/eandstravel/digitalservice/pkg/apierr"
 	"github.com/eandstravel/digitalservice/pkg/token"
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+)
+
+// Context keys set by the auth and tenant middleware. Handlers read them
+// through internal/api/apictx rather than by string literal, so a typo is a
+// compile error rather than a nil map lookup at request time.
+const (
+	CtxUserID   = "user_id"
+	CtxRole     = "role"
+	CtxTenantID = "tenant_id"
 )
 
 type AuthMiddleware struct {
@@ -31,14 +39,17 @@ func (a *AuthMiddleware) Require(roles ...string) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		authHeader := c.GetHeader("Authorization")
 		if authHeader == "" || !strings.HasPrefix(authHeader, "Bearer ") {
-			response.Error(c, http.StatusUnauthorized, "missing authorization header")
+			fail(c, apierr.Unauthorized("missing authorization header"))
 			return
 		}
 
 		tokenStr := strings.TrimPrefix(authHeader, "Bearer ")
 		claims, err := a.maker.VerifyToken(tokenStr)
 		if err != nil {
-			response.Error(c, http.StatusUnauthorized, err.Error())
+			// The verifier's own text ("token has expired" vs "invalid
+			// token") is useful to a legitimate client and tells an attacker
+			// nothing they could not learn by waiting.
+			fail(c, apierr.Unauthorized(err.Error()))
 			return
 		}
 
@@ -51,27 +62,27 @@ func (a *AuthMiddleware) Require(roles ...string) gin.HandlerFunc {
 				}
 			}
 			if !allowed {
-				response.Error(c, http.StatusForbidden, "forbidden")
+				fail(c, apierr.Forbidden(""))
 				return
 			}
 		}
 
 		if claims.Role == "superadmin" {
 			if claims.TenantID != "" {
-				response.Error(c, http.StatusForbidden, "forbidden")
+				fail(c, apierr.Forbidden(""))
 				return
 			}
 		} else if claims.TenantID != "" {
-			if resolved, exists := c.Get("tenant_id"); exists {
+			if resolved, exists := c.Get(CtxTenantID); exists {
 				if claims.TenantID != resolved.(primitive.ObjectID).Hex() {
-					response.Error(c, http.StatusForbidden, "token does not belong to this tenant")
+					fail(c, apierr.Forbidden("token does not belong to this tenant"))
 					return
 				}
 			}
 		}
 
-		c.Set("user_id", claims.UserID)
-		c.Set("role", claims.Role)
+		c.Set(CtxUserID, claims.UserID)
+		c.Set(CtxRole, claims.Role)
 		c.Next()
 	}
 }

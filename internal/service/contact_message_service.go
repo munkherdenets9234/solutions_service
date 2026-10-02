@@ -37,7 +37,7 @@ func (s *ContactMessageService) List(ctx context.Context, tenantID primitive.Obj
 		return nil, 0, err
 	}
 	if err := s.resolveLastEditedBy(ctx, tenantID, messages); err != nil {
-		return nil, 0, apierr.Internal()
+		return nil, 0, apierr.Internal(err)
 	}
 	return messages, total, nil
 }

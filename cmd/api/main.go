@@ -1,24 +1,16 @@
+// Command api is the service entry point. It does four things and delegates
+// everything else to internal/bootstrap: load the environment, start the
+// logger, wire the app, run it.
 package main
 
 import (
 	"context"
-	"net/http"
 	"os"
-	"os/signal"
-	"syscall"
-	"time"
 
+	"github.com/eandstravel/digitalservice/internal/bootstrap"
 	"github.com/eandstravel/digitalservice/internal/config"
-	"github.com/eandstravel/digitalservice/internal/handler"
-	"github.com/eandstravel/digitalservice/internal/middleware"
-	"github.com/eandstravel/digitalservice/internal/repository"
-	"github.com/eandstravel/digitalservice/internal/service"
 	"github.com/eandstravel/digitalservice/pkg/logger"
-	"github.com/eandstravel/digitalservice/pkg/token"
-	"github.com/gin-gonic/gin"
 	"github.com/joho/godotenv"
-	"go.mongodb.org/mongo-driver/mongo"
-	"go.mongodb.org/mongo-driver/mongo/options"
 	"go.uber.org/zap"
 )
 
@@ -26,163 +18,22 @@ func main() {
 	_ = godotenv.Load()
 
 	cfg := config.Load()
-	logger.Init(cfg.AppEnv)
+	logger.Init(string(cfg.AppEnv))
 	defer logger.Sync()
 
-	// MongoDB
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	client, err := mongo.Connect(ctx, options.Client().ApplyURI(cfg.MongoURI))
+	app, err := bootstrap.New(context.Background(), cfg)
 	if err != nil {
-		logger.Log.Fatal("mongo connect failed", zap.Error(err))
-	}
-	if err := client.Ping(ctx, nil); err != nil {
-		logger.Log.Fatal("mongo ping failed", zap.Error(err))
-	}
-	logger.Log.Info("mongodb connected")
-	db := client.Database(cfg.MongoDB)
-
-	if err := repository.EnsureIndexes(ctx, db); err != nil {
-		logger.Log.Fatal("index setup failed", zap.Error(err))
+		// Configuration problems are reported as one list rather than one
+		// restart at a time (see config.Validate), so this line is usually
+		// the only thing an operator needs to fix a fresh environment.
+		logger.Log.Error("startup failed", zap.Error(err))
+		_ = logger.Log.Sync()
+		os.Exit(1)
 	}
 
-	// Token maker
-	tokenMaker, err := token.NewMaker(cfg.TokenSecret)
-	if err != nil {
-		logger.Log.Fatal("token maker failed", zap.Error(err))
+	if err := app.Run(); err != nil {
+		logger.Log.Error("server stopped unexpectedly", zap.Error(err))
+		_ = logger.Log.Sync()
+		os.Exit(1)
 	}
-
-	// Wire up layers
-	destRepo := repository.NewDestinationRepo(db)
-	bookingRepo := repository.NewBookingRepo(db)
-	blogRepo := repository.NewBlogRepo(db)
-	customerRepo := repository.NewCustomerRepo(db)
-	carRepo := repository.NewCarRepo(db)
-	rentalRepo := repository.NewRentalRepo(db)
-	airportTransferRepo := repository.NewAirportTransferRepo(db)
-	contactMessageRepo := repository.NewContactMessageRepo(db)
-	newsletterRepo := repository.NewNewsletterRepo(db)
-	reviewRepo := repository.NewReviewRepo(db)
-	partnerRepo := repository.NewPartnerRepo(db)
-	packageRepo := repository.NewPackageRepo(db)
-	quoteRepo := repository.NewQuoteRepo(db)
-	tenantRepo := repository.NewTenantRepo(db)
-	tenantDetailRepo := repository.NewTenantDetailRepo(db)
-	tenantReviewRepo := repository.NewTenantReviewRepo(db)
-	tenantPackageRepo := repository.NewTenantPackageRepo(db)
-	tenantUserRepo := repository.NewTenantUserRepo(db)
-	platformUserRepo := repository.NewPlatformUserRepo(db)
-	subscriptionRepo := repository.NewSubscriptionRepo(db)
-
-	destSvc := service.NewDestinationService(destRepo, tenantUserRepo)
-	bookingSvc := service.NewBookingService(bookingRepo, customerRepo, destRepo, tenantUserRepo)
-	blogSvc := service.NewBlogService(blogRepo, tenantUserRepo)
-	carSvc := service.NewCarService(carRepo, tenantUserRepo)
-	rentalSvc := service.NewRentalService(rentalRepo, customerRepo, carRepo, tenantUserRepo)
-	airportTransferSvc := service.NewAirportTransferService(airportTransferRepo, customerRepo, tenantUserRepo)
-	contactMessageSvc := service.NewContactMessageService(contactMessageRepo, tenantUserRepo)
-	newsletterSvc := service.NewNewsletterService(newsletterRepo)
-	customerSvc := service.NewCustomerService(customerRepo, bookingRepo, rentalRepo, airportTransferRepo, tenantUserRepo)
-	reviewSvc := service.NewReviewService(reviewRepo, tenantUserRepo)
-	partnerSvc := service.NewPartnerService(partnerRepo, tenantUserRepo)
-	packageSvc := service.NewPackageService(packageRepo, tenantPackageRepo, platformUserRepo)
-	quoteSvc := service.NewQuoteService(quoteRepo, tenantUserRepo, platformUserRepo)
-	tenantSvc := service.NewTenantService(tenantRepo, tenantDetailRepo, platformUserRepo)
-	tenantReviewSvc := service.NewTenantReviewService(tenantReviewRepo, tenantRepo)
-	tenantPackageSvc := service.NewTenantPackageService(tenantPackageRepo, tenantRepo, packageRepo)
-	tenantUserSvc := service.NewTenantUserService(tenantUserRepo, tokenMaker, cfg.TokenExpiry)
-	platformUserSvc := service.NewPlatformUserService(platformUserRepo, tokenMaker, cfg.TokenExpiry)
-	subscriptionSvc := service.NewSubscriptionService(subscriptionRepo, platformUserRepo, packageRepo)
-	uploadSvc, err := service.NewUploadService(cfg.CloudinaryURL)
-	if err != nil {
-		logger.Log.Fatal("upload service init failed", zap.Error(err))
-	}
-
-	if err := platformUserSvc.EnsureBootstrap(ctx, cfg.SuperadminName, cfg.SuperadminEmail, cfg.SuperadminPassword); err != nil {
-		logger.Log.Fatal("superadmin bootstrap failed", zap.Error(err))
-	}
-
-	destHandler := handler.NewDestinationHandler(destSvc)
-	bookingHandler := handler.NewBookingHandler(bookingSvc)
-	blogHandler := handler.NewBlogHandler(blogSvc)
-	carHandler := handler.NewCarHandler(carSvc)
-	rentalHandler := handler.NewRentalHandler(rentalSvc)
-	airportTransferHandler := handler.NewAirportTransferHandler(airportTransferSvc)
-	contactMessageHandler := handler.NewContactMessageHandler(contactMessageSvc)
-	newsletterHandler := handler.NewNewsletterHandler(newsletterSvc)
-	customerHandler := handler.NewCustomerHandler(customerSvc)
-	reviewHandler := handler.NewReviewHandler(reviewSvc)
-	partnerHandler := handler.NewPartnerHandler(partnerSvc)
-	packageHandler := handler.NewPackageHandler(packageSvc)
-	quoteHandler := handler.NewQuoteHandler(quoteSvc)
-	tenantHandler := handler.NewTenantHandler(tenantSvc, tenantUserSvc)
-	tenantReviewHandler := handler.NewTenantReviewHandler(tenantReviewSvc)
-	tenantPackageHandler := handler.NewTenantPackageHandler(tenantPackageSvc)
-	tenantUserHandler := handler.NewTenantUserHandler(tenantUserSvc)
-	platformUserHandler := handler.NewPlatformUserHandler(platformUserSvc)
-	subscriptionHandler := handler.NewSubscriptionHandler(subscriptionSvc)
-	uploadHandler := handler.NewUploadHandler(uploadSvc)
-	authMW := middleware.NewAuthMiddleware(tokenMaker)
-	tenantMW := middleware.NewTenantMiddleware(tenantSvc)
-	subscriptionMW := middleware.NewSubscriptionMiddleware(subscriptionSvc)
-
-	router := handler.NewRouter(
-		destHandler,
-		bookingHandler,
-		blogHandler,
-		carHandler,
-		rentalHandler,
-		airportTransferHandler,
-		contactMessageHandler,
-		newsletterHandler,
-		customerHandler,
-		reviewHandler,
-		partnerHandler,
-		packageHandler,
-		quoteHandler,
-		tenantHandler,
-		tenantReviewHandler,
-		tenantPackageHandler,
-		tenantUserHandler,
-		platformUserHandler,
-		subscriptionHandler,
-		uploadHandler,
-		authMW,
-		tenantMW,
-		subscriptionMW,
-	)
-
-	if cfg.AppEnv == "production" {
-		gin.SetMode(gin.ReleaseMode)
-	}
-
-	engine := gin.New()
-	engine.Use(gin.Recovery())
-	router.Register(engine)
-
-	srv := &http.Server{
-		Addr:         ":" + cfg.AppPort,
-		Handler:      engine,
-		ReadTimeout:  15 * time.Second,
-		WriteTimeout: 15 * time.Second,
-	}
-
-	go func() {
-		logger.Log.Info("server starting", zap.String("port", cfg.AppPort))
-		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-			logger.Log.Fatal("server error", zap.Error(err))
-		}
-	}()
-
-	quit := make(chan os.Signal, 1)
-	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
-	<-quit
-
-	logger.Log.Info("shutting down...")
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer shutdownCancel()
-	_ = srv.Shutdown(shutdownCtx)
-	_ = client.Disconnect(shutdownCtx)
-	logger.Log.Info("server stopped")
 }

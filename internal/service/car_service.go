@@ -48,7 +48,7 @@ func (s *CarService) List(ctx context.Context, tenantID primitive.ObjectID, f Li
 		return nil, 0, err
 	}
 	if err := s.resolveLastEditedBy(ctx, tenantID, cars); err != nil {
-		return nil, 0, apierr.Internal()
+		return nil, 0, apierr.Internal(err)
 	}
 	return cars, total, nil
 }
@@ -59,10 +59,10 @@ func (s *CarService) GetBySlug(ctx context.Context, tenantID primitive.ObjectID,
 		if err == mongo.ErrNoDocuments {
 			return nil, apierr.NotFound("car not found")
 		}
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	if err := s.resolveLastEditedBy(ctx, tenantID, []*models.Car{c}); err != nil {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	return c, nil
 }

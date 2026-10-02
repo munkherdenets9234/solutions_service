@@ -26,3 +26,18 @@ func GenerateRandom() (string, error) {
 	}
 	return base64.RawURLEncoding.EncodeToString(buf), nil
 }
+
+// dummyHash is a real bcrypt hash at the same cost as the ones stored. Its
+// plaintext is irrelevant and never matched.
+var dummyHash = []byte("$2a$10$N9qo8uLOickgx2ZMRZoMyeIjZAgcfl7p92ldGxad68LJZdL17lhWy")
+
+// DummyCompare spends roughly what a real password check costs.
+//
+// Call it on the "no such account" path. Without it an unknown address answers
+// in microseconds and a known one in the tens of milliseconds bcrypt takes,
+// which hands back exactly the account-existence answer that returning an
+// identical error message was meant to withhold. The message being the same is
+// not enough when the clock is not.
+func DummyCompare() {
+	_ = bcrypt.CompareHashAndPassword(dummyHash, []byte("dummy"))
+}

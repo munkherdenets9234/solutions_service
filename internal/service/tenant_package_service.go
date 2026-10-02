@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"net/http"
 
 	"github.com/eandstravel/digitalservice/internal/models"
 	"github.com/eandstravel/digitalservice/internal/repository"
@@ -39,20 +38,20 @@ func (s *TenantPackageService) Assign(ctx context.Context, tenantIDStr, packageI
 		if err == mongo.ErrNoDocuments {
 			return apierr.NotFound("tenant not found")
 		}
-		return apierr.Internal()
+		return apierr.Internal(err)
 	}
 	if _, err := s.pkgRepo.FindByID(ctx, packageID); err != nil {
 		if err == mongo.ErrNoDocuments {
 			return apierr.BadRequest("invalid package_id")
 		}
-		return apierr.Internal()
+		return apierr.Internal(err)
 	}
 
 	if err := s.repo.Assign(ctx, tenantID, packageID, userID); err != nil {
 		if mongo.IsDuplicateKeyError(err) {
-			return apierr.New(http.StatusConflict, "package is already assigned to this tenant")
+			return apierr.Conflict("package is already assigned to this tenant")
 		}
-		return apierr.Internal()
+		return apierr.Internal(err)
 	}
 	return nil
 }
@@ -69,7 +68,7 @@ func (s *TenantPackageService) Unassign(ctx context.Context, tenantIDStr, packag
 
 	deleted, err := s.repo.Unassign(ctx, tenantID, packageID)
 	if err != nil {
-		return apierr.Internal()
+		return apierr.Internal(err)
 	}
 	if deleted == 0 {
 		return apierr.NotFound("assignment not found")
@@ -93,7 +92,7 @@ func (s *TenantPackageService) ListForTenant(ctx context.Context, tenantIDStr st
 
 	ids, err := s.repo.FindPackageIDsByTenant(ctx, tenantID)
 	if err != nil {
-		return nil, 0, apierr.Internal()
+		return nil, 0, apierr.Internal(err)
 	}
 	return s.pkgRepo.FindByIDs(ctx, ids, page, limit)
 }

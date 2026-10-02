@@ -45,12 +45,12 @@ func (s *RentalService) Create(ctx context.Context, tenantID primitive.ObjectID,
 		if err == mongo.ErrNoDocuments {
 			return nil, apierr.NotFound("car not found")
 		}
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 
 	customer, err := s.customerRepo.Upsert(ctx, tenantID, &input.Customer)
 	if err != nil {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 
 	rt := input.Rental
@@ -59,7 +59,7 @@ func (s *RentalService) Create(ctx context.Context, tenantID primitive.ObjectID,
 	rt.ConfirmationID = uuid.NewString()
 
 	if err := s.repo.Create(ctx, tenantID, &rt); err != nil {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	return &RentalDetail{Rental: rt, Customer: customer}, nil
 }
@@ -76,7 +76,7 @@ func (s *RentalService) List(ctx context.Context, tenantID primitive.ObjectID, p
 		return nil, 0, err
 	}
 	if err := s.resolveLastEditedBy(ctx, tenantID, rentals); err != nil {
-		return nil, 0, apierr.Internal()
+		return nil, 0, apierr.Internal(err)
 	}
 
 	ids := make([]primitive.ObjectID, 0, len(rentals))
@@ -89,7 +89,7 @@ func (s *RentalService) List(ctx context.Context, tenantID primitive.ObjectID, p
 	}
 	customers, err := s.customerRepo.FindByIDs(ctx, tenantID, ids)
 	if err != nil {
-		return nil, 0, apierr.Internal()
+		return nil, 0, apierr.Internal(err)
 	}
 	byID := make(map[primitive.ObjectID]*models.Customer, len(customers))
 	for _, c := range customers {
@@ -113,15 +113,15 @@ func (s *RentalService) GetByID(ctx context.Context, tenantID primitive.ObjectID
 		if err == mongo.ErrNoDocuments {
 			return nil, apierr.NotFound("rental not found")
 		}
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 
 	customer, err := s.customerRepo.FindByID(ctx, tenantID, rt.CustomerID)
 	if err != nil && err != mongo.ErrNoDocuments {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	if err := s.resolveLastEditedBy(ctx, tenantID, []*models.Rental{rt}); err != nil {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	return &RentalDetail{Rental: *rt, Customer: customer}, nil
 }

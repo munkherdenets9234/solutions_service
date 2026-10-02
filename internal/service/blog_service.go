@@ -33,7 +33,7 @@ func (s *BlogService) ListPublished(ctx context.Context, tenantID primitive.Obje
 		return nil, 0, err
 	}
 	if err := s.resolveAuthors(ctx, tenantID, blogs); err != nil {
-		return nil, 0, apierr.Internal()
+		return nil, 0, apierr.Internal(err)
 	}
 	return blogs, total, nil
 }
@@ -56,7 +56,7 @@ func (s *BlogService) ListAll(ctx context.Context, tenantID primitive.ObjectID, 
 		return nil, 0, err
 	}
 	if err := s.resolveAuthors(ctx, tenantID, blogs); err != nil {
-		return nil, 0, apierr.Internal()
+		return nil, 0, apierr.Internal(err)
 	}
 	return blogs, total, nil
 }
@@ -71,10 +71,10 @@ func (s *BlogService) GetByID(ctx context.Context, tenantID primitive.ObjectID, 
 		if err == mongo.ErrNoDocuments {
 			return nil, apierr.NotFound("blog not found")
 		}
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	if err := s.resolveAuthors(ctx, tenantID, []*models.Blog{b}); err != nil {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	return b, nil
 }
@@ -85,10 +85,10 @@ func (s *BlogService) GetBySlug(ctx context.Context, tenantID primitive.ObjectID
 		if err == mongo.ErrNoDocuments {
 			return nil, apierr.NotFound("blog not found")
 		}
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	if err := s.resolveAuthors(ctx, tenantID, []*models.Blog{b}); err != nil {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	// increment views async — ignore error
 	go func() {

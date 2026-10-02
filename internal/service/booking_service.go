@@ -44,12 +44,12 @@ func (s *BookingService) Create(ctx context.Context, tenantID primitive.ObjectID
 		if err == mongo.ErrNoDocuments {
 			return nil, apierr.NotFound("destination not found")
 		}
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 
 	customer, err := s.customerRepo.Upsert(ctx, tenantID, &input.Customer)
 	if err != nil {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 
 	b := input.Booking
@@ -57,7 +57,7 @@ func (s *BookingService) Create(ctx context.Context, tenantID primitive.ObjectID
 	b.CustomerID = customer.ID
 
 	if err := s.repo.Create(ctx, tenantID, &b); err != nil {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	return &BookingDetail{Booking: b, Customer: customer}, nil
 }
@@ -74,7 +74,7 @@ func (s *BookingService) List(ctx context.Context, tenantID primitive.ObjectID, 
 		return nil, 0, err
 	}
 	if err := s.resolveLastEditedBy(ctx, tenantID, bookings); err != nil {
-		return nil, 0, apierr.Internal()
+		return nil, 0, apierr.Internal(err)
 	}
 
 	details, err := s.attachCustomers(ctx, tenantID, bookings)
@@ -94,15 +94,15 @@ func (s *BookingService) GetByID(ctx context.Context, tenantID primitive.ObjectI
 		if err == mongo.ErrNoDocuments {
 			return nil, apierr.NotFound("booking not found")
 		}
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 
 	customer, err := s.customerRepo.FindByID(ctx, tenantID, b.CustomerID)
 	if err != nil && err != mongo.ErrNoDocuments {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	if err := s.resolveLastEditedBy(ctx, tenantID, []*models.Booking{b}); err != nil {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	return &BookingDetail{Booking: *b, Customer: customer}, nil
 }
@@ -154,7 +154,7 @@ func (s *BookingService) attachCustomers(ctx context.Context, tenantID primitive
 
 	customers, err := s.customerRepo.FindByIDs(ctx, tenantID, ids)
 	if err != nil {
-		return nil, apierr.Internal()
+		return nil, apierr.Internal(err)
 	}
 	byID := make(map[primitive.ObjectID]*models.Customer, len(customers))
 	for _, c := range customers {

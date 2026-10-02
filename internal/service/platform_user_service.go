@@ -2,7 +2,6 @@ package service
 
 import (
 	"context"
-	"net/http"
 	"time"
 
 	"github.com/eandstravel/digitalservice/internal/models"
@@ -57,7 +56,7 @@ func (s *PlatformUserService) Create(ctx context.Context, name, email, rawPasswo
 		var err error
 		rawPassword, err = password.GenerateRandom()
 		if err != nil {
-			return nil, "", apierr.Internal()
+			return nil, "", apierr.Internal(err)
 		}
 	} else if len(rawPassword) < 8 {
 		return nil, "", apierr.BadRequest("password must be at least 8 characters")
@@ -65,15 +64,15 @@ func (s *PlatformUserService) Create(ctx context.Context, name, email, rawPasswo
 
 	hash, err := password.Hash(rawPassword)
 	if err != nil {
-		return nil, "", apierr.Internal()
+		return nil, "", apierr.Internal(err)
 	}
 
 	u := &models.PlatformUser{Name: name, Email: email, PasswordHash: hash}
 	if err := s.repo.Create(ctx, u); err != nil {
 		if mongo.IsDuplicateKeyError(err) {
-			return nil, "", apierr.New(http.StatusConflict, "a platform user with this email already exists")
+			return nil, "", apierr.Conflict("a platform user with this email already exists")
 		}
-		return nil, "", apierr.Internal()
+		return nil, "", apierr.Internal(err)
 	}
 	return u, rawPassword, nil
 }
@@ -94,20 +93,20 @@ func (s *PlatformUserService) Login(ctx context.Context, email, plainPassword st
 	u, err := s.repo.FindByEmail(ctx, email)
 	if err != nil {
 		if err == mongo.ErrNoDocuments {
-			return "", apierr.Unauthorized()
+			return "", apierr.Unauthorized("")
 		}
-		return "", apierr.Internal()
+		return "", apierr.Internal(err)
 	}
 	if u.Status != models.PlatformUserActive {
-		return "", apierr.New(http.StatusForbidden, "account suspended")
+		return "", apierr.Forbidden("account suspended")
 	}
 	if !password.Verify(u.PasswordHash, plainPassword) {
-		return "", apierr.Unauthorized()
+		return "", apierr.Unauthorized("")
 	}
 
 	tok, _, err := s.maker.CreateToken(u.ID.Hex(), "superadmin", "", s.tokenExpiry)
 	if err != nil {
-		return "", apierr.Internal()
+		return "", apierr.Internal(err)
 	}
 	return tok, nil
 }
@@ -123,10 +122,10 @@ func (s *PlatformUserService) UpdateStatus(ctx context.Context, idStr string, st
 	if status == models.PlatformUserSuspended {
 		active, err := s.repo.CountActive(ctx)
 		if err != nil {
-			return apierr.Internal()
+			return apierr.Internal(err)
 		}
 		if active <= 1 {
-			return apierr.New(http.StatusConflict, "cannot suspend the last active platform user")
+			return apierr.Conflict("cannot suspend the last active platform user")
 		}
 	}
 
@@ -141,10 +140,10 @@ func (s *PlatformUserService) ChangePassword(ctx context.Context, userID primiti
 		if err == mongo.ErrNoDocuments {
 			return apierr.NotFound("platform user not found")
 		}
-		return apierr.Internal()
+		return apierr.Internal(err)
 	}
 	if !password.Verify(u.PasswordHash, currentPassword) {
-		return apierr.Unauthorized()
+		return apierr.Unauthorized("")
 	}
 	if len(newPassword) < 8 {
 		return apierr.BadRequest("password must be at least 8 characters")
@@ -152,7 +151,7 @@ func (s *PlatformUserService) ChangePassword(ctx context.Context, userID primiti
 
 	hash, err := password.Hash(newPassword)
 	if err != nil {
-		return apierr.Internal()
+		return apierr.Internal(err)
 	}
 	return s.repo.UpdatePassword(ctx, userID, hash)
 }
@@ -169,13 +168,13 @@ func (s *PlatformUserService) ResetPassword(ctx context.Context, idStr, newPassw
 		if err == mongo.ErrNoDocuments {
 			return "", apierr.NotFound("platform user not found")
 		}
-		return "", apierr.Internal()
+		return "", apierr.Internal(err)
 	}
 
 	if newPassword == "" {
 		newPassword, err = password.GenerateRandom()
 		if err != nil {
-			return "", apierr.Internal()
+			return "", apierr.Internal(err)
 		}
 	} else if len(newPassword) < 8 {
 		return "", apierr.BadRequest("password must be at least 8 characters")
@@ -183,10 +182,10 @@ func (s *PlatformUserService) ResetPassword(ctx context.Context, idStr, newPassw
 
 	hash, err := password.Hash(newPassword)
 	if err != nil {
-		return "", apierr.Internal()
+		return "", apierr.Internal(err)
 	}
 	if err := s.repo.UpdatePassword(ctx, id, hash); err != nil {
-		return "", apierr.Internal()
+		return "", apierr.Internal(err)
 	}
 	return newPassword, nil
 }
