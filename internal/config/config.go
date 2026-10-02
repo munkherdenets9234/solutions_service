@@ -13,7 +13,10 @@
 package config
 
 import (
+	"crypto/ed25519"
+	"encoding/base64"
 	"errors"
+	"fmt"
 	"os"
 	"strconv"
 	"strings"
@@ -57,6 +60,9 @@ type Config struct {
 	EntitlementTTLSeconds   int
 	EntitlementGraceSeconds int
 	EntitlementTimeoutMS    int
+	// Base64 Ed25519 public key of tenantcore. Optional: blank leaves the
+	// tenantcore-superadmin routes unmounted (404). Never a secret.
+	TenantcorePublicKey string
 
 	// Uploads.
 	UploadMaxBytes int64
@@ -176,6 +182,16 @@ func (c Config) Validate() error {
 		problems = append(problems, "SUPERADMIN_PASSWORD must be at least 8 characters")
 	}
 
+	if c.TenantcorePublicKey != "" {
+		raw, err := base64.StdEncoding.DecodeString(c.TenantcorePublicKey)
+		if err != nil {
+			problems = append(problems, "TENANTCORE_PUBLIC_KEY is not valid base64")
+		} else if len(raw) != ed25519.PublicKeySize {
+			problems = append(problems, fmt.Sprintf("TENANTCORE_PUBLIC_KEY must decode to %d bytes (an Ed25519 public key), got %d",
+				ed25519.PublicKeySize, len(raw)))
+		}
+	}
+
 	if len(problems) > 0 {
 		return errors.New("invalid configuration: " + strings.Join(problems, "; "))
 	}
@@ -204,6 +220,7 @@ func Load() *Config {
 		EntitlementTTLSeconds:   getEnvInt("ENTITLEMENT_TTL_SECONDS", 60),
 		EntitlementGraceSeconds: getEnvInt("ENTITLEMENT_GRACE_SECONDS", 900),
 		EntitlementTimeoutMS:    getEnvInt("ENTITLEMENT_TIMEOUT_MS", 3000),
+		TenantcorePublicKey:     getEnv("TENANTCORE_PUBLIC_KEY", ""),
 
 		UploadMaxBytes: int64(getEnvInt("UPLOAD_MAX_BYTES", 10<<20)), // 10 MiB
 
