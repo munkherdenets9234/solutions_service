@@ -5,6 +5,7 @@ package service_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"os"
@@ -16,12 +17,28 @@ import (
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-// minimalPDF is a tiny structurally valid one-page PDF (a few hundred bytes).
-const minimalPDF = "%PDF-1.1\n" +
-	"1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n" +
-	"2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n" +
-	"3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 72 72]>>endobj\n" +
-	"trailer<</Root 1 0 R/Size 4>>\n%%EOF\n"
+// validPDF builds a real minimal one-page PDF with a correct xref table.
+func validPDF() []byte {
+	var b bytes.Buffer
+	b.WriteString("%PDF-1.4\n")
+	objs := []string{
+		"<</Type/Catalog/Pages 2 0 R>>",
+		"<</Type/Pages/Kids[3 0 R]/Count 1>>",
+		"<</Type/Page/Parent 2 0 R/MediaBox[0 0 72 72]>>",
+	}
+	offsets := make([]int, len(objs))
+	for i, o := range objs {
+		offsets[i] = b.Len()
+		fmt.Fprintf(&b, "%d 0 obj\n%s\nendobj\n", i+1, o)
+	}
+	xref := b.Len()
+	fmt.Fprintf(&b, "xref\n0 %d\n0000000000 65535 f \n", len(objs)+1)
+	for _, off := range offsets {
+		fmt.Fprintf(&b, "%010d 00000 n \n", off)
+	}
+	fmt.Fprintf(&b, "trailer\n<</Size %d/Root 1 0 R>>\nstartxref\n%d\n%%%%EOF\n", len(objs)+1, xref)
+	return b.Bytes()
+}
 
 // fetchStatus GETs rawURL and returns the status and the first bytes of the
 // body. Errors never include the URL: it is a credential.
@@ -55,7 +72,7 @@ func TestPrivateFileServiceLive(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	stored, err := svc.Upload(ctx, bytes.NewReader([]byte(minimalPDF)), primitive.NewObjectID())
+	stored, err := svc.Upload(ctx, bytes.NewReader(validPDF()), primitive.NewObjectID())
 	if err != nil {
 		t.Fatal("upload failed")
 	}

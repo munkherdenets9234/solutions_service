@@ -95,15 +95,25 @@ func NewPrivateFileService(cloudinaryURL string, maxBytes int64) (*PrivateFileSe
 		if err != nil {
 			return "", err
 		}
+		// The SDK reports API-level failures in res.Error with err == nil.
+		if e := uploadResultError(res.Error.Message, res.PublicID); e != nil {
+			return "", e
+		}
 		return res.PublicID, nil
 	}
 	s.destroyFunc = func(ctx context.Context, publicID, resourceType string) error {
-		_, err := cld.Upload.Destroy(ctx, uploader.DestroyParams{
+		res, err := cld.Upload.Destroy(ctx, uploader.DestroyParams{
 			PublicID:     publicID,
 			Type:         "authenticated",
 			ResourceType: resourceType,
 		})
-		return err
+		if err != nil {
+			return err
+		}
+		if res.Error.Message != "" {
+			return errors.New("destroy rejected")
+		}
+		return nil // "ok" and "not found" both mean the object is gone
 	}
 	return s, nil
 }
@@ -145,7 +155,14 @@ func (s *PrivateFileService) Upload(ctx context.Context, r io.Reader, tenantID p
 		PublicID:     uuid.NewString(),
 	})
 	if err != nil {
+		var ae *apierr.APIError
+		if errors.As(err, &ae) {
+			return nil, ae
+		}
 		return nil, apierr.Upstream(apierr.DomainUpload, err)
+	}
+	if publicID == "" {
+		return nil, apierr.Upstream(apierr.DomainUpload, errors.New("upload rejected"))
 	}
 	if limited.n > s.maxBytes {
 		_ = s.destroyFunc(ctx, publicID, rt)
@@ -156,6 +173,9 @@ func (s *PrivateFileService) Upload(ctx context.Context, r io.Reader, tenantID p
 
 // Delete removes a stored object, used to clean up when a submit fails.
 func (s *PrivateFileService) Delete(ctx context.Context, publicID, mime string) error {
+	if publicID == "" {
+		return nil // nothing was stored; never send an empty id upstream
+	}
 	if !s.Available() {
 		return apierr.FeatureUnavailable("document uploads")
 	}
@@ -213,4 +233,19 @@ func signDownloadParams(p map[string]string, secret string) string {
 	}
 	sum := sha1.Sum([]byte(strings.Join(parts, "&") + secret)) //nolint:gosec
 	return hex.EncodeToString(sum[:])
+}
+
+// uploadResultError converts the SDK's err-less failure shape into an error.
+// Provider text is never carried into the returned error.
+func uploadResultError(msg, publicID string) error {
+	if msg != "" {
+		if strings.Contains(strings.ToLower(msg), "invalid") {
+			return apierr.ValidationFailed("document could not be read; export it again as a valid PDF or image")
+		}
+		return apierr.Upstream(apierr.DomainUpload, errors.New("upload rejected"))
+	}
+	if publicID == "" {
+		return apierr.Upstream(apierr.DomainUpload, errors.New("upload rejected"))
+	}
+	return nil
 }

@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"bytes"
 	"context"
 	"io"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/cloudinary/cloudinary-go/v2/api/uploader"
+	"github.com/eandstravel/digitalservice/pkg/apierr"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
@@ -170,5 +172,68 @@ func TestUploadRejectsOverLimitStream(t *testing.T) {
 	}
 	if _, err := s.Upload(context.Background(), bytes.NewReader(nil), tid); err == nil {
 		t.Fatal("empty should be rejected")
+	}
+}
+
+func TestUploadResultError(t *testing.T) {
+	const safe = "document could not be read; export it again as a valid PDF or image"
+	cases := []struct {
+		name, msg, id string
+		wantNil       bool
+		wantStatus    int
+	}{
+		{"ok", "", "abc", true, 0},
+		{"empty both", "", "", false, 502},
+		{"invalid pdf", "Invalid PDF file", "", false, 422},
+		{"invalid image lower", "invalid image file", "x", false, 422},
+		{"other", "Unknown api_key secret-ish", "", false, 502},
+	}
+	for _, c := range cases {
+		err := uploadResultError(c.msg, c.id)
+		if c.wantNil {
+			if err != nil {
+				t.Errorf("%s: want nil, got %v", c.name, err)
+			}
+			continue
+		}
+		var ae *apierr.APIError
+		if !errors.As(err, &ae) {
+			t.Fatalf("%s: not APIError: %v", c.name, err)
+		}
+		if ae.HTTPStatus != c.wantStatus {
+			t.Errorf("%s: status %d want %d", c.name, ae.HTTPStatus, c.wantStatus)
+		}
+		if c.msg != "" && (strings.Contains(ae.Message, c.msg) || (ae.Err != nil && strings.Contains(ae.Err.Error(), c.msg))) {
+			t.Errorf("%s: provider message leaked", c.name)
+		}
+		if c.wantStatus == 422 && ae.Message != safe {
+			t.Errorf("%s: message %q", c.name, ae.Message)
+		}
+	}
+}
+
+func TestUploadEmptyPublicIDIsAnError(t *testing.T) {
+	s := newTestSvc(t, 100)
+	s.uploadFunc = func(_ context.Context, r io.Reader, _ uploader.UploadParams) (string, error) {
+		_, _ = io.Copy(io.Discard, r)
+		return "", nil
+	}
+	s.destroyFunc = func(context.Context, string, string) error {
+		t.Error("destroy must not be called")
+		return nil
+	}
+	if f, err := s.Upload(context.Background(), bytes.NewReader(pdfBytes), primitive.NewObjectID()); err == nil || f != nil {
+		t.Fatalf("empty public id accepted: %+v %v", f, err)
+	}
+}
+
+func TestDeleteEmptyPublicIDIsNoop(t *testing.T) {
+	s := newTestSvc(t, 100)
+	s.destroyFunc = func(context.Context, string, string) error {
+		t.Error("destroy must not be called")
+		return nil
+	}
+	if err := s.Delete(context.Background(), "", "application/pdf"); err != nil {
+		t.Fatal(err)
 	}
 }
