@@ -307,6 +307,7 @@ func TestValidateTenantcoreResolverNeedsURLAndKey(t *testing.T) {
 
 	cfg.TenantcoreURL = "http://localhost:1"
 	cfg.TenantcoreServiceKey = "svc-test"
+	cfg.TenantResolveRatePerMinute, cfg.TenantResolveBurst = 600, 120
 	if err := cfg.Validate(); err != nil {
 		t.Errorf("tenantcore with URL and key should validate, got %v", err)
 	}
@@ -331,5 +332,27 @@ func TestFeaturesListsTenantcoreResolverOnlyInThatMode(t *testing.T) {
 	f, ok := find(tc)
 	if !ok || !f.Enabled {
 		t.Errorf("tenantcore mode should list the feature as enabled, got %+v ok=%v", f, ok)
+	}
+}
+
+func TestTenantResolveBurstDefaultAndValidation(t *testing.T) {
+	t.Setenv("TENANT_RESOLVE_BURST", "")
+	if got := Load().TenantResolveBurst; got != 120 {
+		t.Errorf("default TENANT_RESOLVE_BURST = %d, want 120", got)
+	}
+
+	cfg := validConfig()
+	cfg.TenantResolver = "tenantcore"
+	cfg.TenantcoreURL = "http://localhost:1"
+	cfg.TenantcoreServiceKey = "svc-test"
+	cfg.TenantResolveRatePerMinute = 600
+	cfg.TenantResolveBurst = 0
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "TENANT_RESOLVE_BURST") {
+		t.Fatalf("burst 0 in tenantcore mode should be refused naming the variable, got %v", err)
+	}
+	cfg.TenantResolveBurst = 120
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("valid tenantcore config refused: %v", err)
 	}
 }

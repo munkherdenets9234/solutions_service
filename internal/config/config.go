@@ -69,6 +69,11 @@ type Config struct {
 	// Requests per minute per client IP allowed through the tenant gate before
 	// the key is even looked up. Generous: storefront servers share few IPs.
 	TenantResolveRatePerMinute int
+	// Burst for that limiter: requests let through instantly before the
+	// per-minute rate applies. Its own setting, not RATE_LIMIT_BURST, because a
+	// storefront server fetching several times per page from one IP needs far
+	// more headroom than a login form does. Default 120.
+	TenantResolveBurst int
 	// Base64 Ed25519 public key of tenantcore. Optional: blank leaves the
 	// tenantcore-superadmin routes unmounted (404). Never a secret.
 	TenantcorePublicKey string
@@ -247,6 +252,14 @@ func (c Config) Validate() error {
 		if strings.TrimSpace(c.TenantcoreServiceKey) == "" {
 			problems = append(problems, "TENANTCORE_SERVICE_KEY is required when TENANT_RESOLVER=tenantcore")
 		}
+		// The limiter only exists in this mode, so only here do its numbers
+		// have to make sense.
+		if c.TenantResolveRatePerMinute < 1 {
+			problems = append(problems, "TENANT_RESOLVE_RATE_PER_MINUTE must be at least 1")
+		}
+		if c.TenantResolveBurst < 1 {
+			problems = append(problems, "TENANT_RESOLVE_BURST must be at least 1")
+		}
 	default:
 		problems = append(problems, fmt.Sprintf("TENANT_RESOLVER must be %q or %q, got %q",
 			TenantResolverLocal, TenantResolverTenantcore, c.TenantResolver))
@@ -284,6 +297,7 @@ func Load() *Config {
 
 		TenantResolver:             strings.ToLower(getEnv("TENANT_RESOLVER", TenantResolverLocal)),
 		TenantResolveRatePerMinute: getEnvInt("TENANT_RESOLVE_RATE_PER_MINUTE", 600),
+		TenantResolveBurst:         getEnvInt("TENANT_RESOLVE_BURST", 120),
 
 		UploadMaxBytes: int64(getEnvInt("UPLOAD_MAX_BYTES", 10<<20)), // 10 MiB
 

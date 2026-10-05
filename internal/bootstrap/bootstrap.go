@@ -107,7 +107,10 @@ func NewForDatabase(ctx context.Context, cfg *config.Config, db *mongo.Database,
 	}
 
 	repos := newRepos(db)
-	svcs := newServices(repos, tokenMaker, cfg, log)
+	svcs, err := newServices(repos, tokenMaker, cfg, log)
+	if err != nil {
+		return nil, err
+	}
 
 	// Bootstrapping the first platform user is optional: a deployment that
 	// already has one does not need the env vars, and one that has neither

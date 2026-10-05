@@ -28,18 +28,24 @@ type TenantResolver interface {
 	Resolve(ctx context.Context, rawKey string) (TenantRef, error)
 }
 
+// tenantLookup is the one method of *service.TenantService the local resolver
+// uses. It exists so the adapter can be tested without a database.
+type tenantLookup interface {
+	Resolve(ctx context.Context, rawAPIKey string) (*models.Tenant, error)
+}
+
 type localResolver struct {
-	resolve func(ctx context.Context, rawKey string) (*models.Tenant, error)
+	lookup tenantLookup
 }
 
 // NewLocalResolver resolves against this service's own tenants collection, as
 // it always has.
 func NewLocalResolver(svc *service.TenantService) TenantResolver {
-	return localResolver{resolve: svc.Resolve}
+	return localResolver{lookup: svc}
 }
 
 func (l localResolver) Resolve(ctx context.Context, rawKey string) (TenantRef, error) {
-	t, err := l.resolve(ctx, rawKey)
+	t, err := l.lookup.Resolve(ctx, rawKey)
 	if err != nil {
 		return TenantRef{}, err
 	}

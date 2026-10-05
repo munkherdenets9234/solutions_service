@@ -6,7 +6,8 @@ Tenantcore is responsible for ALL tenant information and management (identity, A
 
 ## Tenant resolution switch (2026-10-05)
 
-- Two settings: `TENANT_RESOLVER` (`local` | `tenantcore`, default `local`) and `TENANT_RESOLVE_RATE_PER_MINUTE` (default 600, per client IP, runs before the tenant gate). Documented in `.env.example`.
+- Settings: `TENANT_RESOLVER` (`local` | `tenantcore`, default `local`), `TENANT_RESOLVE_RATE_PER_MINUTE` (default 600) and `TENANT_RESOLVE_BURST` (default 120). Documented in `.env.example`. The limiter exists only in `tenantcore` mode, runs before the tenant gate and keys on client IP (120 at once, then 10/s per IP). It uses `ClientIP`, which trusts X-Forwarded-For like the other limiters, so behind a proxy the trusted-proxy setup must be right; a storefront host sharing one IP must stay under the rate.
+- Fail closed: `tenantcore` mode without `TENANTCORE_URL`/`TENANTCORE_SERVICE_KEY` stops startup (Validate in `New`, plus a backstop in wiring); there is no automatic fallback to the local collection.
 - Default `local` behaves exactly as before. `tenantcore` resolves X-API-Key through `internal/tenantresolve` (needs `TENANTCORE_URL` and `TENANTCORE_SERVICE_KEY`; startup refuses without them). Unknown key 401 (same body as local), suspended 403, tenantcore unreachable with nothing cached 503 (never 401). `/readyz` adds `tenant_resolver` and `degraded:true` while tenantcore is unreachable.
 - To flip: set `TENANT_RESOLVER=tenantcore` and restart; to roll back, set it to `local` (or unset) and restart.
 - Rollback caveat: a key re-issued in tenantcore leaves this service's local key hash stale. After rolling back to `local`, the re-issued key is refused here until the local hash is updated, and the old key works again.

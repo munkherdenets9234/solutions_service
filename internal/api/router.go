@@ -56,9 +56,9 @@ func (s *Server) buildEngine() *gin.Engine {
 		Subscription: d.SubscriptionMW,
 		Entitlement:  d.Entitlement,
 		Modules:      d.Modules,
-		// Before the tenant gate (see tenant.Register): keyed by client IP and
-		// generous, because storefront servers share few IPs.
-		ResolveRateLimit: s.limit("tenant-resolve", d.Config.TenantResolveRatePerMinute),
+		// Only in tenantcore mode, where a bad key costs a call to tenantcore.
+		// In local mode the scoped group is exactly what it was before.
+		ResolveRateLimit: s.resolveLimit(),
 		AuthRateLimit:    s.limit("tenant-auth", d.Config.AuthRatePerMinute),
 		LeadRateLimit:    s.limit("tenant-lead", d.Config.LeadRatePerMinute),
 		Destination:      d.Destination,
@@ -92,6 +92,18 @@ func (s *Server) limit(name string, perMinute int) gin.HandlerFunc {
 		return func(c *gin.Context) { c.Next() }
 	}
 	return s.deps.RateLimiter.Limit(name, perMinute, s.deps.Config.RateLimitBurst)
+}
+
+// resolveLimit is the limiter in front of tenant resolution, or nil. It is
+// installed only when TENANT_RESOLVER=tenantcore and rate limiting is on, with
+// its own burst (TENANT_RESOLVE_BURST) rather than the global one. Keyed by
+// ClientIP, which trusts X-Forwarded-For like every other limiter here.
+func (s *Server) resolveLimit() gin.HandlerFunc {
+	c := s.deps.Config
+	if !c.TenantResolverTenantcoreEnabled() || !c.RateLimitEnabled || s.deps.RateLimiter == nil {
+		return nil
+	}
+	return s.deps.RateLimiter.Limit("tenant-resolve", c.TenantResolveRatePerMinute, c.TenantResolveBurst)
 }
 
 // registerOperational mounts the endpoints that describe the service rather

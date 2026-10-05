@@ -1,6 +1,7 @@
 package bootstrap
 
 import (
+	"errors"
 	"time"
 
 	"github.com/eandstravel/digitalservice/internal/config"
@@ -116,7 +117,7 @@ type services struct {
 	upload *service.UploadService
 }
 
-func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.Logger) services {
+func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.Logger) (services, error) {
 	entClient := buildEntitlement(cfg, log)
 
 	// A nil *entitlement.Client stored in a Provider interface is NOT nil as
@@ -130,7 +131,10 @@ func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.
 	}
 
 	tenantSvc := service.NewTenantService(r.tenant, r.tenantDetail, r.platformUser)
-	tenantResolver, tenantResolveClient := buildTenantResolver(cfg, tenantSvc, log)
+	tenantResolver, tenantResolveClient, err := buildTenantResolver(cfg, tenantSvc, log)
+	if err != nil {
+		return services{}, err
+	}
 
 	return services{
 		destination:     service.NewDestinationService(r.destination, r.tenantUser),
@@ -168,20 +172,23 @@ func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.
 		tenantResolveClient: tenantResolveClient,
 
 		upload: buildUpload(cfg, log),
-	}
+	}, nil
 }
 
 // buildTenantResolver picks how X-API-Key becomes a tenant.
 //
-// The default, and anything other than an explicit "tenantcore", is the local
-// resolver: today's behaviour, no client, nothing to close. Validate has
-// already refused an unknown mode and a tenantcore mode without URL and key,
-// so a nil client in tenantcore mode cannot happen on the normal path; if it
-// does, the local resolver is used and the ERROR says so, rather than
-// serving every storefront a 503.
-func buildTenantResolver(cfg *config.Config, local *service.TenantService, log *zap.Logger) (middleware.TenantResolver, *tenantresolve.Client) {
+// Anything other than an explicit "tenantcore" is the local resolver: today's
+// behaviour, no client, nothing to close.
+//
+// Tenantcore mode FAILS CLOSED. If the client cannot be built the deployment
+// does not start, and in particular it never falls back to the local
+// collection: that holds stale hashes after a key is re-issued or revoked, so
+// a fallback would keep accepting keys tenantcore has retired. Validate
+// refuses this configuration first; this is the backstop for callers that
+// reach wiring without it.
+func buildTenantResolver(cfg *config.Config, local *service.TenantService, log *zap.Logger) (middleware.TenantResolver, *tenantresolve.Client, error) {
 	if !cfg.TenantResolverTenantcoreEnabled() {
-		return middleware.NewLocalResolver(local), nil
+		return middleware.NewLocalResolver(local), nil, nil
 	}
 	c := tenantresolve.NewClient(tenantresolve.ClientConfig{
 		BaseURL:    cfg.TenantcoreURL,
@@ -189,13 +196,12 @@ func buildTenantResolver(cfg *config.Config, local *service.TenantService, log *
 		Log:        log,
 	})
 	if c == nil {
-		log.Error("TENANT_RESOLVER=tenantcore but TENANTCORE_URL/TENANTCORE_SERVICE_KEY are not both set — " +
-			"falling back to the LOCAL tenant resolver")
-		return middleware.NewLocalResolver(local), nil
+		return nil, nil, errors.New("TENANT_RESOLVER=tenantcore needs TENANTCORE_URL and TENANTCORE_SERVICE_KEY; " +
+			"refusing to start rather than fall back to the local tenants collection")
 	}
 	log.Info("tenant resolution ready — API keys are resolved through tenantcore",
 		zap.String("platform", cfg.TenantcoreURL))
-	return middleware.NewTenantcoreResolver(c), c
+	return middleware.NewTenantcoreResolver(c), c, nil
 }
 
 // buildEntitlement returns the tenantcore client, or nil when the link is not

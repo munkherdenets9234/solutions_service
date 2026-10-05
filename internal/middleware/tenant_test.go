@@ -3,6 +3,7 @@ package middleware
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -55,7 +56,7 @@ func gateStatus(t *testing.T, r TenantResolver, hdr map[string]string) (*httptes
 }
 
 func localFn(t *models.Tenant, err error) TenantResolver {
-	return localResolver{resolve: func(context.Context, string) (*models.Tenant, error) { return t, err }}
+	return localResolver{lookup: fakeLookup{t: t, err: err}}
 }
 
 func TestTenantMiddleware_LocalResolverBehaviourUnchanged(t *testing.T) {
@@ -199,5 +200,43 @@ func TestTenantMiddleware_TenantcoreResolver_MissingHeaderStill401(t *testing.T)
 	w, _, reached := gateStatus(t, newFakeTC(t, "ok", "").resolver(t), nil)
 	if w.Code != http.StatusUnauthorized || reached {
 		t.Fatalf("got %d reached=%v", w.Code, reached)
+	}
+}
+
+type fakeLookup struct {
+	t   *models.Tenant
+	err error
+}
+
+func (f fakeLookup) Resolve(context.Context, string) (*models.Tenant, error) { return f.t, f.err }
+
+// The local adapter must pass the service's taxonomy errors through untouched
+// and map a tenant to exactly its ID and Domain.
+func TestLocalResolverAdapter(t *testing.T) {
+	ctx := context.Background()
+
+	got, err := localResolver{lookup: fakeLookup{t: &models.Tenant{ID: tkTenantID, Domain: tkHost}}}.Resolve(ctx, tkKey)
+	if err != nil || got.ID != tkTenantID || got.Domain != tkHost {
+		t.Fatalf("active: got %+v err=%v", got, err)
+	}
+
+	_, err = localResolver{lookup: fakeLookup{err: apierr.Unauthorized("")}}.Resolve(ctx, tkKey)
+	var ae *apierr.APIError
+	if !errors.As(err, &ae) || ae.HTTPStatus != http.StatusUnauthorized || ae.Message != "unauthorized" {
+		t.Fatalf("unknown: got %v", err)
+	}
+
+	_, err = localResolver{lookup: fakeLookup{err: apierr.Forbidden("tenant suspended").In(apierr.DomainTenant)}}.Resolve(ctx, tkKey)
+	if !errors.As(err, &ae) || ae.HTTPStatus != http.StatusForbidden || ae.Domain != apierr.DomainTenant || ae.Message != "tenant suspended" {
+		t.Fatalf("suspended: got %v", err)
+	}
+}
+
+// NewLocalResolver must hand the real service to the adapter; a nil service is
+// fine to construct with (the method value is only bound, never called here).
+func TestNewLocalResolverWrapsTheService(t *testing.T) {
+	r, ok := NewLocalResolver(nil).(localResolver)
+	if !ok || r.lookup == nil {
+		t.Fatalf("NewLocalResolver did not build a localResolver with a lookup: %#v", r)
 	}
 }
