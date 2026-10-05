@@ -44,10 +44,13 @@ type Config struct {
 	TokenExpiry int // hours
 
 	// Optional — each blank value disables exactly one feature.
-	CloudinaryURL      string // blank: image uploads unavailable
-	SuperadminName     string
-	SuperadminEmail    string // blank (with password): no startup superadmin bootstrap
-	SuperadminPassword string
+	CloudinaryURL string // blank: image uploads unavailable
+	// CloudinaryPrivateURL optionally overrides CloudinaryURL for private
+	// (authenticated) files such as guide application documents.
+	CloudinaryPrivateURL string
+	SuperadminName       string
+	SuperadminEmail      string // blank (with password): no startup superadmin bootstrap
+	SuperadminPassword   string
 
 	// The tenantcore link. Subscriptions and plans live there, not here —
 	// this service holds no subscriptions collection any more. Both blank:
@@ -102,6 +105,18 @@ func (c Config) IsDev() bool { return c.AppEnv != EnvProduction }
 
 // UploadsEnabled reports whether image uploads are configured.
 func (c Config) UploadsEnabled() bool { return c.CloudinaryURL != "" }
+
+// PrivateFilesURL is the Cloudinary URL used for private files: the dedicated
+// CLOUDINARY_PRIVATE_URL when set, otherwise CLOUDINARY_URL.
+func (c Config) PrivateFilesURL() string {
+	if c.CloudinaryPrivateURL != "" {
+		return c.CloudinaryPrivateURL
+	}
+	return c.CloudinaryURL
+}
+
+// PrivateFilesEnabled reports whether private file storage is configured.
+func (c Config) PrivateFilesEnabled() bool { return c.PrivateFilesURL() != "" }
 
 // SuperadminBootstrapEnabled reports whether a first platform user should be
 // created at startup when none exists.
@@ -177,6 +192,11 @@ func (c Config) Features() []Feature {
 			Name:    "uploads",
 			Enabled: c.UploadsEnabled(),
 			Detail:  "CLOUDINARY_URL is not set — POST /admin/uploads returns 503 FEATURE_UNAVAILABLE",
+		},
+		{
+			Name:    "private_files",
+			Enabled: c.PrivateFilesEnabled(),
+			Detail:  "CLOUDINARY_PRIVATE_URL and CLOUDINARY_URL are not set — guide application submit returns 503 FEATURE_UNAVAILABLE",
 		},
 		{
 			Name:    "superadmin_bootstrap",
@@ -312,7 +332,8 @@ func Load() *Config {
 		TokenSecret: getEnv("TOKEN_SECRET", ""),
 		TokenExpiry: getEnvInt("TOKEN_EXPIRY_HOURS", 24),
 
-		CloudinaryURL: getEnv("CLOUDINARY_URL", ""),
+		CloudinaryURL:        getEnv("CLOUDINARY_URL", ""),
+		CloudinaryPrivateURL: getEnv("CLOUDINARY_PRIVATE_URL", ""),
 
 		SuperadminName:     getEnv("SUPERADMIN_NAME", ""),
 		SuperadminEmail:    getEnv("SUPERADMIN_EMAIL", ""),

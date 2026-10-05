@@ -119,6 +119,32 @@ func TestFeaturesTracksUploadConfiguration(t *testing.T) {
 	}
 }
 
+func TestPrivateFilesURLFallsBackToCloudinaryURL(t *testing.T) {
+	cfg := validConfig()
+	if cfg.PrivateFilesEnabled() {
+		t.Error("private files should be disabled with neither URL set")
+	}
+
+	cfg.CloudinaryURL = "cloudinary://k:s@testcloud"
+	if got := cfg.PrivateFilesURL(); got != cfg.CloudinaryURL {
+		t.Errorf("PrivateFilesURL() = %q, want fallback to CloudinaryURL", got)
+	}
+	if !cfg.PrivateFilesEnabled() {
+		t.Error("private files should be enabled by CloudinaryURL alone")
+	}
+
+	cfg.CloudinaryPrivateURL = "cloudinary://k2:s2@privatecloud"
+	if got := cfg.PrivateFilesURL(); got != cfg.CloudinaryPrivateURL {
+		t.Errorf("PrivateFilesURL() = %q, want the private URL to win", got)
+	}
+
+	for _, f := range cfg.Features() {
+		if f.Name == "private_files" && !f.Enabled {
+			t.Error("Features() disagrees with PrivateFilesEnabled()")
+		}
+	}
+}
+
 // Bootstrapping needs BOTH halves. An email with no password used to be
 // accepted and then quietly do nothing.
 func TestSuperadminBootstrapNeedsBothHalves(t *testing.T) {
