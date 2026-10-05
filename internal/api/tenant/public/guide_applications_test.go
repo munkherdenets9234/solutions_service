@@ -208,3 +208,73 @@ func TestOverSizedBodyIsRejected(t *testing.T) {
 		t.Error("service called for an oversized body")
 	}
 }
+
+func TestSubmitNilServiceIs503(t *testing.T) {
+	e := guideEngine(nil)
+	body, ct := multipartBody(t, part{name: "data", content: `{}`})
+	w := post(e, body, ct)
+	if w.Code != http.StatusServiceUnavailable || !strings.Contains(w.Body.String(), "FEATURE_UNAVAILABLE") {
+		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestHoneypotWhitespaceOnlyIsNotHoneypot(t *testing.T) {
+	f := &fakeGuideSubmitter{}
+	e := guideEngine(f)
+	body, ct := multipartBody(t, part{name: "website", content: "   \t"}, part{name: "data", content: `{}`})
+	w := post(e, body, ct)
+	if w.Code != http.StatusCreated || f.calls != 1 {
+		t.Fatalf("got %d, calls %d: a blank website field must go to the service", w.Code, f.calls)
+	}
+}
+
+func TestSameKindTwiceReachesService(t *testing.T) {
+	f := &fakeGuideSubmitter{}
+	e := guideEngine(f)
+	body, ct := multipartBody(t,
+		part{name: "data", content: `{}`},
+		part{name: "file_cv", filename: "a.pdf", content: "a"},
+		part{name: "file_cv", filename: "b.pdf", content: "b"},
+	)
+	w := post(e, body, ct)
+	if w.Code != http.StatusCreated || len(f.uploads) != 2 ||
+		f.uploads[0].Kind != models.GuideFileCV || f.uploads[1].Kind != models.GuideFileCV {
+		t.Fatalf("got %d, uploads %d", w.Code, len(f.uploads))
+	}
+}
+
+func TestStrictFormShape(t *testing.T) {
+	cases := map[string][]part{
+		"unknown value field": {{name: "data", content: `{}`}, {name: "extra", content: "x"}},
+		"file as plain value": {{name: "data", content: `{}`}, {name: "file_photo", content: "x"}},
+		"two data parts":      {{name: "data", content: `{}`}, {name: "data", content: `{}`}},
+		"two website parts":   {{name: "data", content: `{}`}, {name: "website", content: ""}, {name: "website", content: ""}},
+	}
+	for name, parts := range cases {
+		f := &fakeGuideSubmitter{}
+		body, ct := multipartBody(t, parts...)
+		w := post(guideEngine(f), body, ct)
+		if w.Code != http.StatusBadRequest || f.calls != 0 {
+			t.Errorf("%s: got %d, calls %d, want 400 and none", name, w.Code, f.calls)
+		}
+	}
+}
+
+func TestTooManyFilesAndOversizedDataAreRejected(t *testing.T) {
+	f := &fakeGuideSubmitter{}
+	parts := []part{{name: "data", content: `{}`}}
+	for i := 0; i < 9; i++ {
+		parts = append(parts, part{name: "file_cv", filename: "a.pdf", content: "a"})
+	}
+	body, ct := multipartBody(t, parts...)
+	if w := post(guideEngine(f), body, ct); w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("9 files: got %d, want 422", w.Code)
+	}
+	body, ct = multipartBody(t, part{name: "data", content: `{"x":"` + strings.Repeat("a", 256<<10) + `"}`})
+	if w := post(guideEngine(f), body, ct); w.Code != http.StatusUnprocessableEntity {
+		t.Errorf("big data: got %d, want 422", w.Code)
+	}
+	if f.calls != 0 {
+		t.Error("service called")
+	}
+}

@@ -25,6 +25,8 @@ const (
 	guideBodyHeadroom = 1 << 20
 	guideMaxMemory    = 8 << 20
 	guideHoneypot     = "website"
+	guideDataMaxBytes = 256 << 10
+	guideMaxUploads   = 8
 )
 
 // guideSubmitter is the one service method the public endpoint needs. A small
@@ -78,17 +80,38 @@ func (h *guideApplicationsController) Submit(c *gin.Context) error {
 	defer func() { _ = form.RemoveAll() }()
 
 	// Honeypot: a real visitor never sees this field. Answer exactly like a
-	// success so a bot learns nothing, and store nothing.
-	if v := form.Value[guideHoneypot]; len(v) > 0 && strings.TrimSpace(strings.Join(v, "")) != "" {
-		id := primitive.NewObjectID().Hex()
-		response.Created(c, gin.H{"id": id, "confirmation_id": "GA-" + strings.ToUpper(id[len(id)-6:])})
-		return nil
+	// success so a bot learns nothing, and store nothing. Whitespace-only
+	// counts as empty. Note: with private storage disabled a real submit
+	// answers 503 while a honeypot hit answers 201 - accepted, since it only
+	// shows in a misconfigured deployment.
+	for _, v := range form.Value[guideHoneypot] {
+		if strings.TrimSpace(v) != "" {
+			id := primitive.NewObjectID().Hex()
+			response.Created(c, gin.H{"id": id, "confirmation_id": "GA-" + strings.ToUpper(id[len(id)-6:])})
+			return nil
+		}
+	}
+
+	// Only "data" and "website" may be plain values, each at most once. A
+	// file part sent without a filename lands in form.Value and is refused
+	// here too. Nothing from the request is named in the error.
+	for k, v := range form.Value {
+		if (k != "data" && k != guideHoneypot) || len(v) > 1 {
+			return apierr.BadRequest("unexpected form field")
+		}
+	}
+	if n := countFiles(form.File); n > guideMaxUploads {
+		return apierr.ValidationFailed("too many files")
 	}
 
 	raw := form.Value["data"]
 	if len(raw) == 0 || strings.TrimSpace(raw[0]) == "" {
 		return apierr.BadRequest("missing application data")
 	}
+	if len(raw[0]) > guideDataMaxBytes {
+		return apierr.ValidationFailed("application data too large")
+	}
+
 	var app models.GuideApplication
 	if err := json.Unmarshal([]byte(raw[0]), &app); err != nil {
 		return apierr.BadRequest("invalid application data")
@@ -125,4 +148,12 @@ func (h *guideApplicationsController) Submit(c *gin.Context) error {
 
 func openHeader(fh *multipart.FileHeader) func() (io.ReadCloser, error) {
 	return func() (io.ReadCloser, error) { return fh.Open() }
+}
+
+func countFiles(m map[string][]*multipart.FileHeader) int {
+	n := 0
+	for _, v := range m {
+		n += len(v)
+	}
+	return n
 }

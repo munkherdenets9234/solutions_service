@@ -1,21 +1,33 @@
 package private
 
 import (
+	"context"
 	"time"
 
 	"github.com/eandstravel/digitalservice/internal/api/apictx"
 	"github.com/eandstravel/digitalservice/internal/models"
 	"github.com/eandstravel/digitalservice/internal/repository"
-	"github.com/eandstravel/digitalservice/internal/service"
 	"github.com/eandstravel/digitalservice/pkg/apierr"
 	"github.com/eandstravel/digitalservice/pkg/response"
 	"github.com/gin-gonic/gin"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
 // guideApplicationsController is the tenant admin's view of guide applications.
 // Applicant data is personal, so it is mounted only behind the admin bearer.
+// guideAdminService is the service surface this controller uses; a local
+// interface so handler tests can fake it.
+type guideAdminService interface {
+	List(ctx context.Context, tenantID primitive.ObjectID, f repository.GuideListFilter, page, limit int) ([]*models.GuideApplication, int64, error)
+	Counts(ctx context.Context, tenantID primitive.ObjectID) (map[models.GuideStatus]int64, error)
+	Get(ctx context.Context, tenantID primitive.ObjectID, idHex string) (*models.GuideApplication, error)
+	SetStatus(ctx context.Context, tenantID primitive.ObjectID, idHex string, status models.GuideStatus, actor *primitive.ObjectID) error
+	AddNote(ctx context.Context, tenantID primitive.ObjectID, idHex, text string, actor *primitive.ObjectID) error
+	FileDownload(ctx context.Context, tenantID primitive.ObjectID, idHex, fileID string) (string, time.Time, error)
+}
+
 type guideApplicationsController struct {
-	svc *service.GuideApplicationService
+	svc guideAdminService
 }
 
 func (h *guideApplicationsController) List(c *gin.Context) error {

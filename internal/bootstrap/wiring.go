@@ -278,8 +278,13 @@ func buildPrivateFiles(cfg *config.Config, log *zap.Logger) service.PrivateFiles
 		return nil
 	}
 	svc, err := service.NewPrivateFileService(cfg.PrivateFilesURL(), cfg.UploadMaxBytes)
-	if err != nil || svc == nil {
-		log.Error("private file storage unavailable - the configured Cloudinary URL could not be parsed; " +
+	if err != nil {
+		log.Error("private file storage unavailable - initialisation failed (check the private files URL setting); " +
+			"POST /guide-applications will answer 503 FEATURE_UNAVAILABLE")
+		return nil
+	}
+	if svc == nil {
+		log.Error("private file storage unavailable - no store was created; " +
 			"POST /guide-applications will answer 503 FEATURE_UNAVAILABLE")
 		return nil
 	}

@@ -68,7 +68,10 @@ func Register(base *gin.RouterGroup, d Deps) {
 	}
 	uploads := &uploadsController{svc: d.Upload}
 	translations := &translationsController{svc: d.SitePage}
-	guides := &guideApplicationsController{svc: d.GuideApplication}
+	guides := &guideApplicationsController{}
+	if d.GuideApplication != nil { // keep the interface truly nil otherwise
+		guides.svc = d.GuideApplication
+	}
 
 	// Self-service account routes sit OUTSIDE the subscription gate. A user
 	// locked out by an expired password must still be able to change it
