@@ -93,7 +93,7 @@ A new `PrivateFileService`. The existing `UploadService` is not touched: it acce
 
 ### Admin routes
 
-- `GET /admin/guide-applications?page&limit&status&q&language&region`. `q` matches name, phone and email, case-insensitive. Response also carries counts per status for the filter tabs. Default sort newest first.
+- `GET /admin/guide-applications?page&limit&status&q&language&region`. `q` matches name, phone and email, case-insensitive. Counts per status for the filter tabs come from `GET /admin/guide-applications/counts`. Default sort newest first.
 - `GET /admin/guide-applications/:id` returns the full document.
 - `PATCH /admin/guide-applications/:id/status` with `{status}`. Value checked against the list. Appends a status event with `from`/`to`. The acting user comes from the admin token, never from the body. Setting the same status again returns success and writes no event.
 - `POST /admin/guide-applications/:id/notes` with `{text}`, 1 to 2000 characters. Appends a note event. Notes are never edited or deleted.
