@@ -1,3 +1,11 @@
+// Guide applications: Docker-backed integration test (written, not run in the
+// authoring environment).
+//
+// Deviation from the plan: no happy-path submit or file-link here. The stock
+// test app has no Cloudinary, so submit is covered only up to the 503
+// FEATURE_UNAVAILABLE gate, and file links only on their 404 paths. Success
+// paths are covered by the service unit tests and the controller's live run.
+// Guide admin routes are Auth("admin"), so actors here are admin-role users.
 package api
 
 import (
@@ -20,14 +28,14 @@ import (
 
 const guideCol = "guide_applications"
 
-// guideStaff creates a named staff user in tenant and returns its bearer token.
-func guideStaff(t *testing.T, app *testutil.App, tn testutil.Tenant, name string) string {
+// guideUser creates a named user with the given role in tenant and returns its bearer token.
+func guideUser(t *testing.T, app *testutil.App, tn testutil.Tenant, name, role string) string {
 	t.Helper()
 	email := fmt.Sprintf("guide-staff-%d@tenant.test", testutil.Unique())
 	password := fmt.Sprintf("pw-%d-%d", testutil.Unique(), testutil.Unique())
 	resp := testutil.Do(t, app, http.MethodPost, "/api/v1/admin/users", testutil.ReqOpts{
 		Token: tn.AdminToken, APIKey: tn.APIKey,
-		Body: map[string]string{"name": name, "email": email, "password": password, "role": "staff"},
+		Body: map[string]string{"name": name, "email": email, "password": password, "role": role},
 	})
 	if resp.Status != http.StatusCreated {
 		t.Fatalf("create staff: %d %s", resp.Status, resp.Raw)
@@ -135,8 +143,9 @@ func TestGuideApplications(t *testing.T) {
 	superadmin := testutil.SuperadminToken(t, app)
 	tenantA := testutil.NewTenant(t, app, superadmin, "guidea")
 	tenantB := testutil.NewTenant(t, app, superadmin, "guideb")
-	staffA := guideStaff(t, app, tenantA, "Alice Staff")
-	staffB := guideStaff(t, app, tenantB, "Bob Other")
+	adminA := guideUser(t, app, tenantA, "Alice Admin", "admin") // admin role: guide routes are Auth("admin")
+	adminB := guideUser(t, app, tenantB, "Bob Admin", "admin")
+	staffRoleA := guideUser(t, app, tenantA, "Sam Staff", "staff")
 
 	const base = "/api/v1/admin/guide-applications"
 
@@ -167,8 +176,9 @@ func TestGuideApplications(t *testing.T) {
 		if res.StatusCode != http.StatusServiceUnavailable {
 			t.Fatalf("want 503, got %d: %v", res.StatusCode, body)
 		}
-		if code, _ := body["code"].(string); code != "FEATURE_UNAVAILABLE" {
-			t.Errorf("want code FEATURE_UNAVAILABLE, got %q (%v)", code, body)
+		errObj, _ := body["error"].(map[string]interface{})
+		if code, _ := errObj["code"].(string); code != "FEATURE_UNAVAILABLE" {
+			t.Errorf("want error.code FEATURE_UNAVAILABLE, got %q (%v)", code, body)
 		}
 		if after := guideCount(t, db); after != before {
 			t.Errorf("a document was created: %d -> %d", before, after)
@@ -182,14 +192,14 @@ func TestGuideApplications(t *testing.T) {
 	_ = seedGuide(t, db, tenantA.ID, "Plain Name", nil)
 
 	t.Run("list shows tenant A's applications", func(t *testing.T) {
-		ids := listIDs(t, app, tenantA, staffA, "page=1&limit=50")
+		ids := listIDs(t, app, tenantA, adminA, "page=1&limit=50")
 		if !containsID(ids, idA) || !containsID(ids, idA2) {
 			t.Errorf("seeded applications missing from list: %v", ids)
 		}
 	})
 
 	t.Run("counts", func(t *testing.T) {
-		resp := testutil.Do(t, app, http.MethodGet, base+"/counts", testutil.ReqOpts{Token: staffA, APIKey: tenantA.APIKey})
+		resp := testutil.Do(t, app, http.MethodGet, base+"/counts", testutil.ReqOpts{Token: adminA, APIKey: tenantA.APIKey})
 		if resp.Status != http.StatusOK {
 			t.Fatalf("counts: %d %s", resp.Status, resp.Raw)
 		}
@@ -199,7 +209,7 @@ func TestGuideApplications(t *testing.T) {
 	})
 
 	t.Run("get by id hides the storage public id", func(t *testing.T) {
-		resp := testutil.Do(t, app, http.MethodGet, base+"/"+idA, testutil.ReqOpts{Token: staffA, APIKey: tenantA.APIKey})
+		resp := testutil.Do(t, app, http.MethodGet, base+"/"+idA, testutil.ReqOpts{Token: adminA, APIKey: tenantA.APIKey})
 		if resp.Status != http.StatusOK {
 			t.Fatalf("get: %d %s", resp.Status, resp.Raw)
 		}
@@ -208,30 +218,30 @@ func TestGuideApplications(t *testing.T) {
 		}
 	})
 
-	t.Run("status change records the staff name, repeat adds nothing", func(t *testing.T) {
+	t.Run("status change records the acting admin name, repeat adds nothing", func(t *testing.T) {
 		set := func() int {
 			return testutil.Do(t, app, http.MethodPatch, base+"/"+idA+"/status", testutil.ReqOpts{
-				Token: staffA, APIKey: tenantA.APIKey, Body: map[string]string{"status": "reviewing"},
+				Token: adminA, APIKey: tenantA.APIKey, Body: map[string]string{"status": "reviewing"},
 			}).Status
 		}
 		if s := set(); s != http.StatusOK {
 			t.Fatalf("status: %d", s)
 		}
-		evs := guideEvents(t, app, tenantA, staffA, idA)
+		evs := guideEvents(t, app, tenantA, adminA, idA)
 		if len(evs) != 1 {
 			t.Fatalf("want 1 event, got %d", len(evs))
 		}
-		if evs[0]["user_name"] != "Alice Staff" || evs[0]["type"] != "status" || evs[0]["to"] != "reviewing" {
+		if evs[0]["user_name"] != "Alice Admin" || evs[0]["type"] != "status" || evs[0]["to"] != "reviewing" {
 			t.Errorf("unexpected event: %v", evs[0])
 		}
 		if s := set(); s != http.StatusOK {
 			t.Fatalf("repeat status: %d", s)
 		}
-		if n := len(guideEvents(t, app, tenantA, staffA, idA)); n != 1 {
+		if n := len(guideEvents(t, app, tenantA, adminA, idA)); n != 1 {
 			t.Errorf("same status added an event: %d events", n)
 		}
 		bad := testutil.Do(t, app, http.MethodPatch, base+"/"+idA+"/status", testutil.ReqOpts{
-			Token: staffA, APIKey: tenantA.APIKey, Body: map[string]string{"status": "bogus"},
+			Token: adminA, APIKey: tenantA.APIKey, Body: map[string]string{"status": "bogus"},
 		})
 		if bad.Status < 400 || bad.Status >= 500 {
 			t.Errorf("invalid status: want 4xx, got %d", bad.Status)
@@ -241,13 +251,13 @@ func TestGuideApplications(t *testing.T) {
 	t.Run("notes are append-only", func(t *testing.T) {
 		for _, text := range []string{"first note", "second note"} {
 			resp := testutil.Do(t, app, http.MethodPost, base+"/"+idA+"/notes", testutil.ReqOpts{
-				Token: staffA, APIKey: tenantA.APIKey, Body: map[string]string{"text": text},
+				Token: adminA, APIKey: tenantA.APIKey, Body: map[string]string{"text": text},
 			})
 			if resp.Status != http.StatusOK {
 				t.Fatalf("note: %d %s", resp.Status, resp.Raw)
 			}
 		}
-		evs := guideEvents(t, app, tenantA, staffA, idA)
+		evs := guideEvents(t, app, tenantA, adminA, idA)
 		if len(evs) != 3 {
 			t.Fatalf("want status + 2 notes = 3 events, got %d", len(evs))
 		}
@@ -257,7 +267,7 @@ func TestGuideApplications(t *testing.T) {
 	})
 
 	t.Run("tenant B cannot reach tenant A's application", func(t *testing.T) {
-		o := testutil.ReqOpts{Token: staffB, APIKey: tenantB.APIKey}
+		o := testutil.ReqOpts{Token: adminB, APIKey: tenantB.APIKey}
 		if r := testutil.Do(t, app, http.MethodGet, base+"/"+idA, o); r.Status != http.StatusNotFound {
 			t.Errorf("get: want 404, got %d", r.Status)
 		}
@@ -273,10 +283,10 @@ func TestGuideApplications(t *testing.T) {
 		if r := testutil.Do(t, app, http.MethodGet, base+"/"+idA+"/files/f1", o); r.Status != http.StatusNotFound {
 			t.Errorf("file link: want 404, got %d", r.Status)
 		}
-		if ids := listIDs(t, app, tenantB, staffB, "page=1&limit=50"); len(ids) != 0 {
+		if ids := listIDs(t, app, tenantB, adminB, "page=1&limit=50"); len(ids) != 0 {
 			t.Errorf("tenant B list not empty: %v", ids)
 		}
-		if n := len(guideEvents(t, app, tenantA, staffA, idA)); n != 3 {
+		if n := len(guideEvents(t, app, tenantA, adminA, idA)); n != 3 {
 			t.Errorf("tenant A events changed by tenant B: %d", n)
 		}
 	})
@@ -299,21 +309,37 @@ func TestGuideApplications(t *testing.T) {
 
 	t.Run("regex metacharacters in q match literally", func(t *testing.T) {
 		// "a.c" as a regex would match "abc Literal"; literally it matches nothing.
-		if ids := listIDs(t, app, tenantA, staffA, "q="+url.QueryEscape("a.c")); len(ids) != 0 {
+		if ids := listIDs(t, app, tenantA, adminA, "q="+url.QueryEscape("a.c")); len(ids) != 0 {
 			t.Errorf("a.c matched as a regex: %v", ids)
 		}
-		if ids := listIDs(t, app, tenantA, staffA, "q="+url.QueryEscape("(")); len(ids) != 0 {
+		if ids := listIDs(t, app, tenantA, adminA, "q="+url.QueryEscape("(")); len(ids) != 0 {
 			t.Errorf("( matched something: %v", ids)
 		}
 		// A literal substring still works, case-insensitively.
-		if ids := listIDs(t, app, tenantA, staffA, "q="+url.QueryEscape("ABC lit")); !containsID(ids, idA2) {
+		if ids := listIDs(t, app, tenantA, adminA, "q="+url.QueryEscape("ABC lit")); !containsID(ids, idA2) {
 			t.Errorf("literal search missed the seeded application: %v", ids)
+		}
+	})
+
+	t.Run("staff-role token is refused on every guide admin route", func(t *testing.T) {
+		for _, c := range []struct{ method, path string }{
+			{http.MethodGet, base},
+			{http.MethodGet, base + "/counts"},
+			{http.MethodGet, base + "/" + idA},
+			{http.MethodPatch, base + "/" + idA + "/status"},
+			{http.MethodPost, base + "/" + idA + "/notes"},
+			{http.MethodGet, base + "/" + idA + "/files/f1"},
+		} {
+			resp := testutil.Do(t, app, c.method, c.path, testutil.ReqOpts{Token: staffRoleA, APIKey: tenantA.APIKey})
+			if resp.Status != http.StatusForbidden {
+				t.Errorf("%s %s: want 403, got %d", c.method, c.path, resp.Status)
+			}
 		}
 	})
 
 	t.Run("file link for an unknown file id is 404", func(t *testing.T) {
 		for _, id := range []string{idA2, idA} {
-			resp := testutil.Do(t, app, http.MethodGet, base+"/"+id+"/files/nope", testutil.ReqOpts{Token: staffA, APIKey: tenantA.APIKey})
+			resp := testutil.Do(t, app, http.MethodGet, base+"/"+id+"/files/nope", testutil.ReqOpts{Token: adminA, APIKey: tenantA.APIKey})
 			if resp.Status != http.StatusNotFound {
 				t.Errorf("want 404, got %d: %s", resp.Status, resp.Raw)
 			}

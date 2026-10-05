@@ -247,7 +247,8 @@ func signDownloadParams(p map[string]string, secret string) string {
 // Provider text is never carried into the returned error.
 func uploadResultError(msg, publicID string) error {
 	if msg != "" {
-		if strings.Contains(strings.ToLower(msg), "invalid") {
+		lm := strings.ToLower(msg)
+		if strings.Contains(lm, "invalid") && strings.Contains(lm, "file") {
 			return apierr.ValidationFailed("document could not be read; export it again as a valid PDF or image")
 		}
 		return apierr.Upstream(apierr.DomainUpload, errors.New("upload rejected"))

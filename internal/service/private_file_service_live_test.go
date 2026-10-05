@@ -5,6 +5,7 @@ package service_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"github.com/eandstravel/digitalservice/internal/service"
+	"github.com/eandstravel/digitalservice/pkg/apierr"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
@@ -38,6 +40,16 @@ func validPDF() []byte {
 	}
 	fmt.Fprintf(&b, "trailer\n<</Size %d/Root 1 0 R>>\nstartxref\n%d\n%%%%EOF\n", len(objs)+1, xref)
 	return b.Bytes()
+}
+
+// errClass describes an error without provider text, URLs or secrets: the
+// apierr code when there is one, otherwise just the Go type.
+func errClass(err error) string {
+	var ae *apierr.APIError
+	if errors.As(err, &ae) {
+		return fmt.Sprintf("apierr status %d code %v", ae.HTTPStatus, ae.Code)
+	}
+	return fmt.Sprintf("%T", err)
 }
 
 // fetchStatus GETs rawURL and returns the status and the first bytes of the
@@ -68,18 +80,18 @@ func TestPrivateFileServiceLive(t *testing.T) {
 	}
 	svc, err := service.NewPrivateFileService(cldURL, 10<<20)
 	if err != nil {
-		t.Fatal("NewPrivateFileService failed")
+		t.Fatalf("NewPrivateFileService failed: %s", errClass(err))
 	}
 	ctx := context.Background()
 
 	stored, err := svc.Upload(ctx, bytes.NewReader(validPDF()), primitive.NewObjectID())
 	if err != nil {
-		t.Fatal("upload failed")
+		t.Fatalf("upload failed: %s", errClass(err))
 	}
 	// Always remove the object, even when an assertion below fails.
 	t.Cleanup(func() {
 		if err := svc.Delete(context.Background(), stored.PublicID, stored.Mime); err != nil {
-			t.Error("cleanup delete failed")
+			t.Errorf("cleanup delete failed: %s", errClass(err))
 		}
 	})
 	if stored.Mime != "application/pdf" {
@@ -88,7 +100,7 @@ func TestPrivateFileServiceLive(t *testing.T) {
 
 	u, _, err := svc.DownloadURL(stored.PublicID, stored.Mime, 5*time.Minute)
 	if err != nil {
-		t.Fatal("DownloadURL failed")
+		t.Fatalf("DownloadURL failed: %s", errClass(err))
 	}
 	code, head := fetchStatus(t, u)
 	if code != http.StatusOK {
@@ -103,11 +115,22 @@ func TestPrivateFileServiceLive(t *testing.T) {
 	// spec can say the 5-minute bound rests on the signature timestamp only.
 	expired, _, err := svc.DownloadURL(stored.PublicID, stored.Mime, -1*time.Minute)
 	if err != nil {
-		t.Fatal("DownloadURL (expired) failed")
+		t.Fatalf("DownloadURL (expired) failed: %s", errClass(err))
 	}
 	expCode, _ := fetchStatus(t, expired)
 	t.Logf("expired link status: %d", expCode)
 	if expCode == http.StatusOK {
 		t.Log("NOTE: expired link still served; expiry is not enforced by this endpoint")
+	}
+
+	// Delete now (the Cleanup delete afterwards is idempotent: not-found counts
+	// as success) and confirm the earlier valid signed link no longer serves.
+	if err := svc.Delete(ctx, stored.PublicID, stored.Mime); err != nil {
+		t.Fatalf("explicit delete failed: %s", errClass(err))
+	}
+	goneCode, _ := fetchStatus(t, u)
+	t.Logf("link status after delete: %d", goneCode)
+	if goneCode == http.StatusOK {
+		t.Fatal("signed link still serves the file after delete")
 	}
 }

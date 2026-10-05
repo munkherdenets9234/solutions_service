@@ -1,9 +1,9 @@
 package service
 
 import (
-	"errors"
 	"bytes"
 	"context"
+	"errors"
 	"io"
 	"net/url"
 	"strings"
@@ -186,6 +186,9 @@ func TestUploadResultError(t *testing.T) {
 		{"empty both", "", "", false, 502},
 		{"invalid pdf", "Invalid PDF file", "", false, 422},
 		{"invalid image lower", "invalid image file", "x", false, 422},
+		{"invalid image file mixed", "Invalid image file", "", false, 422},
+		{"invalid api key", "Invalid api_key abc", "", false, 502},
+		{"invalid signature", "Invalid Signature", "", false, 502},
 		{"other", "Unknown api_key secret-ish", "", false, 502},
 	}
 	for _, c := range cases {
