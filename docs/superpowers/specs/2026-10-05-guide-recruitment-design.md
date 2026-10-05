@@ -73,10 +73,10 @@ Collection `guide_applications`, tenant scoped (`tenant_id`), as `ContactMessage
 
 A new `PrivateFileService`. The existing `UploadService` is not touched: it accepts images only and returns public URLs.
 
-- Config: `CLOUDINARY_PRIVATE_URL`. If blank it falls back to `CLOUDINARY_URL`. If neither is set the service is nil and reports unavailable, like `UploadService`. `.env.example` gets the variable name only.
+- Config: reuses `CLOUDINARY_URL`. The 2026-10-05 check showed its key and secret can already upload with `type=authenticated`, so no new variable is required. An optional `CLOUDINARY_PRIVATE_URL` overrides it if the agency later wants a separate Cloudinary account. If neither is set the service is nil and reports unavailable, like `UploadService`. `.env.example` gets the variable name only.
 - Type is decided by sniffing the first bytes, never by client content type. Allowed: `image/jpeg`, `image/png`, `application/pdf`. Size cap is `UPLOAD_MAX_BYTES` (10 MiB default), enforced on the stream with the same one-extra-byte technique `UploadService` uses.
 - Upload: `type: authenticated`, folder `tenants/<tenant_id>/guide-applications`, random UUID name. The destination never comes from the request. PDFs go as resource type `raw`; images as `image`.
-- Download: `SignedURL(publicID, mime, ttl)` returns a signed delivery URL valid 5 minutes. The admin file route checks tenant ownership of the application and the file id before signing.
+- Download: `DownloadURL(publicID, resourceType, ttl)` returns a signed Cloudinary private-download URL (`https://api.cloudinary.com/v1_1/<cloud>/<resource_type>/download`, parameters `public_id`, `type=authenticated`, `timestamp`, `expires_at`, `attachment`, signed with the API secret) valid 5 minutes. The CDN delivery URL is not used: the 2026-10-05 credential check showed the account refuses CDN delivery of authenticated raw files (`401 deny or ACL failure`), while the private-download endpoint returned the PDF. The admin file route checks tenant ownership of the application and the file id before signing.
 - Cleanup: `Delete(publicID)` is used when a submit fails partway.
 
 ### Submit flow
@@ -145,7 +145,7 @@ Application bodies and file names are not written to logs. Error responses carry
 - Go controller tests: multipart parsing, honeypot returns fake success with no row, rate limit, admin auth required, acting user taken from the token.
 - Site: unit tests for the validation module and the conditional-field logic; the route test checks the tenant key is added server-side and not returned.
 - Admin: list and detail render against fixtures; status and note actions call the right endpoints.
-- No test calls Cloudinary. One manual live check with the real credential covers authenticated PDF upload and signed-link download, run before merge. If authenticated PDF delivery fails on the account, fall back to storing files in MongoDB GridFS behind the same `PrivateFileService` interface; no other code changes.
+- No test calls Cloudinary. The credential check (upload as authenticated raw, unsigned fetch refused with 401, private-download URL returns a valid PDF, delete) was run by hand on 2026-10-05 and passed; it is repeated once before merge as a manual step. Fallback if Cloudinary ever stops working for this: store files in MongoDB GridFS behind the same `PrivateFileService` interface; no other code changes.
 
 ## Delivery
 
