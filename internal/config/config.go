@@ -60,6 +60,15 @@ type Config struct {
 	EntitlementTTLSeconds   int
 	EntitlementGraceSeconds int
 	EntitlementTimeoutMS    int
+	// Where X-API-Key is resolved to a tenant: "local" (this service's own
+	// tenants collection, the default and the historical behaviour) or
+	// "tenantcore" (ask tenantcore, which owns tenants). A rollout switch:
+	// flipping it back is the rollback. "tenantcore" needs TenantcoreURL and
+	// TenantcoreServiceKey.
+	TenantResolver string
+	// Requests per minute per client IP allowed through the tenant gate before
+	// the key is even looked up. Generous: storefront servers share few IPs.
+	TenantResolveRatePerMinute int
 	// Base64 Ed25519 public key of tenantcore. Optional: blank leaves the
 	// tenantcore-superadmin routes unmounted (404). Never a secret.
 	TenantcorePublicKey string
@@ -97,6 +106,18 @@ func (c Config) EntitlementEnabled() bool {
 	return c.TenantcoreURL != "" && c.TenantcoreServiceKey != ""
 }
 
+// Tenant resolver modes.
+const (
+	TenantResolverLocal      = "local"
+	TenantResolverTenantcore = "tenantcore"
+)
+
+// TenantResolverTenantcoreEnabled reports whether X-API-Key is resolved
+// through tenantcore rather than the local tenants collection.
+func (c Config) TenantResolverTenantcoreEnabled() bool {
+	return c.TenantResolver == TenantResolverTenantcore
+}
+
 // PasswordResetEnabled reports whether a reset code can be delivered. The mail
 // goes through tenantcore, so it needs the same two settings as the entitlement
 // link; without them no code can ever arrive.
@@ -125,7 +146,7 @@ type Feature struct {
 // feature can be switched off by configuration, it appears here, so "the
 // feature was quietly unmounted and nobody noticed" has one place to look.
 func (c Config) Features() []Feature {
-	return []Feature{
+	f := []Feature{
 		{
 			Name:    "uploads",
 			Enabled: c.UploadsEnabled(),
@@ -160,6 +181,18 @@ func (c Config) Features() []Feature {
 				"(the core admin's tenant admin accounts and password reset) answer 404",
 		},
 	}
+	// Listed only when switched on, so the default /readyz is exactly what it
+	// was before the switch existed (a "disabled" entry here would mark every
+	// local deployment degraded). Live degradation, tenantcore unreachable, is
+	// reported by /readyz from the client itself.
+	if c.TenantResolverTenantcoreEnabled() {
+		f = append(f, Feature{
+			Name:    "tenant_resolver_tenantcore",
+			Enabled: true,
+			Detail:  "TENANT_RESOLVER=tenantcore — X-API-Key is resolved through tenantcore",
+		})
+	}
+	return f
 }
 
 // Validate checks every required setting and reports all failures together.
@@ -205,6 +238,20 @@ func (c Config) Validate() error {
 		}
 	}
 
+	switch c.TenantResolver {
+	case "", TenantResolverLocal:
+	case TenantResolverTenantcore:
+		if strings.TrimSpace(c.TenantcoreURL) == "" {
+			problems = append(problems, "TENANTCORE_URL is required when TENANT_RESOLVER=tenantcore")
+		}
+		if strings.TrimSpace(c.TenantcoreServiceKey) == "" {
+			problems = append(problems, "TENANTCORE_SERVICE_KEY is required when TENANT_RESOLVER=tenantcore")
+		}
+	default:
+		problems = append(problems, fmt.Sprintf("TENANT_RESOLVER must be %q or %q, got %q",
+			TenantResolverLocal, TenantResolverTenantcore, c.TenantResolver))
+	}
+
 	if len(problems) > 0 {
 		return errors.New("invalid configuration: " + strings.Join(problems, "; "))
 	}
@@ -234,6 +281,9 @@ func Load() *Config {
 		EntitlementGraceSeconds: getEnvInt("ENTITLEMENT_GRACE_SECONDS", 900),
 		EntitlementTimeoutMS:    getEnvInt("ENTITLEMENT_TIMEOUT_MS", 3000),
 		TenantcorePublicKey:     getEnv("TENANTCORE_PUBLIC_KEY", ""),
+
+		TenantResolver:             strings.ToLower(getEnv("TENANT_RESOLVER", TenantResolverLocal)),
+		TenantResolveRatePerMinute: getEnvInt("TENANT_RESOLVE_RATE_PER_MINUTE", 600),
 
 		UploadMaxBytes: int64(getEnvInt("UPLOAD_MAX_BYTES", 10<<20)), // 10 MiB
 

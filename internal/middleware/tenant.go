@@ -1,20 +1,86 @@
 package middleware
 
 import (
+	"context"
+	"errors"
+	"net/http"
 	"net/url"
 	"strings"
 
+	"github.com/eandstravel/digitalservice/internal/models"
 	"github.com/eandstravel/digitalservice/internal/service"
+	"github.com/eandstravel/digitalservice/internal/tenantresolve"
 	"github.com/eandstravel/digitalservice/pkg/apierr"
 	"github.com/gin-gonic/gin"
+	"go.mongodb.org/mongo-driver/bson/primitive"
 )
 
-type TenantMiddleware struct {
-	svc *service.TenantService
+// TenantRef is what the middleware needs to know about a resolved tenant.
+type TenantRef struct {
+	ID     primitive.ObjectID
+	Domain string
 }
 
-func NewTenantMiddleware(svc *service.TenantService) *TenantMiddleware {
-	return &TenantMiddleware{svc: svc}
+// TenantResolver turns a raw X-API-Key into a tenant. Its errors are already
+// in the apierr taxonomy (401 unknown key, 403 suspended, 503 could not find
+// out); the middleware passes them on unchanged.
+type TenantResolver interface {
+	Resolve(ctx context.Context, rawKey string) (TenantRef, error)
+}
+
+type localResolver struct {
+	resolve func(ctx context.Context, rawKey string) (*models.Tenant, error)
+}
+
+// NewLocalResolver resolves against this service's own tenants collection, as
+// it always has.
+func NewLocalResolver(svc *service.TenantService) TenantResolver {
+	return localResolver{resolve: svc.Resolve}
+}
+
+func (l localResolver) Resolve(ctx context.Context, rawKey string) (TenantRef, error) {
+	t, err := l.resolve(ctx, rawKey)
+	if err != nil {
+		return TenantRef{}, err
+	}
+	return TenantRef{ID: t.ID, Domain: t.Domain}, nil
+}
+
+type tenantcoreResolver struct {
+	client *tenantresolve.Client
+}
+
+// NewTenantcoreResolver resolves through tenantcore, which owns tenants.
+func NewTenantcoreResolver(c *tenantresolve.Client) TenantResolver {
+	return tenantcoreResolver{client: c}
+}
+
+func (r tenantcoreResolver) Resolve(ctx context.Context, rawKey string) (TenantRef, error) {
+	id, err := r.client.Resolve(ctx, rawKey)
+	if err != nil {
+		if errors.Is(err, tenantresolve.ErrUnknownKey) {
+			// Same body as the local resolver's unknown-key answer.
+			return TenantRef{}, apierr.Unauthorized("")
+		}
+		// ErrUnavailable or anything unexpected: tenantcore could not be
+		// asked, so there is no honest answer. 503, never 401 — telling a
+		// valid storefront its key is wrong because the platform is down
+		// would be the worst available answer.
+		return TenantRef{}, apierr.Wrap(err, http.StatusServiceUnavailable, apierr.DomainTenant,
+			apierr.CodeFeatureUnavailable, "tenant lookup is temporarily unavailable")
+	}
+	if id.Suspended {
+		return TenantRef{}, apierr.Forbidden("tenant suspended").In(apierr.DomainTenant)
+	}
+	return TenantRef{ID: id.TenantID, Domain: id.Domain}, nil
+}
+
+type TenantMiddleware struct {
+	resolver TenantResolver
+}
+
+func NewTenantMiddleware(r TenantResolver) *TenantMiddleware {
+	return &TenantMiddleware{resolver: r}
 }
 
 // Require resolves the tenant from the X-API-Key header and stores its ID
@@ -28,7 +94,7 @@ func (t *TenantMiddleware) Require() gin.HandlerFunc {
 			return
 		}
 
-		tenant, err := t.svc.Resolve(c.Request.Context(), apiKey)
+		tenant, err := t.resolver.Resolve(c.Request.Context(), apiKey)
 		if err != nil {
 			// Resolve already returns taxonomy errors; anything else becomes
 			// a 500 in ErrorHandler with the cause logged.

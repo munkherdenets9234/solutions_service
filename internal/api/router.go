@@ -51,30 +51,33 @@ func (s *Server) buildEngine() *gin.Engine {
 	})
 
 	tenant.Register(api, tenant.Deps{
-		Auth:            d.Auth,
-		Tenant:          d.TenantMW,
-		Subscription:    d.SubscriptionMW,
-		Entitlement:     d.Entitlement,
-		Modules:         d.Modules,
-		AuthRateLimit:   s.limit("tenant-auth", d.Config.AuthRatePerMinute),
-		LeadRateLimit:   s.limit("tenant-lead", d.Config.LeadRatePerMinute),
-		Destination:     d.Destination,
-		Blog:            d.Blog,
-		Car:             d.Car,
-		Review:          d.Review,
-		Partner:         d.Partner,
-		Package:         d.Package,
-		Booking:         d.Booking,
-		Rental:          d.Rental,
-		AirportTransfer: d.AirportTransfer,
-		ContactMessage:  d.ContactMessage,
-		Newsletter:      d.Newsletter,
-		Quote:           d.Quote,
-		Customer:        d.Customer,
-		TenantUser:      d.TenantUser,
-		PasswordReset:   d.PasswordReset,
-		SitePage:        d.SitePage,
-		Upload:          d.Upload,
+		Auth:         d.Auth,
+		Tenant:       d.TenantMW,
+		Subscription: d.SubscriptionMW,
+		Entitlement:  d.Entitlement,
+		Modules:      d.Modules,
+		// Before the tenant gate (see tenant.Register): keyed by client IP and
+		// generous, because storefront servers share few IPs.
+		ResolveRateLimit: s.limit("tenant-resolve", d.Config.TenantResolveRatePerMinute),
+		AuthRateLimit:    s.limit("tenant-auth", d.Config.AuthRatePerMinute),
+		LeadRateLimit:    s.limit("tenant-lead", d.Config.LeadRatePerMinute),
+		Destination:      d.Destination,
+		Blog:             d.Blog,
+		Car:              d.Car,
+		Review:           d.Review,
+		Partner:          d.Partner,
+		Package:          d.Package,
+		Booking:          d.Booking,
+		Rental:           d.Rental,
+		AirportTransfer:  d.AirportTransfer,
+		ContactMessage:   d.ContactMessage,
+		Newsletter:       d.Newsletter,
+		Quote:            d.Quote,
+		Customer:         d.Customer,
+		TenantUser:       d.TenantUser,
+		PasswordReset:    d.PasswordReset,
+		SitePage:         d.SitePage,
+		Upload:           d.Upload,
 	})
 
 	return e
@@ -149,6 +152,17 @@ func (s *Server) registerOperational(e *gin.Engine) {
 				entry["since"] = since.UTC().Format(time.RFC3339)
 			}
 			body["entitlement"] = entry
+		}
+
+		// Same for tenant resolution through tenantcore: while it is down,
+		// known keys are served from cache and unseen ones answer 503.
+		if stale, since := s.deps.TenantResolveClient.Degraded(); stale {
+			body["degraded"] = true
+			entry := gin.H{"stale": true, "detail": "tenantcore is unreachable — resolving tenant API keys from cache; unseen keys answer 503"}
+			if since != nil {
+				entry["since"] = since.UTC().Format(time.RFC3339)
+			}
+			body["tenant_resolver"] = entry
 		}
 
 		c.JSON(http.StatusOK, body)

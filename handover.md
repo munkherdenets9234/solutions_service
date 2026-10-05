@@ -4,6 +4,14 @@
 
 Tenantcore is responsible for ALL tenant information and management (identity, API key, status, domain, plan, subscription). digitalservice provides its service (tours, bookings, content, users) to tenants identified by API key and is not meant to manage tenants. Today it still keeps a duplicate `tenants` collection and resolves `X-API-Key` locally (`internal/middleware/tenant.go` -> `TenantService.Resolve`), so the two copies can differ, which is why a key rotated in tenantcore does not change what this service accepts. Do not add new tenant-management features here. Planned fix: `tenantcore/docs/superpowers/specs/2026-10-05-central-tenant-resolution-design.md` (resolve through tenantcore, cache 60 s fresh / 24 h stale, tenantcore wins and keys are re-issued).
 
+## Tenant resolution switch (2026-10-05)
+
+- Two settings: `TENANT_RESOLVER` (`local` | `tenantcore`, default `local`) and `TENANT_RESOLVE_RATE_PER_MINUTE` (default 600, per client IP, runs before the tenant gate). Documented in `.env.example`.
+- Default `local` behaves exactly as before. `tenantcore` resolves X-API-Key through `internal/tenantresolve` (needs `TENANTCORE_URL` and `TENANTCORE_SERVICE_KEY`; startup refuses without them). Unknown key 401 (same body as local), suspended 403, tenantcore unreachable with nothing cached 503 (never 401). `/readyz` adds `tenant_resolver` and `degraded:true` while tenantcore is unreachable.
+- To flip: set `TENANT_RESOLVER=tenantcore` and restart; to roll back, set it to `local` (or unset) and restart.
+- Rollback caveat: a key re-issued in tenantcore leaves this service's local key hash stale. After rolling back to `local`, the re-issued key is refused here until the local hash is updated, and the old key works again.
+- Not run live: all verification used httptest fakes.
+
 ## Update 2026-10-02 (latest; supersedes the status above where they differ)
 
 - Branch `refactor/backend-core`, working tree clean, 13 commits unpushed. Check: `go build ./... && go vet ./internal/... ./pkg/... && go test ./internal/... ./pkg/... -count=1` (never `go test ./...`). Start with `PORT=8080` (this repo's `.env` has `APP_PORT=8081`; the launch config handles it).
