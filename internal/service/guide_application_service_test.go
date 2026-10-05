@@ -144,6 +144,9 @@ type fakeGuideFiles struct {
 	size        int64
 	uploads     int
 	deleted     []string
+	dlPublicID  string
+	dlMime      string
+	dlTTL       time.Duration
 }
 
 func (f *fakeGuideFiles) Available() bool { return !f.unavailable }
@@ -179,14 +182,36 @@ func (f *fakeGuideFiles) Delete(_ context.Context, publicID, _ string) error {
 	return nil
 }
 
-func (f *fakeGuideFiles) DownloadURL(string, string, time.Duration) (string, time.Time, error) {
-	return "", time.Time{}, errors.New("not used")
+func (f *fakeGuideFiles) DownloadURL(publicID, mime string, ttl time.Duration) (string, time.Time, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.dlPublicID, f.dlMime, f.dlTTL = publicID, mime, ttl
+	return "https://files.test/signed", time.Date(2027, 1, 1, 0, 5, 0, 0, time.UTC), nil
+}
+
+type fakeGuideUsers struct {
+	names map[primitive.ObjectID]string
+	err   error
+}
+
+func (u *fakeGuideUsers) FindByIDs(_ context.Context, _ primitive.ObjectID, ids []primitive.ObjectID) ([]*models.TenantUser, error) {
+	if u.err != nil {
+		return nil, u.err
+	}
+	var out []*models.TenantUser
+	for _, id := range ids {
+		if n, ok := u.names[id]; ok {
+			out = append(out, &models.TenantUser{ID: id, Name: n})
+		}
+	}
+	return out, nil
 }
 
 type guideSvcEnv struct {
 	svc   *GuideApplicationService
 	store *fakeGuideStore
 	files *fakeGuideFiles
+	users *fakeGuideUsers
 	now   time.Time
 	t     primitive.ObjectID
 }
@@ -196,7 +221,8 @@ func newGuideSvcEnv() *guideSvcEnv {
 	clock := func() time.Time { return e.now }
 	e.store = newFakeGuideStore(clock)
 	e.files = &fakeGuideFiles{}
-	e.svc = NewGuideApplicationService(e.store, e.files, nil, clock)
+	e.users = &fakeGuideUsers{names: map[primitive.ObjectID]string{}}
+	e.svc = NewGuideApplicationService(e.store, e.files, e.users, clock)
 	return e
 }
 
@@ -397,6 +423,244 @@ func TestSubmitConcurrentSameEmailOnlyOneSucceeds(t *testing.T) {
 		}
 		if e.files.uploads != 2 {
 			t.Fatalf("n=%d uploads = %d, want 2", n, e.files.uploads)
+		}
+	}
+}
+
+// ── admin operations ─────────────────────────────────────────────────────
+
+func (e *guideSvcEnv) seed(t primitive.ObjectID) *models.GuideApplication {
+	a := validGuideApp()
+	_ = e.store.Create(context.Background(), t, a)
+	return a
+}
+
+func (e *guideSvcEnv) staff(name string) *primitive.ObjectID {
+	id := primitive.NewObjectID()
+	e.users.names[id] = name
+	return &id
+}
+
+func TestSetStatusAppendsEventWithNameAndFromTo(t *testing.T) {
+	e := newGuideSvcEnv()
+	a := e.seed(e.t)
+	actor := e.staff("Ann Staff")
+	e.now = e.now.Add(time.Hour)
+	if err := e.svc.SetStatus(context.Background(), e.t, a.ID.Hex(), models.GuideShortlisted, actor); err != nil {
+		t.Fatalf("set status: %v", err)
+	}
+	if a.Status != models.GuideShortlisted || len(a.Events) != 1 {
+		t.Fatalf("status=%q events=%d", a.Status, len(a.Events))
+	}
+	ev := a.Events[0]
+	if ev.Type != "status" || ev.From != string(models.GuideNew) || ev.To != string(models.GuideShortlisted) ||
+		ev.UserName != "Ann Staff" || ev.UserID == nil || *ev.UserID != *actor || !ev.At.Equal(e.now) {
+		t.Fatalf("event = %+v", ev)
+	}
+}
+
+func TestSetStatusFallsBackToStaffName(t *testing.T) {
+	e := newGuideSvcEnv()
+	a := e.seed(e.t)
+	id := primitive.NewObjectID() // unknown user
+	if err := e.svc.SetStatus(context.Background(), e.t, a.ID.Hex(), models.GuideHired, &id); err != nil {
+		t.Fatal(err)
+	}
+	if a.Events[0].UserName != "staff" {
+		t.Fatalf("name = %q", a.Events[0].UserName)
+	}
+	e.users.err = errors.New("down")
+	if err := e.svc.AddNote(context.Background(), e.t, a.ID.Hex(), "x", &id); err != nil {
+		t.Fatal(err)
+	}
+	if a.Events[1].UserName != "staff" {
+		t.Fatalf("name on lookup error = %q", a.Events[1].UserName)
+	}
+}
+
+func TestSetStatusSameValueWritesNoEvent(t *testing.T) {
+	e := newGuideSvcEnv()
+	a := e.seed(e.t)
+	before := a.UpdatedAt
+	e.now = e.now.Add(time.Hour)
+	if err := e.svc.SetStatus(context.Background(), e.t, a.ID.Hex(), models.GuideNew, e.staff("Ann")); err != nil {
+		t.Fatalf("same status: %v", err)
+	}
+	if len(a.Events) != 0 || !a.UpdatedAt.Equal(before) {
+		t.Fatalf("events=%d updated changed=%v", len(a.Events), !a.UpdatedAt.Equal(before))
+	}
+}
+
+func TestSetStatusRejectsUnknownValue(t *testing.T) {
+	e := newGuideSvcEnv()
+	a := e.seed(e.t)
+	err := e.svc.SetStatus(context.Background(), e.t, a.ID.Hex(), models.GuideStatus("archived"), e.staff("Ann"))
+	expectGuideErr(t, err, "status")
+	if len(a.Events) != 0 || a.Status != models.GuideNew {
+		t.Fatal("row changed")
+	}
+}
+
+func TestSetStatusNeedsActor(t *testing.T) {
+	e := newGuideSvcEnv()
+	a := e.seed(e.t)
+	wantAPIStatus(t, e.svc.SetStatus(context.Background(), e.t, a.ID.Hex(), models.GuideHired, nil), 401)
+	wantAPIStatus(t, e.svc.AddNote(context.Background(), e.t, a.ID.Hex(), "hi", nil), 401)
+	if len(a.Events) != 0 || a.Status != models.GuideNew {
+		t.Fatal("row changed")
+	}
+}
+
+func TestAddNoteBounds(t *testing.T) {
+	e := newGuideSvcEnv()
+	a := e.seed(e.t)
+	actor := e.staff("Ann")
+	ctx := context.Background()
+	for _, bad := range []string{"", "   \n\t "} {
+		expectGuideErr(t, e.svc.AddNote(ctx, e.t, a.ID.Hex(), bad, actor), "text")
+	}
+	expectGuideErr(t, e.svc.AddNote(ctx, e.t, a.ID.Hex(), strings.Repeat("x", 2001), actor), "text")
+	expectGuideErr(t, e.svc.AddNote(ctx, e.t, a.ID.Hex(), strings.Repeat("é", 2001), actor), "text")
+	if len(a.Events) != 0 {
+		t.Fatalf("events = %d after rejects", len(a.Events))
+	}
+	if err := e.svc.AddNote(ctx, e.t, a.ID.Hex(), strings.Repeat("é", 2000), actor); err != nil {
+		t.Fatalf("2000 runes: %v", err)
+	}
+	if err := e.svc.AddNote(ctx, e.t, a.ID.Hex(), "  trimmed  ", actor); err != nil {
+		t.Fatal(err)
+	}
+	if a.Events[1].Text != "trimmed" || a.Events[1].Type != "note" {
+		t.Fatalf("event = %+v", a.Events[1])
+	}
+}
+
+func TestNotesAreAppendOnly(t *testing.T) {
+	e := newGuideSvcEnv()
+	a := e.seed(e.t)
+	actor := e.staff("Ann")
+	ctx := context.Background()
+	_ = e.svc.AddNote(ctx, e.t, a.ID.Hex(), "first", actor)
+	_ = e.svc.AddNote(ctx, e.t, a.ID.Hex(), "second", actor)
+	if len(a.Events) != 2 || a.Events[0].Text != "first" || a.Events[1].Text != "second" {
+		t.Fatalf("events = %+v", a.Events)
+	}
+	if a.Status != models.GuideNew {
+		t.Fatalf("note changed status to %q", a.Status)
+	}
+}
+
+func TestCrossTenantGetIs404(t *testing.T) {
+	e := newGuideSvcEnv()
+	a := e.seed(e.t)
+	other := primitive.NewObjectID()
+	ctx := context.Background()
+	_, err := e.svc.Get(ctx, other, a.ID.Hex())
+	wantAPIStatus(t, err, 404)
+	_, err = e.svc.Get(ctx, e.t, "not-hex")
+	wantAPIStatus(t, err, 404)
+	wantAPIStatus(t, e.svc.SetStatus(ctx, other, a.ID.Hex(), models.GuideHired, e.staff("Ann")), 404)
+	wantAPIStatus(t, e.svc.AddNote(ctx, other, a.ID.Hex(), "x", e.staff("Ann")), 404)
+	if got, err := e.svc.Get(ctx, e.t, a.ID.Hex()); err != nil || got.ID != a.ID {
+		t.Fatalf("own tenant get: %v", err)
+	}
+}
+
+func TestCrossTenantFileDownloadIs404(t *testing.T) {
+	e := newGuideSvcEnv()
+	a := e.seed(e.t)
+	a.Files = []models.GuideFile{{ID: "f1", PublicID: "pid-x", Mime: "application/pdf"}}
+	_, _, err := e.svc.FileDownload(context.Background(), primitive.NewObjectID(), a.ID.Hex(), "f1")
+	wantAPIStatus(t, err, 404)
+	if e.files.dlPublicID != "" {
+		t.Fatal("signed a URL for a foreign tenant")
+	}
+}
+
+func TestFileDownloadUnknownFileIs404(t *testing.T) {
+	e := newGuideSvcEnv()
+	a := e.seed(e.t)
+	a.Files = []models.GuideFile{{ID: "f1", PublicID: "pid-x", Mime: "application/pdf"}}
+	_, _, err := e.svc.FileDownload(context.Background(), e.t, a.ID.Hex(), "nope")
+	wantAPIStatus(t, err, 404)
+	_, _, err = e.svc.FileDownload(context.Background(), e.t, "bad", "f1")
+	wantAPIStatus(t, err, 404)
+}
+
+func TestFileDownloadUsesFiveMinuteTTL(t *testing.T) {
+	e := newGuideSvcEnv()
+	a := e.seed(e.t)
+	a.Files = []models.GuideFile{{ID: "f1", PublicID: "pid-x", Mime: "application/pdf"}}
+	url, exp, err := e.svc.FileDownload(context.Background(), e.t, a.ID.Hex(), "f1")
+	if err != nil || url == "" || exp.IsZero() {
+		t.Fatalf("url=%q exp=%v err=%v", url, exp, err)
+	}
+	if e.files.dlTTL != 5*time.Minute || e.files.dlPublicID != "pid-x" || e.files.dlMime != "application/pdf" {
+		t.Fatalf("ttl=%v pid=%q mime=%q", e.files.dlTTL, e.files.dlPublicID, e.files.dlMime)
+	}
+	e.files.unavailable = true
+	_, _, err = e.svc.FileDownload(context.Background(), e.t, a.ID.Hex(), "f1")
+	var ae *apierr.APIError
+	if !errors.As(err, &ae) || ae.Code != apierr.CodeFeatureUnavailable {
+		t.Fatalf("want FeatureUnavailable, got %v", err)
+	}
+}
+
+func TestCountsFillsZeroes(t *testing.T) {
+	e := newGuideSvcEnv()
+	e.seed(e.t)
+	e.seed(e.t)
+	e.seed(primitive.NewObjectID())
+	got, err := e.svc.Counts(context.Background(), e.t)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 5 || got[models.GuideNew] != 2 {
+		t.Fatalf("counts = %v", got)
+	}
+	for _, st := range models.GuideStatuses {
+		if _, ok := got[st]; !ok {
+			t.Fatalf("missing key %q", st)
+		}
+	}
+}
+
+func TestEventKeepsUserNameAfterRename(t *testing.T) {
+	e := newGuideSvcEnv()
+	a := e.seed(e.t)
+	actor := e.staff("Old Name")
+	ctx := context.Background()
+	_ = e.svc.SetStatus(ctx, e.t, a.ID.Hex(), models.GuideReviewing, actor)
+	e.users.names[*actor] = "New Name"
+	_ = e.svc.AddNote(ctx, e.t, a.ID.Hex(), "later", actor)
+	if a.Events[0].UserName != "Old Name" || a.Events[1].UserName != "New Name" {
+		t.Fatalf("names = %q, %q", a.Events[0].UserName, a.Events[1].UserName)
+	}
+}
+
+type recordingGuideStore struct {
+	*fakeGuideStore
+	page, limit int
+}
+
+func (r *recordingGuideStore) List(ctx context.Context, t primitive.ObjectID, f repository.GuideListFilter, page, limit int) ([]*models.GuideApplication, int64, error) {
+	r.page, r.limit = page, limit
+	return r.fakeGuideStore.List(ctx, t, f, page, limit)
+}
+
+func TestListClampsPageAndLimit(t *testing.T) {
+	cases := []struct{ page, limit, wantPage, wantLimit int }{
+		{0, 0, 1, 20}, {-3, -1, 1, 20}, {2, 101, 2, 20}, {3, 100, 3, 100}, {1, 1, 1, 1},
+	}
+	for _, c := range cases {
+		e := newGuideSvcEnv()
+		rec := &recordingGuideStore{fakeGuideStore: e.store}
+		svc := NewGuideApplicationService(rec, e.files, e.users, nil)
+		if _, _, err := svc.List(context.Background(), e.t, repository.GuideListFilter{}, c.page, c.limit); err != nil {
+			t.Fatal(err)
+		}
+		if rec.page != c.wantPage || rec.limit != c.wantLimit {
+			t.Fatalf("(%d,%d) -> (%d,%d), want (%d,%d)", c.page, c.limit, rec.page, rec.limit, c.wantPage, c.wantLimit)
 		}
 	}
 }

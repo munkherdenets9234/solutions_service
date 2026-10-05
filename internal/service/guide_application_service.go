@@ -2,14 +2,18 @@ package service
 
 import (
 	"context"
+	"errors"
 	"io"
+	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/eandstravel/digitalservice/internal/models"
 	"github.com/eandstravel/digitalservice/internal/repository"
 	"github.com/eandstravel/digitalservice/pkg/apierr"
 	"go.mongodb.org/mongo-driver/bson/primitive"
+	"go.mongodb.org/mongo-driver/mongo"
 )
 
 const (
@@ -211,4 +215,176 @@ func upperTail(s string, n int) string {
 		}
 	}
 	return string(b)
+}
+
+const (
+	guideDownloadTTL = 5 * time.Minute
+	guideNoteMaxLen  = 2000
+	guideStaffName   = "staff"
+)
+
+// List returns one page of applications for the tenant, newest first.
+func (s *GuideApplicationService) List(ctx context.Context, tenantID primitive.ObjectID, f repository.GuideListFilter, page, limit int) ([]*models.GuideApplication, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+	rows, total, err := s.store.List(ctx, tenantID, f, page, limit)
+	if err != nil {
+		return nil, 0, apierr.Internal(err)
+	}
+	return rows, total, nil
+}
+
+// Counts returns the number of applications per status, all five keys present.
+func (s *GuideApplicationService) Counts(ctx context.Context, tenantID primitive.ObjectID) (map[models.GuideStatus]int64, error) {
+	got, err := s.store.CountByStatus(ctx, tenantID)
+	if err != nil {
+		return nil, apierr.Internal(err)
+	}
+	out := make(map[models.GuideStatus]int64, len(models.GuideStatuses))
+	for _, st := range models.GuideStatuses {
+		out[st] = got[st]
+	}
+	return out, nil
+}
+
+// Get loads one application. A malformed id and an id from another tenant are
+// both NotFound so ids cannot be probed.
+func (s *GuideApplicationService) Get(ctx context.Context, tenantID primitive.ObjectID, idHex string) (*models.GuideApplication, error) {
+	id, err := primitive.ObjectIDFromHex(idHex)
+	if err != nil {
+		return nil, apierr.NotFound("guide application")
+	}
+	a, err := s.store.FindByID(ctx, tenantID, id)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, apierr.NotFound("guide application")
+		}
+		return nil, apierr.Internal(err)
+	}
+	return a, nil
+}
+
+// SetStatus moves an application to a new status and records who did it. A
+// status equal to the current one succeeds without writing anything.
+func (s *GuideApplicationService) SetStatus(ctx context.Context, tenantID primitive.ObjectID, idHex string, status models.GuideStatus, actor *primitive.ObjectID) error {
+	valid := false
+	for _, st := range models.GuideStatuses {
+		if st == status {
+			valid = true
+			break
+		}
+	}
+	if !valid {
+		return apierr.ValidationFailed("status is not a valid status")
+	}
+	if actor == nil {
+		return apierr.Unauthorized("staff identity required")
+	}
+	a, err := s.Get(ctx, tenantID, idHex)
+	if err != nil {
+		return err
+	}
+	if a.Status == status {
+		return nil
+	}
+	ev := models.GuideEvent{
+		Type:     "status",
+		At:       s.now(),
+		UserID:   actor,
+		UserName: s.actorName(ctx, tenantID, *actor),
+		From:     string(a.Status),
+		To:       string(status),
+	}
+	if err := s.store.SetStatus(ctx, tenantID, a.ID, status, ev); err != nil {
+		return s.mapWriteErr(err)
+	}
+	return nil
+}
+
+// AddNote appends a staff note to the timeline. Events are never edited or removed.
+func (s *GuideApplicationService) AddNote(ctx context.Context, tenantID primitive.ObjectID, idHex, text string, actor *primitive.ObjectID) error {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return apierr.ValidationFailed("text is required")
+	}
+	if utf8.RuneCountInString(text) > guideNoteMaxLen {
+		return apierr.ValidationFailed("text must be at most 2000 characters")
+	}
+	if actor == nil {
+		return apierr.Unauthorized("staff identity required")
+	}
+	a, err := s.Get(ctx, tenantID, idHex)
+	if err != nil {
+		return err
+	}
+	ev := models.GuideEvent{
+		Type:     "note",
+		At:       s.now(),
+		UserID:   actor,
+		UserName: s.actorName(ctx, tenantID, *actor),
+		Text:     text,
+	}
+	if err := s.store.AddNote(ctx, tenantID, a.ID, ev); err != nil {
+		return s.mapWriteErr(err)
+	}
+	return nil
+}
+
+// FileDownload returns a short-lived signed URL for one stored file. The
+// storage public id never leaves the service.
+func (s *GuideApplicationService) FileDownload(ctx context.Context, tenantID primitive.ObjectID, idHex, fileID string) (string, time.Time, error) {
+	a, err := s.Get(ctx, tenantID, idHex)
+	if err != nil {
+		return "", time.Time{}, err
+	}
+	var file *models.GuideFile
+	for i := range a.Files {
+		if a.Files[i].ID == fileID {
+			file = &a.Files[i]
+			break
+		}
+	}
+	if file == nil {
+		return "", time.Time{}, apierr.NotFound("file")
+	}
+	if s.files == nil || !s.files.Available() {
+		return "", time.Time{}, apierr.FeatureUnavailable("document downloads")
+	}
+	url, exp, err := s.files.DownloadURL(file.PublicID, file.Mime, guideDownloadTTL)
+	if err != nil {
+		if _, ok := err.(*apierr.APIError); ok {
+			return "", time.Time{}, err
+		}
+		return "", time.Time{}, apierr.Upstream(apierr.DomainUpload, err)
+	}
+	return url, exp, nil
+}
+
+// actorName resolves the staff display name at write time so the timeline
+// survives a later rename.
+func (s *GuideApplicationService) actorName(ctx context.Context, tenantID, actor primitive.ObjectID) string {
+	if s.users == nil {
+		return guideStaffName
+	}
+	users, err := s.users.FindByIDs(ctx, tenantID, []primitive.ObjectID{actor})
+	if err != nil {
+		return guideStaffName
+	}
+	for _, u := range users {
+		if u.ID == actor && strings.TrimSpace(u.Name) != "" {
+			return u.Name
+		}
+	}
+	return guideStaffName
+}
+
+func (s *GuideApplicationService) mapWriteErr(err error) error {
+	if errors.Is(err, mongo.ErrNoDocuments) {
+		return apierr.NotFound("guide application")
+	}
+	return apierr.Internal(err)
 }
