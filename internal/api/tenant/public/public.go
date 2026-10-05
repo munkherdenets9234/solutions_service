@@ -39,6 +39,12 @@ type Deps struct {
 	PasswordReset   *service.TenantPasswordResetService
 	SitePage        *service.SitePageService
 
+	// GuideApplication and GuideUploadMaxBytes feed the public guide
+	// application form. GuideUploadMaxBytes is the per-file ceiling; the body
+	// ceiling is derived from it.
+	GuideApplication    *service.GuideApplicationService
+	GuideUploadMaxBytes int64
+
 	// Subscription gates the storefront reads. Supplied by the caller rather
 	// than built here so this package cannot decide which of its own routes
 	// are gated.
@@ -62,6 +68,12 @@ func Register(base *gin.RouterGroup, d Deps) {
 	auth := &authController{svc: d.TenantUser}
 	reset := &passwordResetController{svc: d.PasswordReset}
 	translations := &translationsController{svc: d.SitePage}
+	guide := &guideApplicationsController{maxBytes: d.GuideUploadMaxBytes}
+	// Assign only a non-nil service: a nil *GuideApplicationService stored in
+	// the interface would be a non-nil interface that panics when called.
+	if d.GuideApplication != nil {
+		guide.svc = d.GuideApplication
+	}
 	store := &storefrontController{
 		destination: d.Destination,
 		blog:        d.Blog,
@@ -84,6 +96,7 @@ func Register(base *gin.RouterGroup, d Deps) {
 	lead.POST("/contact", leads.CreateContactMessage)
 	lead.POST("/quotes", leads.CreateQuote)
 	lead.POST("/newsletter", leads.Subscribe)
+	lead.POST("/guide-applications", guide.Submit)
 
 	// Login answers differently for a known and an unknown email, which makes
 	// it an account-existence oracle as well as a guessing target.

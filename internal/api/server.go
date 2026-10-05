@@ -74,6 +74,11 @@ type Deps struct {
 	// Upload is nil-safe: a nil service means uploads were not configured,
 	// and the route says so rather than disappearing.
 	Upload *service.UploadService
+
+	// GuideApplication is the guide recruitment service. It is always built;
+	// with private file storage off its Submit answers 503 on its own.
+	GuideApplication    *service.GuideApplicationService
+	GuideUploadMaxBytes int64
 }
 
 // Server is the built HTTP engine.

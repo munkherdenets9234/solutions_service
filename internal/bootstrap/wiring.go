@@ -22,76 +22,79 @@ import (
 // Register signature names.
 
 type repos struct {
-	destination     *repository.DestinationRepo
-	booking         *repository.BookingRepo
-	blog            *repository.BlogRepo
-	customer        *repository.CustomerRepo
-	car             *repository.CarRepo
-	rental          *repository.RentalRepo
-	airportTransfer *repository.AirportTransferRepo
-	contactMessage  *repository.ContactMessageRepo
-	newsletter      *repository.NewsletterRepo
-	review          *repository.ReviewRepo
-	partner         *repository.PartnerRepo
-	pkg             *repository.PackageRepo
-	quote           *repository.QuoteRepo
-	tenant          *repository.TenantRepo
-	tenantDetail    *repository.TenantDetailRepo
-	tenantReview    *repository.TenantReviewRepo
-	tenantPackage   *repository.TenantPackageRepo
-	tenantUser      *repository.TenantUserRepo
-	passwordReset   *repository.TenantPasswordResetRepo
-	sitePage        *repository.SitePageRepo
-	platformUser    *repository.PlatformUserRepo
+	destination      *repository.DestinationRepo
+	booking          *repository.BookingRepo
+	blog             *repository.BlogRepo
+	customer         *repository.CustomerRepo
+	car              *repository.CarRepo
+	rental           *repository.RentalRepo
+	airportTransfer  *repository.AirportTransferRepo
+	contactMessage   *repository.ContactMessageRepo
+	guideApplication *repository.GuideApplicationRepo
+	newsletter       *repository.NewsletterRepo
+	review           *repository.ReviewRepo
+	partner          *repository.PartnerRepo
+	pkg              *repository.PackageRepo
+	quote            *repository.QuoteRepo
+	tenant           *repository.TenantRepo
+	tenantDetail     *repository.TenantDetailRepo
+	tenantReview     *repository.TenantReviewRepo
+	tenantPackage    *repository.TenantPackageRepo
+	tenantUser       *repository.TenantUserRepo
+	passwordReset    *repository.TenantPasswordResetRepo
+	sitePage         *repository.SitePageRepo
+	platformUser     *repository.PlatformUserRepo
 }
 
 func newRepos(db *mongo.Database) repos {
 	return repos{
-		destination:     repository.NewDestinationRepo(db),
-		booking:         repository.NewBookingRepo(db),
-		blog:            repository.NewBlogRepo(db),
-		customer:        repository.NewCustomerRepo(db),
-		car:             repository.NewCarRepo(db),
-		rental:          repository.NewRentalRepo(db),
-		airportTransfer: repository.NewAirportTransferRepo(db),
-		contactMessage:  repository.NewContactMessageRepo(db),
-		newsletter:      repository.NewNewsletterRepo(db),
-		review:          repository.NewReviewRepo(db),
-		partner:         repository.NewPartnerRepo(db),
-		pkg:             repository.NewPackageRepo(db),
-		quote:           repository.NewQuoteRepo(db),
-		tenant:          repository.NewTenantRepo(db),
-		tenantDetail:    repository.NewTenantDetailRepo(db),
-		tenantReview:    repository.NewTenantReviewRepo(db),
-		tenantPackage:   repository.NewTenantPackageRepo(db),
-		tenantUser:      repository.NewTenantUserRepo(db),
-		passwordReset:   repository.NewTenantPasswordResetRepo(db),
-		sitePage:        repository.NewSitePageRepo(db),
-		platformUser:    repository.NewPlatformUserRepo(db),
+		destination:      repository.NewDestinationRepo(db),
+		booking:          repository.NewBookingRepo(db),
+		blog:             repository.NewBlogRepo(db),
+		customer:         repository.NewCustomerRepo(db),
+		car:              repository.NewCarRepo(db),
+		rental:           repository.NewRentalRepo(db),
+		airportTransfer:  repository.NewAirportTransferRepo(db),
+		contactMessage:   repository.NewContactMessageRepo(db),
+		guideApplication: repository.NewGuideApplicationRepo(db),
+		newsletter:       repository.NewNewsletterRepo(db),
+		review:           repository.NewReviewRepo(db),
+		partner:          repository.NewPartnerRepo(db),
+		pkg:              repository.NewPackageRepo(db),
+		quote:            repository.NewQuoteRepo(db),
+		tenant:           repository.NewTenantRepo(db),
+		tenantDetail:     repository.NewTenantDetailRepo(db),
+		tenantReview:     repository.NewTenantReviewRepo(db),
+		tenantPackage:    repository.NewTenantPackageRepo(db),
+		tenantUser:       repository.NewTenantUserRepo(db),
+		passwordReset:    repository.NewTenantPasswordResetRepo(db),
+		sitePage:         repository.NewSitePageRepo(db),
+		platformUser:     repository.NewPlatformUserRepo(db),
 	}
 }
 
 type services struct {
-	destination     *service.DestinationService
-	booking         *service.BookingService
-	blog            *service.BlogService
-	car             *service.CarService
-	rental          *service.RentalService
-	airportTransfer *service.AirportTransferService
-	contactMessage  *service.ContactMessageService
-	newsletter      *service.NewsletterService
-	customer        *service.CustomerService
-	review          *service.ReviewService
-	partner         *service.PartnerService
-	pkg             *service.PackageService
-	quote           *service.QuoteService
-	tenant          *service.TenantService
-	tenantReview    *service.TenantReviewService
-	tenantPackage   *service.TenantPackageService
-	tenantUser      *service.TenantUserService
-	passwordReset   *service.TenantPasswordResetService
-	sitePage        *service.SitePageService
-	platformUser    *service.PlatformUserService
+	destination      *service.DestinationService
+	booking          *service.BookingService
+	blog             *service.BlogService
+	car              *service.CarService
+	rental           *service.RentalService
+	airportTransfer  *service.AirportTransferService
+	contactMessage   *service.ContactMessageService
+	guideApplication *service.GuideApplicationService
+	newsletter       *service.NewsletterService
+	customer         *service.CustomerService
+	review           *service.ReviewService
+	partner          *service.PartnerService
+	pkg              *service.PackageService
+	quote            *service.QuoteService
+	tenant           *service.TenantService
+	tenantReview     *service.TenantReviewService
+	tenantPackage    *service.TenantPackageService
+	tenantUser       *service.TenantUserService
+	passwordReset    *service.TenantPasswordResetService
+	sitePage         *service.SitePageService
+	platformUser     *service.PlatformUserService
 
 	// entitlement is the seam the product split runs through. It is an
 	// interface, not a concrete type: the day this went from a local query
@@ -137,23 +140,24 @@ func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.
 	}
 
 	return services{
-		destination:     service.NewDestinationService(r.destination, r.tenantUser),
-		booking:         service.NewBookingService(r.booking, r.customer, r.destination, r.tenantUser),
-		blog:            service.NewBlogService(r.blog, r.tenantUser),
-		car:             service.NewCarService(r.car, r.tenantUser),
-		rental:          service.NewRentalService(r.rental, r.customer, r.car, r.tenantUser),
-		airportTransfer: service.NewAirportTransferService(r.airportTransfer, r.customer, r.tenantUser),
-		contactMessage:  service.NewContactMessageService(r.contactMessage, r.tenantUser),
-		newsletter:      service.NewNewsletterService(r.newsletter),
-		customer:        service.NewCustomerService(r.customer, r.booking, r.rental, r.airportTransfer, r.tenantUser),
-		review:          service.NewReviewService(r.review, r.tenantUser),
-		partner:         service.NewPartnerService(r.partner, r.tenantUser),
-		pkg:             service.NewPackageService(r.pkg, r.tenantPackage, r.platformUser),
-		quote:           service.NewQuoteService(r.quote, r.tenantUser, r.platformUser),
-		tenant:          tenantSvc,
-		tenantReview:    service.NewTenantReviewService(r.tenantReview, r.tenant),
-		tenantPackage:   service.NewTenantPackageService(r.tenantPackage, r.tenant, r.pkg),
-		tenantUser:      service.NewTenantUserService(r.tenantUser, tokenMaker, cfg.TokenExpiry),
+		destination:      service.NewDestinationService(r.destination, r.tenantUser),
+		booking:          service.NewBookingService(r.booking, r.customer, r.destination, r.tenantUser),
+		blog:             service.NewBlogService(r.blog, r.tenantUser),
+		car:              service.NewCarService(r.car, r.tenantUser),
+		rental:           service.NewRentalService(r.rental, r.customer, r.car, r.tenantUser),
+		airportTransfer:  service.NewAirportTransferService(r.airportTransfer, r.customer, r.tenantUser),
+		contactMessage:   service.NewContactMessageService(r.contactMessage, r.tenantUser),
+		guideApplication: service.NewGuideApplicationService(r.guideApplication, buildPrivateFiles(cfg, log), r.tenantUser, time.Now),
+		newsletter:       service.NewNewsletterService(r.newsletter),
+		customer:         service.NewCustomerService(r.customer, r.booking, r.rental, r.airportTransfer, r.tenantUser),
+		review:           service.NewReviewService(r.review, r.tenantUser),
+		partner:          service.NewPartnerService(r.partner, r.tenantUser),
+		pkg:              service.NewPackageService(r.pkg, r.tenantPackage, r.platformUser),
+		quote:            service.NewQuoteService(r.quote, r.tenantUser, r.platformUser),
+		tenant:           tenantSvc,
+		tenantReview:     service.NewTenantReviewService(r.tenantReview, r.tenant),
+		tenantPackage:    service.NewTenantPackageService(r.tenantPackage, r.tenant, r.pkg),
+		tenantUser:       service.NewTenantUserService(r.tenantUser, tokenMaker, cfg.TokenExpiry),
 		// Mail goes through tenantcore, over the same link entitlement uses, so
 		// this adds no configuration. A nil client means the link is off; Request
 		// then answers 503 rather than pretending to send.
@@ -256,5 +260,29 @@ func buildUpload(cfg *config.Config, log *zap.Logger) *service.UploadService {
 		return nil
 	}
 	log.Info("image uploads ready", zap.Int64("max_bytes", cfg.UploadMaxBytes))
+	return svc
+}
+
+// buildPrivateFiles returns the private applicant-file store, or a TRUE nil
+// interface when private storage is off or misconfigured. The service treats a
+// nil PrivateFiles as "uploads unavailable" and answers 503.
+//
+// The return type is the interface, and the concrete pointer is only converted
+// after the nil checks: returning a nil *PrivateFileService through the
+// interface would give a non-nil interface holding a nil pointer, and the
+// service's `files == nil` guard would pass it straight through to a panic.
+//
+// The URL is a credential and is never logged.
+func buildPrivateFiles(cfg *config.Config, log *zap.Logger) service.PrivateFiles {
+	if !cfg.PrivateFilesEnabled() {
+		return nil
+	}
+	svc, err := service.NewPrivateFileService(cfg.PrivateFilesURL(), cfg.UploadMaxBytes)
+	if err != nil || svc == nil {
+		log.Error("private file storage unavailable - the configured Cloudinary URL could not be parsed; " +
+			"POST /guide-applications will answer 503 FEATURE_UNAVAILABLE")
+		return nil
+	}
+	log.Info("private file storage ready", zap.Int64("max_bytes", cfg.UploadMaxBytes))
 	return svc
 }
