@@ -1,13 +1,16 @@
 package bootstrap
 
 import (
+	"errors"
 	"time"
 
 	"github.com/eandstravel/digitalservice/internal/config"
 	"github.com/eandstravel/digitalservice/internal/entitlement"
+	"github.com/eandstravel/digitalservice/internal/middleware"
 	"github.com/eandstravel/digitalservice/internal/notify"
 	"github.com/eandstravel/digitalservice/internal/repository"
 	"github.com/eandstravel/digitalservice/internal/service"
+	"github.com/eandstravel/digitalservice/internal/tenantresolve"
 	"github.com/eandstravel/digitalservice/pkg/token"
 	"go.mongodb.org/mongo-driver/mongo"
 	"go.uber.org/zap"
@@ -102,11 +105,19 @@ type services struct {
 	// It is nil when the link is off.
 	entitlementClient *entitlement.Client
 
+	// tenantResolver is what the tenant gate asks to turn an X-API-Key into a
+	// tenant: this service's own collection by default, tenantcore when
+	// TENANT_RESOLVER=tenantcore.
+	tenantResolver middleware.TenantResolver
+	// tenantResolveClient is the tenantcore client behind tenantResolver, nil
+	// in local mode. Kept for Close on shutdown and Degraded for /readyz.
+	tenantResolveClient *tenantresolve.Client
+
 	// upload is nil when CLOUDINARY_URL is unset. See buildUpload.
 	upload *service.UploadService
 }
 
-func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.Logger) services {
+func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.Logger) (services, error) {
 	entClient := buildEntitlement(cfg, log)
 
 	// A nil *entitlement.Client stored in a Provider interface is NOT nil as
@@ -117,6 +128,12 @@ func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.
 	var entProvider entitlement.Provider = entitlement.Unenforced{}
 	if entClient.Available() {
 		entProvider = entClient
+	}
+
+	tenantSvc := service.NewTenantService(r.tenant, r.tenantDetail, r.platformUser)
+	tenantResolver, tenantResolveClient, err := buildTenantResolver(cfg, tenantSvc, log)
+	if err != nil {
+		return services{}, err
 	}
 
 	return services{
@@ -133,7 +150,7 @@ func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.
 		partner:         service.NewPartnerService(r.partner, r.tenantUser),
 		pkg:             service.NewPackageService(r.pkg, r.tenantPackage, r.platformUser),
 		quote:           service.NewQuoteService(r.quote, r.tenantUser, r.platformUser),
-		tenant:          service.NewTenantService(r.tenant, r.tenantDetail, r.platformUser),
+		tenant:          tenantSvc,
 		tenantReview:    service.NewTenantReviewService(r.tenantReview, r.tenant),
 		tenantPackage:   service.NewTenantPackageService(r.tenantPackage, r.tenant, r.pkg),
 		tenantUser:      service.NewTenantUserService(r.tenantUser, tokenMaker, cfg.TokenExpiry),
@@ -151,8 +168,40 @@ func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.
 		entitlement:       entProvider,
 		entitlementClient: entClient,
 
+		tenantResolver:      tenantResolver,
+		tenantResolveClient: tenantResolveClient,
+
 		upload: buildUpload(cfg, log),
+	}, nil
+}
+
+// buildTenantResolver picks how X-API-Key becomes a tenant.
+//
+// Anything other than an explicit "tenantcore" is the local resolver: today's
+// behaviour, no client, nothing to close.
+//
+// Tenantcore mode FAILS CLOSED. If the client cannot be built the deployment
+// does not start, and in particular it never falls back to the local
+// collection: that holds stale hashes after a key is re-issued or revoked, so
+// a fallback would keep accepting keys tenantcore has retired. Validate
+// refuses this configuration first; this is the backstop for callers that
+// reach wiring without it.
+func buildTenantResolver(cfg *config.Config, local *service.TenantService, log *zap.Logger) (middleware.TenantResolver, *tenantresolve.Client, error) {
+	if !cfg.TenantResolverTenantcoreEnabled() {
+		return middleware.NewLocalResolver(local), nil, nil
 	}
+	c := tenantresolve.NewClient(tenantresolve.ClientConfig{
+		BaseURL:    cfg.TenantcoreURL,
+		ServiceKey: cfg.TenantcoreServiceKey,
+		Log:        log,
+	})
+	if c == nil {
+		return nil, nil, errors.New("TENANT_RESOLVER=tenantcore needs TENANTCORE_URL and TENANTCORE_SERVICE_KEY; " +
+			"refusing to start rather than fall back to the local tenants collection")
+	}
+	log.Info("tenant resolution ready — API keys are resolved through tenantcore",
+		zap.String("platform", cfg.TenantcoreURL))
+	return middleware.NewTenantcoreResolver(c), c, nil
 }
 
 // buildEntitlement returns the tenantcore client, or nil when the link is not

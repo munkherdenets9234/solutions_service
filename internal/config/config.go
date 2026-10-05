@@ -17,6 +17,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -60,9 +61,28 @@ type Config struct {
 	EntitlementTTLSeconds   int
 	EntitlementGraceSeconds int
 	EntitlementTimeoutMS    int
+	// Where X-API-Key is resolved to a tenant: "local" (this service's own
+	// tenants collection, the default and the historical behaviour) or
+	// "tenantcore" (ask tenantcore, which owns tenants). A rollout switch:
+	// flipping it back is the rollback. "tenantcore" needs TenantcoreURL and
+	// TenantcoreServiceKey.
+	TenantResolver string
+	// Requests per minute per client IP allowed through the tenant gate before
+	// the key is even looked up. Generous: storefront servers share few IPs.
+	TenantResolveRatePerMinute int
+	// Burst for that limiter: requests let through instantly before the
+	// per-minute rate applies. Its own setting, not RATE_LIMIT_BURST, because a
+	// storefront server fetching several times per page from one IP needs far
+	// more headroom than a login form does. Default 120.
+	TenantResolveBurst int
 	// Base64 Ed25519 public key of tenantcore. Optional: blank leaves the
 	// tenantcore-superadmin routes unmounted (404). Never a secret.
 	TenantcorePublicKey string
+	// TRUSTED_PROXIES: IPs/CIDRs whose X-Forwarded-For gin may believe. EMPTY
+	// (the default) leaves gin's own default untouched, which trusts every peer,
+	// so every per-IP limiter can be bypassed with one forged header. Set it to
+	// the hosting provider's documented proxy ranges.
+	TrustedProxies []string
 
 	// Uploads.
 	UploadMaxBytes int64
@@ -97,6 +117,33 @@ func (c Config) EntitlementEnabled() bool {
 	return c.TenantcoreURL != "" && c.TenantcoreServiceKey != ""
 }
 
+// Tenant resolver modes.
+const (
+	TenantResolverLocal      = "local"
+	TenantResolverTenantcore = "tenantcore"
+)
+
+// ParseTrustedProxies splits a comma-separated list, trimming entries and
+// ignoring empty ones. It does not validate; Validate does.
+func ParseTrustedProxies(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// TrustedProxiesSet reports whether TRUSTED_PROXIES was given.
+func (c Config) TrustedProxiesSet() bool { return len(c.TrustedProxies) > 0 }
+
+// TenantResolverTenantcoreEnabled reports whether X-API-Key is resolved
+// through tenantcore rather than the local tenants collection.
+func (c Config) TenantResolverTenantcoreEnabled() bool {
+	return c.TenantResolver == TenantResolverTenantcore
+}
+
 // PasswordResetEnabled reports whether a reset code can be delivered. The mail
 // goes through tenantcore, so it needs the same two settings as the entitlement
 // link; without them no code can ever arrive.
@@ -125,7 +172,7 @@ type Feature struct {
 // feature can be switched off by configuration, it appears here, so "the
 // feature was quietly unmounted and nobody noticed" has one place to look.
 func (c Config) Features() []Feature {
-	return []Feature{
+	f := []Feature{
 		{
 			Name:    "uploads",
 			Enabled: c.UploadsEnabled(),
@@ -160,6 +207,18 @@ func (c Config) Features() []Feature {
 				"(the core admin's tenant admin accounts and password reset) answer 404",
 		},
 	}
+	// Listed only when switched on, so the default /readyz is exactly what it
+	// was before the switch existed (a "disabled" entry here would mark every
+	// local deployment degraded). Live degradation, tenantcore unreachable, is
+	// reported by /readyz from the client itself.
+	if c.TenantResolverTenantcoreEnabled() {
+		f = append(f, Feature{
+			Name:    "tenant_resolver_tenantcore",
+			Enabled: true,
+			Detail:  "TENANT_RESOLVER=tenantcore — X-API-Key is resolved through tenantcore",
+		})
+	}
+	return f
 }
 
 // Validate checks every required setting and reports all failures together.
@@ -205,6 +264,37 @@ func (c Config) Validate() error {
 		}
 	}
 
+	for _, entry := range c.TrustedProxies {
+		if net.ParseIP(entry) != nil {
+			continue
+		}
+		if _, _, err := net.ParseCIDR(entry); err != nil {
+			problems = append(problems, fmt.Sprintf("TRUSTED_PROXIES has an invalid entry %q (want an IP address or a CIDR)", entry))
+		}
+	}
+
+	switch c.TenantResolver {
+	case "", TenantResolverLocal:
+	case TenantResolverTenantcore:
+		if strings.TrimSpace(c.TenantcoreURL) == "" {
+			problems = append(problems, "TENANTCORE_URL is required when TENANT_RESOLVER=tenantcore")
+		}
+		if strings.TrimSpace(c.TenantcoreServiceKey) == "" {
+			problems = append(problems, "TENANTCORE_SERVICE_KEY is required when TENANT_RESOLVER=tenantcore")
+		}
+		// The limiter only exists in this mode, so only here do its numbers
+		// have to make sense.
+		if c.TenantResolveRatePerMinute < 1 {
+			problems = append(problems, "TENANT_RESOLVE_RATE_PER_MINUTE must be at least 1")
+		}
+		if c.TenantResolveBurst < 1 {
+			problems = append(problems, "TENANT_RESOLVE_BURST must be at least 1")
+		}
+	default:
+		problems = append(problems, fmt.Sprintf("TENANT_RESOLVER must be %q or %q, got %q",
+			TenantResolverLocal, TenantResolverTenantcore, c.TenantResolver))
+	}
+
 	if len(problems) > 0 {
 		return errors.New("invalid configuration: " + strings.Join(problems, "; "))
 	}
@@ -234,6 +324,11 @@ func Load() *Config {
 		EntitlementGraceSeconds: getEnvInt("ENTITLEMENT_GRACE_SECONDS", 900),
 		EntitlementTimeoutMS:    getEnvInt("ENTITLEMENT_TIMEOUT_MS", 3000),
 		TenantcorePublicKey:     getEnv("TENANTCORE_PUBLIC_KEY", ""),
+		TrustedProxies:          ParseTrustedProxies(getEnv("TRUSTED_PROXIES", "")),
+
+		TenantResolver:             strings.ToLower(getEnv("TENANT_RESOLVER", TenantResolverLocal)),
+		TenantResolveRatePerMinute: getEnvInt("TENANT_RESOLVE_RATE_PER_MINUTE", 600),
+		TenantResolveBurst:         getEnvInt("TENANT_RESOLVE_BURST", 120),
 
 		UploadMaxBytes: int64(getEnvInt("UPLOAD_MAX_BYTES", 10<<20)), // 10 MiB
 

@@ -81,7 +81,7 @@ func (rl *RateLimiter) janitor() {
 //
 // The IP comes from gin's ClientIP, which honours X-Forwarded-For. That is
 // correct behind the platform proxy this service runs on and spoofable if it
-// is ever exposed directly — check gin's trusted-proxy setting before moving
+// is ever exposed directly — set TRUSTED_PROXIES (see config) before moving
 // this service off a managed platform.
 func (rl *RateLimiter) Limit(name string, perMinute, burst int) gin.HandlerFunc {
 	if perMinute < 1 {

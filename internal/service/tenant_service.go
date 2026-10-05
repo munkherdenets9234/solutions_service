@@ -2,8 +2,8 @@ package service
 
 import (
 	"context"
-	"strings"
 
+	"github.com/eandstravel/digitalservice/internal/domainnorm"
 	"github.com/eandstravel/digitalservice/internal/models"
 	"github.com/eandstravel/digitalservice/internal/repository"
 	"github.com/eandstravel/digitalservice/pkg/apierr"
@@ -169,7 +169,7 @@ func (s *TenantService) UpdateDomain(ctx context.Context, idStr, domain string) 
 		return apierr.BadRequest("invalid id")
 	}
 
-	domain = normalizeDomain(domain)
+	domain = domainnorm.Normalize(domain)
 	if domain == "" {
 		return apierr.BadRequest("domain is required")
 	}
@@ -181,17 +181,6 @@ func (s *TenantService) UpdateDomain(ctx context.Context, idStr, domain string) 
 		return apierr.Internal(err)
 	}
 	return nil
-}
-
-func normalizeDomain(domain string) string {
-	domain = strings.ToLower(strings.TrimSpace(domain))
-	domain = strings.TrimPrefix(domain, "https://")
-	domain = strings.TrimPrefix(domain, "http://")
-	domain = strings.TrimSuffix(domain, "/")
-	if i := strings.IndexAny(domain, "/:"); i != -1 {
-		domain = domain[:i]
-	}
-	return domain
 }
 
 // ListProjects returns active, showcase-enabled tenants for the public "Our

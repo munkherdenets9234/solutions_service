@@ -12,6 +12,7 @@ import (
 	"github.com/eandstravel/digitalservice/internal/entitlement"
 	"github.com/eandstravel/digitalservice/internal/middleware"
 	"github.com/eandstravel/digitalservice/internal/service"
+	"github.com/eandstravel/digitalservice/internal/tenantresolve"
 	"github.com/gin-gonic/gin"
 	"go.uber.org/zap"
 )
@@ -39,6 +40,10 @@ type Deps struct {
 	// the link is currently degraded; everything else goes through the
 	// Provider interface above.
 	EntitlementClient *entitlement.Client
+
+	// TenantResolveClient is the tenantcore resolver's client when
+	// TENANT_RESOLVER=tenantcore, nil otherwise. Only /readyz uses it.
+	TenantResolveClient *tenantresolve.Client
 
 	// Modules are the additional products this deployment serves, each
 	// mounted at /api/v1/<name> behind its own entitlement gate. Empty today:

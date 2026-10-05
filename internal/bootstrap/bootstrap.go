@@ -31,6 +31,7 @@ import (
 	"github.com/eandstravel/digitalservice/internal/middleware"
 	"github.com/eandstravel/digitalservice/internal/repository"
 	"github.com/eandstravel/digitalservice/internal/service"
+	"github.com/eandstravel/digitalservice/internal/tenantresolve"
 	"github.com/eandstravel/digitalservice/pkg/logger"
 	"github.com/eandstravel/digitalservice/pkg/token"
 	"github.com/gin-gonic/gin"
@@ -50,6 +51,9 @@ type App struct {
 	// entitlement is nil when the platform link is off. Held only so Close
 	// can stop its cache janitor.
 	entitlement *entitlement.Client
+	// tenantResolve is nil unless TENANT_RESOLVER=tenantcore. Held so Close
+	// can stop its cache janitor.
+	tenantResolve *tenantresolve.Client
 
 	// passwordReset sends its mail after responding, so shutdown drains it: a
 	// reset requested a moment before a restart should still arrive.
@@ -88,6 +92,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 // this".
 func NewForDatabase(ctx context.Context, cfg *config.Config, db *mongo.Database, log *zap.Logger) (*App, error) {
 	logFeatures(log, cfg)
+	warnUntrustedProxies(log, cfg)
 
 	// Indexes are NOT optional. They carry the uniqueness constraints the
 	// service relies on for correctness — a duplicate tenant API key or user
@@ -103,7 +108,10 @@ func NewForDatabase(ctx context.Context, cfg *config.Config, db *mongo.Database,
 	}
 
 	repos := newRepos(db)
-	svcs := newServices(repos, tokenMaker, cfg, log)
+	svcs, err := newServices(repos, tokenMaker, cfg, log)
+	if err != nil {
+		return nil, err
+	}
 
 	// Bootstrapping the first platform user is optional: a deployment that
 	// already has one does not need the env vars, and one that has neither
@@ -137,12 +145,14 @@ func NewForDatabase(ctx context.Context, cfg *config.Config, db *mongo.Database,
 
 		Auth:           middleware.NewAuthMiddleware(tokenMaker),
 		TenantcoreAuth: middleware.NewTenantcoreAuth(tcVerifier),
-		TenantMW:       middleware.NewTenantMiddleware(svcs.tenant),
+		TenantMW:       middleware.NewTenantMiddleware(svcs.tenantResolver),
 		SubscriptionMW: middleware.NewSubscriptionMiddleware(svcs.entitlement),
 		RateLimiter:    limiter,
 		Entitlement:    svcs.entitlement,
 		// Nil when the platform link is off; /readyz reads Degraded off it.
 		EntitlementClient: svcs.entitlementClient,
+		// Nil in local resolver mode; /readyz reads Degraded off it.
+		TenantResolveClient: svcs.tenantResolveClient,
 
 		Destination:     svcs.destination,
 		Blog:            svcs.blog,
@@ -173,6 +183,8 @@ func NewForDatabase(ctx context.Context, cfg *config.Config, db *mongo.Database,
 		Engine:      srv.Handler(),
 		limiter:     limiter,
 		entitlement: svcs.entitlementClient,
+
+		tenantResolve: svcs.tenantResolveClient,
 
 		passwordReset: svcs.passwordReset,
 	}, nil
@@ -220,7 +232,8 @@ func (a *App) Close(ctx context.Context) {
 	if a.limiter != nil {
 		a.limiter.Close()
 	}
-	a.entitlement.Close() // nil-safe
+	a.entitlement.Close()   // nil-safe
+	a.tenantResolve.Close() // nil-safe
 	if a.passwordReset != nil {
 		a.passwordReset.Drain()
 	}
@@ -244,6 +257,17 @@ func logFeatures(log *zap.Logger, cfg *config.Config) {
 		log.Warn("feature DISABLED — this deployment is running degraded",
 			zap.String("feature", f.Name),
 			zap.String("detail", f.Detail))
+	}
+}
+
+// warnUntrustedProxies says, once at startup, that the resolve limiter can be
+// bypassed: in tenantcore mode with TRUSTED_PROXIES unset, gin believes any
+// client-supplied X-Forwarded-For.
+func warnUntrustedProxies(log *zap.Logger, cfg *config.Config) {
+	if cfg.TenantResolverTenantcoreEnabled() && !cfg.TrustedProxiesSet() {
+		log.Warn("TRUSTED_PROXIES is not set — the per-IP tenant resolve limiter trusts a client-supplied "+
+			"X-Forwarded-For and can be bypassed with one header; set it to the hosting provider's proxy ranges",
+			zap.String("setting", "TRUSTED_PROXIES"))
 	}
 }
 

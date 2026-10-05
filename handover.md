@@ -1,5 +1,18 @@
 # digitalservice — handover (2026-10-01)
 
+## Principle (2026-10-05): tenantcore owns tenants; this service serves them
+
+Tenantcore is responsible for ALL tenant information and management (identity, API key, status, domain, plan, subscription). digitalservice provides its service (tours, bookings, content, users) to tenants identified by API key and is not meant to manage tenants. Today it still keeps a duplicate `tenants` collection and resolves `X-API-Key` locally (`internal/middleware/tenant.go` -> `TenantService.Resolve`), so the two copies can differ, which is why a key rotated in tenantcore does not change what this service accepts. Do not add new tenant-management features here. Planned fix: `tenantcore/docs/superpowers/specs/2026-10-05-central-tenant-resolution-design.md` (resolve through tenantcore, cache 60 s fresh / 24 h stale, tenantcore wins and keys are re-issued).
+
+## Tenant resolution switch (2026-10-05)
+
+- Settings: `TENANT_RESOLVER` (`local` | `tenantcore`, default `local`), `TENANT_RESOLVE_RATE_PER_MINUTE` (default 600) and `TENANT_RESOLVE_BURST` (default 120). Documented in `.env.example`. The limiter exists only in `tenantcore` mode, runs before the tenant gate and keys on client IP (120 at once, then 10/s per IP). It uses `ClientIP`. New setting `TRUSTED_PROXIES` (comma-separated IPs/CIDRs, documented in `.env.example`): when set, gin trusts X-Forwarded-For only from those peers (an invalid entry fails config validation); when UNSET, gin's default applies unchanged (trusts every peer), so one forged X-Forwarded-For per request bypasses every per-IP limiter including this one. In tenantcore mode with it unset, startup logs a WARN and `/readyz` `tenant_resolver` carries a detail saying the limiter is not proxy-safe (readiness status unchanged). Before the flip, set it to the hosting provider's documented proxy ranges. A storefront host sharing one IP must stay under the rate.
+- Fail closed: `tenantcore` mode without `TENANTCORE_URL`/`TENANTCORE_SERVICE_KEY` stops startup (Validate in `New`, plus a backstop in wiring); there is no automatic fallback to the local collection.
+- Default `local` behaves exactly as before. `tenantcore` resolves X-API-Key through `internal/tenantresolve` (needs `TENANTCORE_URL` and `TENANTCORE_SERVICE_KEY`; startup refuses without them). Unknown key 401 (same body as local), suspended 403, tenantcore unreachable with nothing cached 503 (never 401). `/readyz` adds `tenant_resolver` and `degraded:true` while tenantcore is unreachable. Identity decode fails closed: any status other than `active` (empty, unknown) is treated as suspended. The identity's domain is normalised with `internal/domainnorm.Normalize` (the same function the local tenant service uses: strips scheme, path, port, lowercases) before the origin check, because tenantcore only lowercases and trims.
+- To flip: set `TENANT_RESOLVER=tenantcore` and restart; to roll back, set it to `local` (or unset) and restart.
+- Rollback caveat: a key re-issued in tenantcore leaves this service's local key hash stale. After rolling back to `local`, the re-issued key is refused here until the local hash is updated, and the old key works again.
+- Not run live: all verification used httptest fakes.
+
 ## Update 2026-10-02 (latest; supersedes the status above where they differ)
 
 - Branch `refactor/backend-core`, working tree clean, 13 commits unpushed. Check: `go build ./... && go vet ./internal/... ./pkg/... && go test ./internal/... ./pkg/... -count=1` (never `go test ./...`). Start with `PORT=8080` (this repo's `.env` has `APP_PORT=8081`; the launch config handles it).

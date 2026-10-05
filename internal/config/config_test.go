@@ -248,3 +248,164 @@ func TestFeaturesReportTenantcoreAdminUsers(t *testing.T) {
 		t.Fatalf("set key: want enabled, got %+v", f)
 	}
 }
+
+// The resolver switch is a rollout control: the default must be the old
+// behaviour, a typo must be refused by name, and tenantcore mode must not
+// start without the link it needs.
+func TestLoadDefaultsTenantResolverToLocal(t *testing.T) {
+	t.Setenv("TENANT_RESOLVER", "")
+	t.Setenv("TENANT_RESOLVE_RATE_PER_MINUTE", "")
+	cfg := Load()
+	if cfg.TenantResolver != "local" {
+		t.Errorf("TenantResolver = %q, want local", cfg.TenantResolver)
+	}
+	if cfg.TenantResolveRatePerMinute != 600 {
+		t.Errorf("TenantResolveRatePerMinute = %d, want 600", cfg.TenantResolveRatePerMinute)
+	}
+}
+
+func TestLoadReadsTenantResolverSettings(t *testing.T) {
+	t.Setenv("TENANT_RESOLVER", " TenantCore ")
+	t.Setenv("TENANT_RESOLVE_RATE_PER_MINUTE", "50")
+	cfg := Load()
+	if cfg.TenantResolver != "tenantcore" || cfg.TenantResolveRatePerMinute != 50 {
+		t.Errorf("got %q / %d", cfg.TenantResolver, cfg.TenantResolveRatePerMinute)
+	}
+}
+
+func TestValidateRejectsAnUnknownTenantResolver(t *testing.T) {
+	cfg := validConfig()
+	cfg.TenantResolver = "remote"
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "TENANT_RESOLVER") {
+		t.Fatalf("want an error naming TENANT_RESOLVER, got %v", err)
+	}
+}
+
+func TestValidateAcceptsLocalAndEmptyResolver(t *testing.T) {
+	for _, v := range []string{"", "local"} {
+		cfg := validConfig()
+		cfg.TenantResolver = v
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("TenantResolver=%q should be valid, got %v", v, err)
+		}
+	}
+}
+
+func TestValidateTenantcoreResolverNeedsURLAndKey(t *testing.T) {
+	cfg := validConfig()
+	cfg.TenantResolver = "tenantcore"
+	err := cfg.Validate()
+	if err == nil {
+		t.Fatal("tenantcore without URL and key must not validate")
+	}
+	for _, want := range []string{"TENANTCORE_URL", "TENANTCORE_SERVICE_KEY"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("error should name %s, got %v", want, err)
+		}
+	}
+
+	cfg.TenantcoreURL = "http://localhost:1"
+	cfg.TenantcoreServiceKey = "svc-test"
+	cfg.TenantResolveRatePerMinute, cfg.TenantResolveBurst = 600, 120
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("tenantcore with URL and key should validate, got %v", err)
+	}
+}
+
+func TestFeaturesListsTenantcoreResolverOnlyInThatMode(t *testing.T) {
+	find := func(c Config) (Feature, bool) {
+		for _, f := range c.Features() {
+			if f.Name == "tenant_resolver_tenantcore" {
+				return f, true
+			}
+		}
+		return Feature{}, false
+	}
+	local := validConfig()
+	local.TenantResolver = "local"
+	if _, ok := find(local); ok {
+		t.Error("local mode must not add a feature entry (default /readyz stays as it was)")
+	}
+	tc := validConfig()
+	tc.TenantResolver = "tenantcore"
+	f, ok := find(tc)
+	if !ok || !f.Enabled {
+		t.Errorf("tenantcore mode should list the feature as enabled, got %+v ok=%v", f, ok)
+	}
+}
+
+func TestTenantResolveBurstDefaultAndValidation(t *testing.T) {
+	t.Setenv("TENANT_RESOLVE_BURST", "")
+	if got := Load().TenantResolveBurst; got != 120 {
+		t.Errorf("default TENANT_RESOLVE_BURST = %d, want 120", got)
+	}
+
+	cfg := validConfig()
+	cfg.TenantResolver = "tenantcore"
+	cfg.TenantcoreURL = "http://localhost:1"
+	cfg.TenantcoreServiceKey = "svc-test"
+	cfg.TenantResolveRatePerMinute = 600
+	cfg.TenantResolveBurst = 0
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "TENANT_RESOLVE_BURST") {
+		t.Fatalf("burst 0 in tenantcore mode should be refused naming the variable, got %v", err)
+	}
+	cfg.TenantResolveBurst = 120
+	if err := cfg.Validate(); err != nil {
+		t.Errorf("valid tenantcore config refused: %v", err)
+	}
+}
+
+func TestParseTrustedProxies(t *testing.T) {
+	cases := map[string][]string{
+		"":                             nil,
+		"   ":                          nil,
+		" , ,":                         nil,
+		"10.0.0.1":                     {"10.0.0.1"},
+		"10.0.0.0/8":                   {"10.0.0.0/8"},
+		" 10.0.0.1 , ,2001:db8::/32 ,": {"10.0.0.1", "2001:db8::/32"},
+		"10.0.0.0/8,192.168.1.5,::1":   {"10.0.0.0/8", "192.168.1.5", "::1"},
+	}
+	for in, want := range cases {
+		got := ParseTrustedProxies(in)
+		if len(got) != len(want) {
+			t.Errorf("%q: got %v, want %v", in, got, want)
+			continue
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("%q: got %v, want %v", in, got, want)
+			}
+		}
+	}
+}
+
+func TestLoadReadsTrustedProxies(t *testing.T) {
+	t.Setenv("TRUSTED_PROXIES", "")
+	if c := Load(); len(c.TrustedProxies) != 0 {
+		t.Errorf("unset must leave the list empty, got %v", c.TrustedProxies)
+	}
+	t.Setenv("TRUSTED_PROXIES", " 10.0.0.0/8 , 192.0.2.1 ")
+	if c := Load(); len(c.TrustedProxies) != 2 || c.TrustedProxies[0] != "10.0.0.0/8" || c.TrustedProxies[1] != "192.0.2.1" {
+		t.Errorf("got %v", c.TrustedProxies)
+	}
+}
+
+func TestValidateTrustedProxies(t *testing.T) {
+	for _, ok := range [][]string{nil, {"10.0.0.1"}, {"10.0.0.0/8"}, {"10.0.0.1", "2001:db8::/32", "::1"}} {
+		c := validConfig()
+		c.TrustedProxies = ok
+		if err := c.Validate(); err != nil {
+			t.Errorf("%v rejected: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"not-an-ip", "10.0.0.0/33", "10.0.0.1:80", "999.1.1.1"} {
+		c := validConfig()
+		c.TrustedProxies = []string{"10.0.0.1", bad}
+		err := c.Validate()
+		if err == nil || !strings.Contains(err.Error(), "TRUSTED_PROXIES") || !strings.Contains(err.Error(), bad) {
+			t.Errorf("%q: error %v must name TRUSTED_PROXIES and the entry", bad, err)
+		}
+	}
+}

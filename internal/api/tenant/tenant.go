@@ -54,6 +54,11 @@ type Deps struct {
 	// entitlement.HasModule).
 	Modules []Module
 
+	// ResolveRateLimit runs BEFORE the tenant gate, so a flood of bad or
+	// random keys is refused before it can reach the resolver (and, in
+	// tenantcore mode, tenantcore). Nil means no limiter.
+	ResolveRateLimit gin.HandlerFunc
+
 	AuthRateLimit gin.HandlerFunc
 	LeadRateLimit gin.HandlerFunc
 
@@ -81,7 +86,15 @@ type Deps struct {
 // The X-API-Key check is applied once, here, on the group both sub-packages
 // hang off. Neither of them can opt out of it.
 func Register(base *gin.RouterGroup, d Deps) {
-	scoped := base.Group("", d.Tenant.Require())
+	//
+	// The resolve limiter is listed first on purpose: it must count a request
+	// whose key is wrong, so it cannot sit behind the gate that rejects it.
+	gate := []gin.HandlerFunc{}
+	if d.ResolveRateLimit != nil {
+		gate = append(gate, d.ResolveRateLimit)
+	}
+	gate = append(gate, d.Tenant.Require())
+	scoped := base.Group("", gate...)
 	subscription := d.Subscription.Require()
 
 	publicapi.Register(scoped, publicapi.Deps{
