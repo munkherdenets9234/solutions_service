@@ -240,3 +240,38 @@ func TestNewLocalResolverWrapsTheService(t *testing.T) {
 		t.Fatalf("NewLocalResolver did not build a localResolver with a lookup: %#v", r)
 	}
 }
+
+// tenantcore only lowercases and trims a domain; this service has always
+// stripped scheme, path and port. The adapter must normalise with the same
+// function, or a domain typed as "https://site.example/" would refuse every
+// browser request.
+func TestTenantMiddleware_TenantcoreResolver_NormalisesDomain(t *testing.T) {
+	cases := map[string]string{
+		"https://Site.Example/": "site.example",
+		"site.example:8443":     "site.example",
+		"site.example/path":     "site.example",
+		"":                      "",
+		"site.example":          "site.example",
+	}
+	for stored, want := range cases {
+		ref, err := newFakeTC(t, "ok", stored).resolver(t).Resolve(context.Background(), tkKey)
+		if err != nil {
+			t.Fatalf("%q: %v", stored, err)
+		}
+		if ref.Domain != want {
+			t.Errorf("stored %q: Domain = %q, want %q", stored, ref.Domain, want)
+		}
+	}
+}
+
+func TestTenantMiddleware_TenantcoreResolver_OriginPassesForUntidyDomain(t *testing.T) {
+	r := newFakeTC(t, "ok", "https://Site.Example/").resolver(t)
+	w, id, reached := gateStatus(t, r, map[string]string{"X-API-Key": tkKey, "Origin": "https://site.example"})
+	if w.Code != http.StatusNoContent || !reached || id != tkTenantID {
+		t.Fatalf("got %d reached=%v", w.Code, reached)
+	}
+	w, _, reached = gateStatus(t, r, map[string]string{"X-API-Key": tkKey, "Origin": "https://evil.example"})
+	if w.Code != http.StatusForbidden || reached {
+		t.Fatalf("other origin: got %d reached=%v", w.Code, reached)
+	}
+}

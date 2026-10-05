@@ -429,12 +429,13 @@ func (c *Client) fetch(ctx context.Context, rawKey string) (Identity, error) {
 		return Identity{}, errors.New("tenantresolve: decode: response has no tenant_id")
 	}
 	return Identity{
-		TenantID:  body.Data.TenantID,
-		Slug:      body.Data.Slug,
-		Name:      body.Data.Name,
-		Domain:    body.Data.Domain,
-		Hosts:     body.Data.Hosts,
-		Suspended: body.Data.Status == "suspended",
+		TenantID: body.Data.TenantID,
+		Slug:     body.Data.Slug,
+		Name:     body.Data.Name,
+		Domain:   body.Data.Domain,
+		Hosts:    body.Data.Hosts,
+		// Fail closed: only an explicit "active" is usable.
+		Suspended: body.Data.Status != "active",
 	}, nil
 }
 

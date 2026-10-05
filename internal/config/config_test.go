@@ -356,3 +356,56 @@ func TestTenantResolveBurstDefaultAndValidation(t *testing.T) {
 		t.Errorf("valid tenantcore config refused: %v", err)
 	}
 }
+
+func TestParseTrustedProxies(t *testing.T) {
+	cases := map[string][]string{
+		"":                             nil,
+		"   ":                          nil,
+		" , ,":                         nil,
+		"10.0.0.1":                     {"10.0.0.1"},
+		"10.0.0.0/8":                   {"10.0.0.0/8"},
+		" 10.0.0.1 , ,2001:db8::/32 ,": {"10.0.0.1", "2001:db8::/32"},
+		"10.0.0.0/8,192.168.1.5,::1":   {"10.0.0.0/8", "192.168.1.5", "::1"},
+	}
+	for in, want := range cases {
+		got := ParseTrustedProxies(in)
+		if len(got) != len(want) {
+			t.Errorf("%q: got %v, want %v", in, got, want)
+			continue
+		}
+		for i := range want {
+			if got[i] != want[i] {
+				t.Errorf("%q: got %v, want %v", in, got, want)
+			}
+		}
+	}
+}
+
+func TestLoadReadsTrustedProxies(t *testing.T) {
+	t.Setenv("TRUSTED_PROXIES", "")
+	if c := Load(); len(c.TrustedProxies) != 0 {
+		t.Errorf("unset must leave the list empty, got %v", c.TrustedProxies)
+	}
+	t.Setenv("TRUSTED_PROXIES", " 10.0.0.0/8 , 192.0.2.1 ")
+	if c := Load(); len(c.TrustedProxies) != 2 || c.TrustedProxies[0] != "10.0.0.0/8" || c.TrustedProxies[1] != "192.0.2.1" {
+		t.Errorf("got %v", c.TrustedProxies)
+	}
+}
+
+func TestValidateTrustedProxies(t *testing.T) {
+	for _, ok := range [][]string{nil, {"10.0.0.1"}, {"10.0.0.0/8"}, {"10.0.0.1", "2001:db8::/32", "::1"}} {
+		c := validConfig()
+		c.TrustedProxies = ok
+		if err := c.Validate(); err != nil {
+			t.Errorf("%v rejected: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"not-an-ip", "10.0.0.0/33", "10.0.0.1:80", "999.1.1.1"} {
+		c := validConfig()
+		c.TrustedProxies = []string{"10.0.0.1", bad}
+		err := c.Validate()
+		if err == nil || !strings.Contains(err.Error(), "TRUSTED_PROXIES") || !strings.Contains(err.Error(), bad) {
+			t.Errorf("%q: error %v must name TRUSTED_PROXIES and the entry", bad, err)
+		}
+	}
+}

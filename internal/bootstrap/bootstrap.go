@@ -92,6 +92,7 @@ func New(ctx context.Context, cfg *config.Config) (*App, error) {
 // this".
 func NewForDatabase(ctx context.Context, cfg *config.Config, db *mongo.Database, log *zap.Logger) (*App, error) {
 	logFeatures(log, cfg)
+	warnUntrustedProxies(log, cfg)
 
 	// Indexes are NOT optional. They carry the uniqueness constraints the
 	// service relies on for correctness — a duplicate tenant API key or user
@@ -256,6 +257,17 @@ func logFeatures(log *zap.Logger, cfg *config.Config) {
 		log.Warn("feature DISABLED — this deployment is running degraded",
 			zap.String("feature", f.Name),
 			zap.String("detail", f.Detail))
+	}
+}
+
+// warnUntrustedProxies says, once at startup, that the resolve limiter can be
+// bypassed: in tenantcore mode with TRUSTED_PROXIES unset, gin believes any
+// client-supplied X-Forwarded-For.
+func warnUntrustedProxies(log *zap.Logger, cfg *config.Config) {
+	if cfg.TenantResolverTenantcoreEnabled() && !cfg.TrustedProxiesSet() {
+		log.Warn("TRUSTED_PROXIES is not set — the per-IP tenant resolve limiter trusts a client-supplied "+
+			"X-Forwarded-For and can be bypassed with one header; set it to the hosting provider's proxy ranges",
+			zap.String("setting", "TRUSTED_PROXIES"))
 	}
 }
 

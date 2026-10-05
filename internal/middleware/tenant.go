@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"strings"
 
+	"github.com/eandstravel/digitalservice/internal/domainnorm"
 	"github.com/eandstravel/digitalservice/internal/models"
 	"github.com/eandstravel/digitalservice/internal/service"
 	"github.com/eandstravel/digitalservice/internal/tenantresolve"
@@ -78,7 +79,9 @@ func (r tenantcoreResolver) Resolve(ctx context.Context, rawKey string) (TenantR
 	if id.Suspended {
 		return TenantRef{}, apierr.Forbidden("tenant suspended").In(apierr.DomainTenant)
 	}
-	return TenantRef{ID: id.TenantID, Domain: id.Domain}, nil
+	// tenantcore only lowercases and trims; this service's own stored domains
+	// are bare hosts, and the origin check compares bare hosts.
+	return TenantRef{ID: id.TenantID, Domain: domainnorm.Normalize(id.Domain)}, nil
 }
 
 type TenantMiddleware struct {

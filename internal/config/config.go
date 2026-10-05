@@ -17,6 +17,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"strings"
@@ -77,6 +78,11 @@ type Config struct {
 	// Base64 Ed25519 public key of tenantcore. Optional: blank leaves the
 	// tenantcore-superadmin routes unmounted (404). Never a secret.
 	TenantcorePublicKey string
+	// TRUSTED_PROXIES: IPs/CIDRs whose X-Forwarded-For gin may believe. EMPTY
+	// (the default) leaves gin's own default untouched, which trusts every peer,
+	// so every per-IP limiter can be bypassed with one forged header. Set it to
+	// the hosting provider's documented proxy ranges.
+	TrustedProxies []string
 
 	// Uploads.
 	UploadMaxBytes int64
@@ -116,6 +122,21 @@ const (
 	TenantResolverLocal      = "local"
 	TenantResolverTenantcore = "tenantcore"
 )
+
+// ParseTrustedProxies splits a comma-separated list, trimming entries and
+// ignoring empty ones. It does not validate; Validate does.
+func ParseTrustedProxies(raw string) []string {
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// TrustedProxiesSet reports whether TRUSTED_PROXIES was given.
+func (c Config) TrustedProxiesSet() bool { return len(c.TrustedProxies) > 0 }
 
 // TenantResolverTenantcoreEnabled reports whether X-API-Key is resolved
 // through tenantcore rather than the local tenants collection.
@@ -243,6 +264,15 @@ func (c Config) Validate() error {
 		}
 	}
 
+	for _, entry := range c.TrustedProxies {
+		if net.ParseIP(entry) != nil {
+			continue
+		}
+		if _, _, err := net.ParseCIDR(entry); err != nil {
+			problems = append(problems, fmt.Sprintf("TRUSTED_PROXIES has an invalid entry %q (want an IP address or a CIDR)", entry))
+		}
+	}
+
 	switch c.TenantResolver {
 	case "", TenantResolverLocal:
 	case TenantResolverTenantcore:
@@ -294,6 +324,7 @@ func Load() *Config {
 		EntitlementGraceSeconds: getEnvInt("ENTITLEMENT_GRACE_SECONDS", 900),
 		EntitlementTimeoutMS:    getEnvInt("ENTITLEMENT_TIMEOUT_MS", 3000),
 		TenantcorePublicKey:     getEnv("TENANTCORE_PUBLIC_KEY", ""),
+		TrustedProxies:          ParseTrustedProxies(getEnv("TRUSTED_PROXIES", "")),
 
 		TenantResolver:             strings.ToLower(getEnv("TENANT_RESOLVER", TenantResolverLocal)),
 		TenantResolveRatePerMinute: getEnvInt("TENANT_RESOLVE_RATE_PER_MINUTE", 600),

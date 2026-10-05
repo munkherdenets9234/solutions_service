@@ -7,8 +7,10 @@ import (
 	"github.com/eandstravel/digitalservice/internal/api/docs"
 	"github.com/eandstravel/digitalservice/internal/api/platform"
 	"github.com/eandstravel/digitalservice/internal/api/tenant"
+	"github.com/eandstravel/digitalservice/internal/config"
 	"github.com/eandstravel/digitalservice/internal/middleware"
 	"github.com/gin-gonic/gin"
+	"go.uber.org/zap"
 )
 
 func (s *Server) buildEngine() *gin.Engine {
@@ -21,6 +23,7 @@ func (s *Server) buildEngine() *gin.Engine {
 	}
 
 	e := gin.New()
+	applyTrustedProxies(e, d.Config, d.Log)
 
 	// Order matters. Recovery is outermost so a panic in any later
 	// middleware is still rendered as a proper envelope; ErrorHandler wraps
@@ -83,6 +86,20 @@ func (s *Server) buildEngine() *gin.Engine {
 	return e
 }
 
+// applyTrustedProxies restricts which peers gin believes X-Forwarded-For from.
+// With TRUSTED_PROXIES unset it does NOTHING, so gin keeps its own default and
+// local behaviour is exactly what it was. Validate has already vetted the
+// entries; if gin still refuses them, trust no proxy at all rather than all.
+func applyTrustedProxies(e *gin.Engine, cfg *config.Config, log *zap.Logger) {
+	if !cfg.TrustedProxiesSet() {
+		return
+	}
+	if err := e.SetTrustedProxies(cfg.TrustedProxies); err != nil {
+		log.Error("TRUSTED_PROXIES rejected by gin — trusting no proxy", zap.Error(err))
+		_ = e.SetTrustedProxies(nil)
+	}
+}
+
 // limit returns the named rate-limit middleware, or a pass-through when rate
 // limiting is switched off. Returning a no-op rather than skipping the
 // middleware keeps the route tree identical in both cases, so a limit that is
@@ -97,7 +114,8 @@ func (s *Server) limit(name string, perMinute int) gin.HandlerFunc {
 // resolveLimit is the limiter in front of tenant resolution, or nil. It is
 // installed only when TENANT_RESOLVER=tenantcore and rate limiting is on, with
 // its own burst (TENANT_RESOLVE_BURST) rather than the global one. Keyed by
-// ClientIP, which trusts X-Forwarded-For like every other limiter here.
+// ClientIP, so it is only proxy-safe when TRUSTED_PROXIES is set; unset, gin
+// believes any X-Forwarded-For and one forged header per request bypasses it.
 func (s *Server) resolveLimit() gin.HandlerFunc {
 	c := s.deps.Config
 	if !c.TenantResolverTenantcoreEnabled() || !c.RateLimitEnabled || s.deps.RateLimiter == nil {
@@ -168,13 +186,30 @@ func (s *Server) registerOperational(e *gin.Engine) {
 
 		// Same for tenant resolution through tenantcore: while it is down,
 		// known keys are served from cache and unseen ones answer 503.
+		var resolver gin.H
 		if stale, since := s.deps.TenantResolveClient.Degraded(); stale {
 			body["degraded"] = true
-			entry := gin.H{"stale": true, "detail": "tenantcore is unreachable — resolving tenant API keys from cache; unseen keys answer 503"}
+			resolver = gin.H{"stale": true, "detail": "tenantcore is unreachable — resolving tenant API keys from cache; unseen keys answer 503"}
 			if since != nil {
-				entry["since"] = since.UTC().Format(time.RFC3339)
+				resolver["since"] = since.UTC().Format(time.RFC3339)
 			}
-			body["tenant_resolver"] = entry
+		}
+		// The resolve limiter keys on ClientIP. Without TRUSTED_PROXIES gin
+		// believes any X-Forwarded-For, so it can be bypassed. Informational
+		// only: readiness status and degraded are deliberately unchanged.
+		if cfg := s.deps.Config; cfg.TenantResolverTenantcoreEnabled() && !cfg.TrustedProxiesSet() {
+			if resolver == nil {
+				resolver = gin.H{}
+			}
+			note := "TRUSTED_PROXIES is not set — the per-IP resolve limiter trusts a client-supplied X-Forwarded-For and is not proxy-safe"
+			if prev, ok := resolver["detail"].(string); ok {
+				note = prev + "; " + note
+			}
+			resolver["detail"] = note
+			resolver["proxy_safe"] = false
+		}
+		if resolver != nil {
+			body["tenant_resolver"] = resolver
 		}
 
 		c.JSON(http.StatusOK, body)
