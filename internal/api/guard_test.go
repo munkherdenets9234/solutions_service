@@ -2,6 +2,9 @@ package api
 
 import (
 	"context"
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,7 +15,9 @@ import (
 	"github.com/eandstravel/digitalservice/internal/api/tenant"
 	"github.com/eandstravel/digitalservice/internal/config"
 	"github.com/eandstravel/digitalservice/internal/entitlement"
+	"github.com/eandstravel/digitalservice/internal/middleware"
 	"github.com/eandstravel/digitalservice/pkg/apierr"
+	"github.com/eandstravel/digitalservice/pkg/token"
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.uber.org/zap"
@@ -47,6 +52,16 @@ var publicPlatformRoutes = map[string]bool{
 	"GET /api/v1/platform/packages/:id":         true,
 	"POST /api/v1/platform/quotes":              true,
 	"GET /api/v1/platform/quotes":               true,
+}
+
+// tenantcoreRoutes are the platform routes guarded by a tenantcore-signed token
+// instead of this service's HMAC one. They are exempt from the generic "no
+// token is 401" walk only because, with no public key configured, they answer
+// 404 (group off) rather than 401; TestTenantcoreRoutesRefuseHMACAndAnonymous
+// and TestTenantcoreRoutesAreOffWithoutAKey assert their own guard instead.
+var tenantcoreRoutes = map[string]bool{
+	"GET /api/v1/platform/tenants/:id/admin-users":                         true,
+	"POST /api/v1/platform/tenants/:id/admin-users/:user_id/reset-password": true,
 }
 
 func testEngine(t *testing.T) *gin.Engine {
@@ -98,7 +113,7 @@ func TestPrivatePlatformRoutesRequireToken(t *testing.T) {
 		if !strings.HasPrefix(r.Path, "/api/v1/platform/") {
 			continue
 		}
-		if publicPlatformRoutes[r.Method+" "+r.Path] {
+		if publicPlatformRoutes[r.Method+" "+r.Path] || tenantcoreRoutes[r.Method+" "+r.Path] {
 			continue
 		}
 		checked++
@@ -110,6 +125,95 @@ func TestPrivatePlatformRoutesRequireToken(t *testing.T) {
 		t.Fatal("no private platform routes were checked — publicPlatformRoutes is probably stale")
 	}
 	t.Logf("checked %d private platform routes", checked)
+}
+
+// tenantcoreEngine is the production engine with a verifier configured, as in
+// a deployment that sets TENANTCORE_PUBLIC_KEY.
+func tenantcoreEngine(t *testing.T) *gin.Engine {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := token.NewVerifier(base64.StdEncoding.EncodeToString(pub))
+	if err != nil {
+		t.Fatal(err)
+	}
+	return NewServer(Deps{
+		Log:            zap.NewNop(),
+		Config:         &config.Config{AppEnv: config.EnvTest},
+		TenantcoreAuth: middleware.NewTenantcoreAuth(v),
+	}).Handler()
+}
+
+// The two tenantcore-token routes must be registered, must refuse a caller with
+// no token, and must refuse this service's own HMAC platform token: a login
+// here must not open a group meant for tenantcore's operators.
+func TestTenantcoreRoutesRefuseHMACAndAnonymous(t *testing.T) {
+	e := tenantcoreEngine(t)
+
+	maker, err := token.NewMaker(strings.Repeat("k", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hmacTok, _, err := maker.CreateToken("u1", "superadmin", "", time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	found := 0
+	for _, r := range e.Routes() {
+		if !tenantcoreRoutes[r.Method+" "+r.Path] {
+			continue
+		}
+		found++
+		path := fillParams(r.Path)
+		assertUnauthorized(t, e, r.Method, path, nil)
+
+		req := httptest.NewRequest(r.Method, path, nil)
+		req.Header.Set("Authorization", "Bearer "+hmacTok)
+		w := httptest.NewRecorder()
+		e.ServeHTTP(w, req)
+		if w.Code != http.StatusUnauthorized {
+			t.Errorf("%s %s with an HMAC platform token: got %d, want 401", r.Method, r.Path, w.Code)
+		}
+	}
+	if found != len(tenantcoreRoutes) {
+		t.Fatalf("found %d of %d tenantcore routes in the route table", found, len(tenantcoreRoutes))
+	}
+}
+
+// With no public key the group is off: 404, not a half-open route.
+func TestTenantcoreRoutesAreOffWithoutAKey(t *testing.T) {
+	e := testEngine(t)
+	for _, r := range e.Routes() {
+		if !tenantcoreRoutes[r.Method+" "+r.Path] {
+			continue
+		}
+		if w := do(e, r.Method, fillParams(r.Path), nil); w.Code != http.StatusNotFound {
+			t.Errorf("%s %s with no key: got %d, want 404", r.Method, r.Path, w.Code)
+		}
+	}
+}
+
+// The public reads that share the /platform/tenants/:id prefix stay public.
+func TestPublicTenantRoutesUnaffectedByTenantcoreGroup(t *testing.T) {
+	e := tenantcoreEngine(t)
+	for _, route := range []string{"GET /api/v1/platform/tenants/:id", "GET /api/v1/platform/tenants/:id/packages"} {
+		if !publicPlatformRoutes[route] {
+			t.Fatalf("%s should be listed as public", route)
+		}
+		found := false
+		for _, r := range e.Routes() {
+			if r.Method+" "+r.Path == route {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s is no longer registered", route)
+		}
+	}
 }
 
 // TestOperationalRoutesAreOpen keeps the health and docs endpoints reachable.

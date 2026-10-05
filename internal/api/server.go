@@ -24,6 +24,7 @@ type Deps struct {
 	Log    *zap.Logger
 
 	Auth           *middleware.AuthMiddleware
+	TenantcoreAuth *middleware.TenantcoreAuth
 	TenantMW       *middleware.TenantMiddleware
 	SubscriptionMW *middleware.SubscriptionMiddleware
 	RateLimiter    *middleware.RateLimiter

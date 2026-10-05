@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/eandstravel/digitalservice/internal/models"
+	"github.com/eandstravel/digitalservice/internal/notify"
 	"github.com/eandstravel/digitalservice/pkg/apierr"
 	"github.com/eandstravel/digitalservice/pkg/password"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -134,12 +135,47 @@ func (s *TenantPasswordResetService) issue(ctx context.Context, tenantID primiti
 		return
 	}
 
+	if err := s.issueCode(ctx, tenantID, user); err != nil {
+		s.log.Error("tenant password reset: "+err.Error(), zap.String("email", email))
+	}
+}
+
+// RequestNow is the operator path: the same steps as issue (store a code, mail
+// it), run synchronously on the caller's context and RETURNING what goes wrong.
+//
+// Request answers before doing anything because its caller is anonymous and a
+// slow or failing answer would tell them which addresses exist. A superadmin
+// resetting a named user has no such adversary, and needs the opposite: a mail
+// that cannot go out must not read as "a reset code was emailed". The user is
+// the one the caller already loaded, so the address never comes from the request.
+func (s *TenantPasswordResetService) RequestNow(ctx context.Context, tenantID primitive.ObjectID, user *models.TenantUser) error {
+	if !s.mail.Available() {
+		return apierr.FeatureUnavailable("email")
+	}
+	if user.Status != models.TenantUserActive {
+		return apierr.Conflict("this admin account is suspended")
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	if err := s.issueCode(ctx, tenantID, user); err != nil {
+		if errors.Is(err, notify.ErrMailNotConfigured) {
+			return apierr.FeatureUnavailable("email")
+		}
+		s.log.Error("operator password reset failed", zap.String("email", user.Email), zap.Error(err))
+		return apierr.Upstream(apierr.DomainGeneral, err)
+	}
+	return nil
+}
+
+// issueCode stores a fresh code for user and mails it. Shared by the background
+// path (which logs the error) and RequestNow (which returns it).
+func (s *TenantPasswordResetService) issueCode(ctx context.Context, tenantID primitive.ObjectID, user *models.TenantUser) error {
+	email := normalizeResetEmail(user.Email)
 	code, err := generateResetCode()
 	if err != nil {
-		s.log.Error("tenant password reset: could not generate a code", zap.Error(err))
-		return
+		return fmt.Errorf("could not generate a code: %w", err)
 	}
-
 	reset := &models.TenantPasswordReset{
 		TenantID:  tenantID,
 		UserID:    user.ID,
@@ -148,18 +184,17 @@ func (s *TenantPasswordResetService) issue(ctx context.Context, tenantID primiti
 		ExpiresAt: time.Now().Add(resetCodeTTL),
 	}
 	if err := s.codes.Create(ctx, reset); err != nil {
-		s.log.Error("tenant password reset: could not store the code", zap.String("email", email), zap.Error(err))
-		return
+		return fmt.Errorf("could not store the code: %w", err)
 	}
-
 	if err := s.mail.Send(ctx, email, "password_reset_code", map[string]string{
 		"app":        s.appName(ctx, tenantID),
 		"name":       greetingName(user),
 		"code":       code,
 		"expires_in": "10 minutes",
 	}); err != nil {
-		s.log.Error("tenant password reset code could not be mailed", zap.String("email", email), zap.Error(err))
+		return fmt.Errorf("code could not be mailed: %w", err)
 	}
+	return nil
 }
 
 // appName is what the email calls the product: the tenant's own name, so a

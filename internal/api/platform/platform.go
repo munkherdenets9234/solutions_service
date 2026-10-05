@@ -12,6 +12,7 @@ package platform
 import (
 	privateapi "github.com/eandstravel/digitalservice/internal/api/platform/private"
 	publicapi "github.com/eandstravel/digitalservice/internal/api/platform/public"
+	tenantcoreapi "github.com/eandstravel/digitalservice/internal/api/platform/tenantcore"
 	"github.com/eandstravel/digitalservice/internal/middleware"
 	"github.com/eandstravel/digitalservice/internal/service"
 	"github.com/gin-gonic/gin"
@@ -20,6 +21,11 @@ import (
 // Deps bundles everything the platform audience needs.
 type Deps struct {
 	Auth *middleware.AuthMiddleware
+
+	// Tenantcore guards the one group reached with a tenantcore-signed token.
+	// A nil value (or one with no verifier) switches that group off: 404.
+	Tenantcore *middleware.TenantcoreAuth
+	Reset      *service.TenantPasswordResetService
 
 	Tenant        *service.TenantService
 	TenantUser    *service.TenantUserService
@@ -45,6 +51,16 @@ func Register(base *gin.RouterGroup, d Deps) {
 		PlatformUser:  d.PlatformUser,
 		AuthRateLimit: d.AuthRateLimit,
 		LeadRateLimit: d.LeadRateLimit,
+	})
+
+	// A separate group for the paths tenantcore's operators reach, guarded by
+	// their own token (Register applies the guard). Kept off priv: that group
+	// carries this service's HMAC check, which these callers cannot pass.
+	tenantcoreapi.Register(base, tenantcoreapi.Deps{
+		Auth:      d.Tenantcore,
+		Users:     d.TenantUser,
+		Reset:     d.Reset,
+		RateLimit: d.AuthRateLimit,
 	})
 
 	// The gate for everything below. It is applied here, once, on the group

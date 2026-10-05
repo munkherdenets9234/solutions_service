@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/eandstravel/digitalservice/internal/models"
+	"github.com/eandstravel/digitalservice/internal/notify"
+	"github.com/eandstravel/digitalservice/pkg/apierr"
 	"github.com/eandstravel/digitalservice/pkg/password"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
@@ -183,6 +185,7 @@ type resetFakeMail struct {
 	mu        sync.Mutex
 	available bool
 	gate      chan struct{}
+	sendErr   error
 	sent      []resetSent
 }
 
@@ -190,6 +193,9 @@ func (f *resetFakeMail) Available() bool { return f.available }
 func (f *resetFakeMail) Send(_ context.Context, to, template string, data map[string]string) error {
 	if f.gate != nil {
 		<-f.gate
+	}
+	if f.sendErr != nil {
+		return f.sendErr
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -592,5 +598,74 @@ func TestResetConfirmRejectsACodeFromAnotherTenantEvenIfTheStoreIsTenantBlind(t 
 	}
 	if _, changed := f.users.updated[userB.ID]; changed {
 		t.Fatal("tenant B's user password was changed")
+	}
+}
+
+// ── RequestNow (the operator path) ───────────────────────────────────────
+
+// The operator route is superadmin-only and has already proved the user exists,
+// so unlike Request it can and must tell the caller when the mail cannot go.
+
+func (f *resetFixture) activeUser() *models.TenantUser {
+	u, _ := f.users.FindByTenantAndEmail(context.Background(), f.tenantA, resetEmail)
+	return u
+}
+
+func TestResetRequestNowMailsSynchronously(t *testing.T) {
+	f := newResetFixture()
+	if err := f.svc.RequestNow(context.Background(), f.tenantA, f.activeUser()); err != nil {
+		t.Fatalf("RequestNow: %v", err)
+	}
+	// No Drain: the mail must already be out when the call returns.
+	sent := f.mail.all()
+	if len(sent) != 1 || sent[0].to != resetEmail || sent[0].template != "password_reset_code" {
+		t.Fatalf("sent = %+v", sent)
+	}
+	stored := f.codes.latest()
+	if stored == nil || stored.CodeHash != hashResetCode(sent[0].data["code"]) {
+		t.Fatal("the code must be stored as the hash of the code that was mailed")
+	}
+}
+
+func TestResetRequestNowReportsMailOff(t *testing.T) {
+	f := newResetFixture()
+	f.mail.available = false
+	err := f.svc.RequestNow(context.Background(), f.tenantA, f.activeUser())
+	var ae *apierr.APIError
+	if !errors.As(err, &ae) || ae.HTTPStatus != 503 || ae.Code != apierr.CodeFeatureUnavailable {
+		t.Fatalf("want FeatureUnavailable, got %v", err)
+	}
+}
+
+func TestResetRequestNowMapsTenantcore503ToFeatureUnavailable(t *testing.T) {
+	f := newResetFixture()
+	f.mail.sendErr = notify.ErrMailNotConfigured
+	err := f.svc.RequestNow(context.Background(), f.tenantA, f.activeUser())
+	var ae *apierr.APIError
+	if !errors.As(err, &ae) || ae.HTTPStatus != 503 || ae.Code != apierr.CodeFeatureUnavailable {
+		t.Fatalf("want FeatureUnavailable, got %v", err)
+	}
+}
+
+// Named for the mutation check: a RequestNow that swallows the send error must
+// fail this test.
+func TestResetRequestNowSurfacesASendFailure(t *testing.T) {
+	f := newResetFixture()
+	f.mail.sendErr = errors.New("notify: tenantcore answered 500")
+	err := f.svc.RequestNow(context.Background(), f.tenantA, f.activeUser())
+	var ae *apierr.APIError
+	if !errors.As(err, &ae) || ae.HTTPStatus != 502 {
+		t.Fatalf("want a 502 upstream error, never a false success, got %v", err)
+	}
+}
+
+func TestResetRequestNowRefusesANonActiveUser(t *testing.T) {
+	f := newResetFixture()
+	f.users.suspend(f.tenantA, resetEmail)
+	if err := f.svc.RequestNow(context.Background(), f.tenantA, f.activeUser()); err == nil {
+		t.Fatal("a suspended user must not be mailed a way back in")
+	}
+	if len(f.mail.all()) != 0 {
+		t.Fatal("mail was sent to a suspended user")
 	}
 }

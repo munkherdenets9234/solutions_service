@@ -1,6 +1,9 @@
 package config
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
+	"encoding/base64"
 	"strings"
 	"testing"
 )
@@ -197,5 +200,51 @@ func TestPasswordResetNeedsTheTenantcoreLink(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestValidateTenantcorePublicKey(t *testing.T) {
+	pub, _, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cfg := validConfig()
+	cfg.TenantcorePublicKey = base64.StdEncoding.EncodeToString(pub)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("a valid public key should pass, got: %v", err)
+	}
+
+	for name, bad := range map[string]string{
+		"not base64":   "%%%not-base64",
+		"wrong length": base64.StdEncoding.EncodeToString([]byte("short")),
+	} {
+		cfg := validConfig()
+		cfg.TenantcorePublicKey = bad
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), "TENANTCORE_PUBLIC_KEY") {
+			t.Errorf("%s: want an error naming TENANTCORE_PUBLIC_KEY, got: %v", name, err)
+		}
+	}
+}
+
+func TestFeaturesReportTenantcoreAdminUsers(t *testing.T) {
+	find := func(c Config) Feature {
+		for _, f := range c.Features() {
+			if f.Name == "tenantcore_admin_users" {
+				return f
+			}
+		}
+		t.Fatal("Features() has no tenantcore_admin_users entry")
+		return Feature{}
+	}
+
+	cfg := validConfig()
+	if f := find(cfg); f.Enabled || !strings.Contains(f.Detail, "TENANTCORE_PUBLIC_KEY") {
+		t.Fatalf("unset key: want disabled and naming the setting, got %+v", f)
+	}
+	cfg.TenantcorePublicKey = "set"
+	if f := find(cfg); !f.Enabled {
+		t.Fatalf("set key: want enabled, got %+v", f)
 	}
 }
