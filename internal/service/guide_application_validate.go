@@ -111,9 +111,13 @@ func ValidateGuideApplication(a *models.GuideApplication, now time.Time) error {
 	if p.BirthDate.IsZero() {
 		return guideFail("birth_date", "required")
 	}
-	by, bm, bd := p.BirthDate.Date()
-	cy, cm, cd := now.AddDate(-guideMinAge, 0, 0).Date()
-	if time.Date(by, bm, bd, 0, 0, 0, 0, time.UTC).After(time.Date(cy, cm, cd, 0, 0, 0, 0, time.UTC)) {
+	by, bm, bd := p.BirthDate.UTC().Date()
+	ny, nm, nd := now.UTC().Date()
+	age := ny - by
+	if nm < bm || (nm == bm && nd < bd) {
+		age--
+	}
+	if age < guideMinAge {
 		return guideFail("birth_date", "applicant must be at least 18")
 	}
 	if p.Gender != "" && !guideIn(guideGenders, p.Gender) {
@@ -139,6 +143,9 @@ func ValidateGuideApplication(a *models.GuideApplication, now time.Time) error {
 		hasEn = hasEn || l.Language == "en"
 		if l.Language != "other" && l.OtherName != "" {
 			return guideFail("languages.other_name", "only allowed for other")
+		}
+		if l.Language == "other" && strings.TrimSpace(l.OtherName) == "" {
+			return guideFail("languages.other_name", "required for other")
 		}
 		if err := guideText("languages.other_name", l.OtherName); err != nil {
 			return err

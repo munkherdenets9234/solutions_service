@@ -101,6 +101,33 @@ func TestAgeBoundary(t *testing.T) {
 	}
 	a.Personal.BirthDate = guideNow.AddDate(-18, 0, 1)
 	expectGuideErr(t, ValidateGuideApplication(a, guideNow), "birth_date")
+
+	// Leap day: 18th birthday of a 1 Mar 2010 baby is 1 Mar 2028, not 29 Feb.
+	leap := time.Date(2028, 2, 29, 12, 0, 0, 0, time.UTC)
+	a.Personal.BirthDate = time.Date(2010, 3, 1, 0, 0, 0, 0, time.UTC)
+	expectGuideErr(t, ValidateGuideApplication(a, leap), "birth_date")
+	a.Personal.BirthDate = time.Date(2010, 2, 28, 0, 0, 0, 0, time.UTC)
+	if err := ValidateGuideApplication(a, leap); err != nil {
+		t.Fatalf("born 2010-02-28 on 2028-02-29 rejected: %v", err)
+	}
+
+	// Time of day is ignored.
+	a.Personal.BirthDate = time.Date(2008, 6, 15, 23, 59, 0, 0, time.UTC)
+	if err := ValidateGuideApplication(a, time.Date(2026, 6, 15, 0, 0, 0, 0, time.UTC)); err != nil {
+		t.Fatalf("birthday morning rejected: %v", err)
+	}
+	a.Personal.BirthDate = time.Date(2008, 6, 16, 0, 0, 0, 0, time.UTC)
+	expectGuideErr(t, ValidateGuideApplication(a, time.Date(2026, 6, 15, 23, 59, 0, 0, time.UTC)), "birth_date")
+}
+
+func TestOtherLanguageNeedsName(t *testing.T) {
+	a := validGuideApp()
+	a.Languages = append(a.Languages, models.GuideLanguage{Language: "other", Level: "basic"})
+	expectGuideErr(t, ValidateGuideApplication(a, guideNow), "languages.other_name")
+	a.Languages[2].OtherName = "Kazakh"
+	if err := ValidateGuideApplication(a, guideNow); err != nil {
+		t.Fatalf("named other rejected: %v", err)
+	}
 }
 
 func TestDrivingFieldsOnlyWhenLicense(t *testing.T) {
