@@ -32,6 +32,8 @@ type fakeTenantcore struct {
 	mode   string // ok | suspended | down | 500 | garbage | unknown | svcrejected
 	gotSvc string
 	gotKey string
+	gate   chan struct{} // when set, handlers block until it is closed
+	zeroID bool
 }
 
 func newFake(t *testing.T) *fakeTenantcore {
@@ -43,7 +45,17 @@ func newFake(t *testing.T) *fakeTenantcore {
 		mode := f.mode
 		f.gotSvc = r.Header.Get("X-Service-Key")
 		f.gotKey = r.Header.Get("X-Tenant-Key")
+		gate := f.gate
+		zero := f.zeroID
 		f.mu.Unlock()
+		if gate != nil {
+			<-gate
+		}
+		if zero {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"success":true,"data":{"slug":"x"}}`))
+			return
+		}
 		w.Header().Set("Content-Type", "application/json")
 		switch mode {
 		case "ok", "suspended":
@@ -247,9 +259,10 @@ func TestResolve_UnknownKeyIsErrUnknownKeyAndNegativeCached(t *testing.T) {
 func TestResolve_ServiceKeyRejectedIsNotUnknownKey(t *testing.T) {
 	f := newFake(t)
 	f.setMode("svcrejected")
-	c, _ := newTestClient(t, f, nil)
+	c, clk := newTestClient(t, f, nil)
 
 	for i := 0; i < 2; i++ {
+		clk.advance(FailureBackoff + time.Second)
 		_, err := c.Resolve(context.Background(), testKey)
 		if err == nil || errors.Is(err, ErrUnknownKey) {
 			t.Fatalf("service-key rejection must not be ErrUnknownKey, got %v", err)
@@ -317,6 +330,7 @@ func TestResolve_RawKeyNeverAppearsInCacheKeysOrLogs(t *testing.T) {
 		t.Fatal("expected error")
 	}
 	f.setMode("svcrejected")
+	clk.advance(FailureBackoff + time.Second)
 	_, err2 := c.Resolve(context.Background(), rawKey)
 
 	c.mu.RLock()

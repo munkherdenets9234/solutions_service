@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"sync"
 	"time"
@@ -40,6 +41,19 @@ const (
 	// platform must degrade to cache quickly rather than making every request
 	// wait for it.
 	DefaultTimeout = 3 * time.Second
+
+	// FailureBackoff is how long, after a transport or server failure, the
+	// client stops contacting tenantcore for ANY key and answers from cache (or
+	// ErrUnavailable at once). Without it a blackholed tenantcore would make
+	// every request pay the full Timeout for as long as the grace window lasts.
+	FailureBackoff = 10 * time.Second
+	// MaxEntries caps the cache. Unique bad keys each add a negative entry, so
+	// without a cap a client sending random keys grows memory without bound.
+	// Eviction drops negative entries first, then the oldest.
+	MaxEntries = 10000
+
+	// maxBody bounds how much of a tenantcore response is read.
+	maxBody = 1 << 20
 )
 
 var (
@@ -88,14 +102,29 @@ type Client struct {
 	// now is injectable so expiry tests do not sleep.
 	now func() time.Time
 
+	maxEntries int
+
 	mu     sync.RWMutex
 	cache  map[string]*cacheEntry // keyed by hex(sha256(raw key))
 	stop   chan struct{}
 	closer sync.Once
 
+	// inflight collapses concurrent misses on one key into a single fetch.
+	inflight map[string]*call
+	// backoffUntil: until then, tenantcore is not contacted at all.
+	backoffUntil time.Time
+
 	// degradedSince records when fetches started failing. Read by Degraded for
 	// /readyz.
 	degradedSince *time.Time
+}
+
+// call is one shared in-flight resolution; waiters read the result after done
+// is closed.
+type call struct {
+	done  chan struct{}
+	ident Identity
+	err   error
 }
 
 type cacheEntry struct {
@@ -143,11 +172,18 @@ func NewClient(cfg ClientConfig) *Client {
 		ttl:         cfg.TTL,
 		graceWindow: cfg.GraceWindow,
 		negativeTTL: cfg.NegativeTTL,
-		http:        &http.Client{Timeout: cfg.Timeout},
-		log:         cfg.Log,
-		now:         time.Now,
-		cache:       make(map[string]*cacheEntry),
-		stop:        make(chan struct{}),
+		http: &http.Client{
+			Timeout: cfg.Timeout,
+			// Never follow a redirect: it would forward our service key and the
+			// tenant key to wherever it points.
+			CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
+		},
+		log:        cfg.Log,
+		now:        time.Now,
+		maxEntries: MaxEntries,
+		cache:      make(map[string]*cacheEntry),
+		inflight:   make(map[string]*call),
+		stop:       make(chan struct{}),
 	}
 	go c.janitor()
 	return c
@@ -166,23 +202,40 @@ func (c *Client) Close() {
 }
 
 func (c *Client) janitor() {
-	t := time.NewTicker(5 * time.Minute)
+	t := time.NewTicker(time.Minute)
 	defer t.Stop()
 	for {
 		select {
 		case <-c.stop:
 			return
 		case <-t.C:
-			c.mu.Lock()
-			now := c.now()
-			for k, e := range c.cache {
-				if now.Sub(e.fetchedAt) > c.ttl+c.graceWindow {
-					delete(c.cache, k)
-				}
-			}
-			c.mu.Unlock()
+			c.sweep()
 		}
 	}
+}
+
+// sweep drops negative entries older than NegativeTTL and positive entries
+// older than TTL+GraceWindow.
+func (c *Client) sweep() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.sweepLocked()
+}
+
+func (c *Client) sweepLocked() {
+	now := c.now()
+	for k, e := range c.cache {
+		if c.expired(e, now) {
+			delete(c.cache, k)
+		}
+	}
+}
+
+func (c *Client) expired(e *cacheEntry, now time.Time) bool {
+	if e.unknown {
+		return now.Sub(e.fetchedAt) > c.negativeTTL
+	}
+	return now.Sub(e.fetchedAt) > c.ttl+c.graceWindow
 }
 
 func cacheKey(rawKey string) string {
@@ -195,6 +248,14 @@ func (c *Client) Resolve(ctx context.Context, rawKey string) (Identity, error) {
 	if !c.Available() {
 		return Identity{}, errors.New("tenantresolve: platform link is not configured")
 	}
+	if rawKey == "" {
+		return Identity{}, ErrUnknownKey
+	}
+	// A caller that has already given up gets its own error: not a tenantcore
+	// failure, so no degraded flag, no stale answer, no log line.
+	if err := ctx.Err(); err != nil {
+		return Identity{}, err
+	}
 	key := cacheKey(rawKey)
 
 	if e, ok := c.fresh(key); ok {
@@ -204,19 +265,96 @@ func (c *Client) Resolve(ctx context.Context, rawKey string) (Identity, error) {
 		return e.ident, nil
 	}
 
-	ident, err := c.fetch(ctx, rawKey)
+	// Backing off after a recent failure: do not wait on a tenantcore that is
+	// probably still down.
+	if c.backingOff() {
+		if e, ok := c.stale(key); ok {
+			id := e.ident
+			id.Stale = true
+			return id, nil
+		}
+		return Identity{}, fmt.Errorf("%w: backing off after a recent failure", ErrUnavailable)
+	}
+
+	cl := c.join(key, rawKey)
+	select {
+	case <-cl.done:
+		return cl.ident, cl.err
+	case <-ctx.Done():
+		// This waiter leaves; the shared fetch carries on for the others.
+		return Identity{}, ctx.Err()
+	}
+}
+
+// join returns the in-flight resolution for key, starting one if there is none.
+// The fetch runs on its own context so one caller's cancellation cannot fail
+// the others; the HTTP client's Timeout still bounds it.
+func (c *Client) join(key, rawKey string) *call {
+	c.mu.Lock()
+	if cl, ok := c.inflight[key]; ok {
+		c.mu.Unlock()
+		return cl
+	}
+	cl := &call{done: make(chan struct{})}
+	c.inflight[key] = cl
+	c.mu.Unlock()
+
+	go func() {
+		cl.ident, cl.err = c.refresh(key, rawKey)
+		c.mu.Lock()
+		delete(c.inflight, key)
+		c.mu.Unlock()
+		close(cl.done)
+	}()
+	return cl
+}
+
+func (c *Client) backingOff() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.now().Before(c.backoffUntil)
+}
+
+func (c *Client) startBackoff() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.backoffUntil = c.now().Add(FailureBackoff)
+}
+
+// refresh asks tenantcore and applies the outcome to the cache, the degraded
+// flag and the back-off. It runs once per key however many callers wait.
+func (c *Client) refresh(key, rawKey string) (Identity, error) {
+	ident, err := c.fetch(context.Background(), rawKey)
 	if err == nil {
 		c.store(key, &cacheEntry{ident: ident, fetchedAt: c.now()})
 		c.clearDegraded()
+		c.clearBackoff()
 		return ident, nil
 	}
 	if errors.Is(err, ErrUnknownKey) {
-		// An authoritative answer, so the link is healthy.
+		// An authoritative answer, so the link is healthy and no back-off starts.
 		c.store(key, &cacheEntry{fetchedAt: c.now(), unknown: true})
 		c.clearDegraded()
+		c.clearBackoff()
 		return Identity{}, ErrUnknownKey
 	}
+	c.startBackoff()
+	return c.fallback(key, err)
+}
 
+func (c *Client) clearBackoff() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.backoffUntil = time.Time{}
+}
+
+// fallback answers a failed fetch from cache or says there is no answer.
+//
+// A rejected SERVICE key takes this path too, deliberately, as in the
+// entitlement client: a cached identity is still served (flagged Stale, and
+// degraded). The cost is up to GraceWindow (24h) of serving identity after our
+// service key was revoked, visible only through the degraded flag.
+func (c *Client) fallback(key string, err error) (Identity, error) {
 	// "We could not find out." Serve last-known state rather than deciding
 	// against the tenant.
 	if e, ok := c.stale(key); ok {
@@ -259,7 +397,7 @@ func (c *Client) fetch(ctx context.Context, rawKey string) (Identity, error) {
 				Domain string `json:"domain"`
 			} `json:"error"`
 		}
-		_ = json.NewDecoder(res.Body).Decode(&eb)
+		_ = json.NewDecoder(io.LimitReader(res.Body, maxBody)).Decode(&eb)
 		if res.StatusCode == http.StatusUnauthorized && eb.Error.Domain == "TENANT" {
 			return Identity{}, ErrUnknownKey
 		}
@@ -280,11 +418,15 @@ func (c *Client) fetch(ctx context.Context, rawKey string) (Identity, error) {
 			Hosts    []string           `json:"hosts"`
 		} `json:"data"`
 	}
-	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+	if err := json.NewDecoder(io.LimitReader(res.Body, maxBody)).Decode(&body); err != nil {
 		return Identity{}, fmt.Errorf("tenantresolve: decode: %w", err)
 	}
 	if !body.Success {
 		return Identity{}, errors.New("tenantresolve: tenantcore reported failure")
+	}
+	if body.Data.TenantID.IsZero() {
+		// A success with no tenant is not an identity; never cache it.
+		return Identity{}, errors.New("tenantresolve: decode: response has no tenant_id")
 	}
 	return Identity{
 		TenantID:  body.Data.TenantID,
@@ -327,10 +469,37 @@ func (c *Client) stale(key string) (cacheEntry, bool) {
 	return *e, true
 }
 
+// store inserts an entry, keeping the cache within maxEntries. When full it
+// first drops expired entries, then the oldest negative entry, then the oldest
+// entry: a real tenant's identity outlives unique-bad-key noise.
 func (c *Client) store(key string, e *cacheEntry) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if _, exists := c.cache[key]; !exists && len(c.cache) >= c.maxEntries {
+		c.sweepLocked()
+		if len(c.cache) >= c.maxEntries {
+			c.evictOneLocked()
+		}
+	}
 	c.cache[key] = e
+}
+
+func (c *Client) evictOneLocked() {
+	var oldestNeg, oldestAny string
+	var negAt, anyAt time.Time
+	for k, e := range c.cache {
+		if oldestAny == "" || e.fetchedAt.Before(anyAt) {
+			oldestAny, anyAt = k, e.fetchedAt
+		}
+		if e.unknown && (oldestNeg == "" || e.fetchedAt.Before(negAt)) {
+			oldestNeg, negAt = k, e.fetchedAt
+		}
+	}
+	if oldestNeg != "" {
+		delete(c.cache, oldestNeg)
+	} else if oldestAny != "" {
+		delete(c.cache, oldestAny)
+	}
 }
 
 func (c *Client) markDegraded() {
