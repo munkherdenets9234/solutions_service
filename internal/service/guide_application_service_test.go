@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -134,6 +135,9 @@ func (f *fakeGuideStore) Delete(_ context.Context, t, id primitive.ObjectID) err
 }
 
 type fakeGuideFiles struct {
+	mu          sync.Mutex
+	delay       time.Duration
+	mimes       map[int]string // upload index -> forced mime
 	unavailable bool
 	failOnNth   int // 1-based upload index that fails; 0 = never
 	mime        string
@@ -146,11 +150,19 @@ func (f *fakeGuideFiles) Available() bool { return !f.unavailable }
 
 func (f *fakeGuideFiles) Upload(_ context.Context, r io.Reader, _ primitive.ObjectID) (*StoredFile, error) {
 	_, _ = io.Copy(io.Discard, r)
+	if f.delay > 0 {
+		time.Sleep(f.delay)
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.uploads++
 	if f.failOnNth != 0 && f.uploads == f.failOnNth {
 		return nil, apierr.ValidationFailed("unsupported file type")
 	}
 	mime, size := f.mime, f.size
+	if m, ok := f.mimes[f.uploads]; ok {
+		mime = m
+	}
 	if mime == "" {
 		mime = "application/pdf"
 	}
@@ -161,6 +173,8 @@ func (f *fakeGuideFiles) Upload(_ context.Context, r io.Reader, _ primitive.Obje
 }
 
 func (f *fakeGuideFiles) Delete(_ context.Context, publicID, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.deleted = append(f.deleted, publicID)
 	return nil
 }
@@ -335,5 +349,54 @@ func TestSubmitValidatesBeforeUploading(t *testing.T) {
 	expectGuideErr(t, err, "files.cv")
 	if e.files.uploads != 0 {
 		t.Fatalf("uploads = %d, want 0", e.files.uploads)
+	}
+}
+
+func TestSubmitPostUploadValidationFailureDeletesFiles(t *testing.T) {
+	e := newGuideSvcEnv()
+	e.files.mimes = map[int]string{2: "text/plain"}
+	ups := []GuideUpload{guideUp(models.GuideFileCV), guideUp(models.GuideFilePhoto)}
+	_, err := e.svc.Submit(context.Background(), e.t, validGuideApp(), ups)
+	wantAPIStatus(t, err, 422)
+	if len(e.files.deleted) != 2 {
+		t.Fatalf("deleted = %v, want 2", e.files.deleted)
+	}
+	if len(e.store.rows) != 0 {
+		t.Fatalf("rows = %d, want 0", len(e.store.rows))
+	}
+}
+
+func TestSubmitConcurrentSameEmailOnlyOneSucceeds(t *testing.T) {
+	for _, n := range []int{2, 5} {
+		e := newGuideSvcEnv()
+		e.files.delay = 20 * time.Millisecond
+		var wg sync.WaitGroup
+		errs := make([]error, n)
+		for i := 0; i < n; i++ {
+			wg.Add(1)
+			go func(i int) {
+				defer wg.Done()
+				ups := []GuideUpload{guideUp(models.GuideFileCV), guideUp(models.GuideFilePhoto)}
+				_, errs[i] = e.svc.Submit(context.Background(), e.t, validGuideApp(), ups)
+			}(i)
+		}
+		wg.Wait()
+		ok := 0
+		for _, err := range errs {
+			if err == nil {
+				ok++
+			} else {
+				wantAPIStatus(t, err, 409)
+			}
+		}
+		if ok != 1 {
+			t.Fatalf("n=%d successes = %d, want 1", n, ok)
+		}
+		if len(e.store.rows) != 1 {
+			t.Fatalf("n=%d rows = %d, want 1", n, len(e.store.rows))
+		}
+		if e.files.uploads != 2 {
+			t.Fatalf("n=%d uploads = %d, want 2", n, e.files.uploads)
+		}
 	}
 }

@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"io"
+	"sync"
 	"time"
 
 	"github.com/eandstravel/digitalservice/internal/models"
@@ -44,6 +45,41 @@ type GuideApplicationService struct {
 	files PrivateFiles
 	users guideUsers
 	now   func() time.Time
+	locks keyedLock
+}
+
+// keyedLock is a mutex per key; idle entries are removed.
+type keyedLock struct {
+	mu sync.Mutex
+	m  map[string]*lockEntry
+}
+
+type lockEntry struct {
+	mu   sync.Mutex
+	refs int
+}
+
+func (k *keyedLock) Lock(key string) func() {
+	k.mu.Lock()
+	if k.m == nil {
+		k.m = map[string]*lockEntry{}
+	}
+	e := k.m[key]
+	if e == nil {
+		e = &lockEntry{}
+		k.m[key] = e
+	}
+	e.refs++
+	k.mu.Unlock()
+	e.mu.Lock()
+	return func() {
+		e.mu.Unlock()
+		k.mu.Lock()
+		if e.refs--; e.refs == 0 {
+			delete(k.m, key)
+		}
+		k.mu.Unlock()
+	}
 }
 
 func NewGuideApplicationService(store guideStore, files PrivateFiles, users guideUsers, now func() time.Time) *GuideApplicationService {
@@ -85,6 +121,14 @@ func (s *GuideApplicationService) Submit(ctx context.Context, tenantID primitive
 	}
 
 	email := NormalizeEmail(a.Personal.Email)
+
+	// Serialise duplicate check -> uploads -> Create per (tenant, email) so a
+	// double click or retry cannot insert twice. The guarantee is per process
+	// only: a second API instance could still race, and a unique index cannot
+	// express a 24h window.
+	unlock := s.locks.Lock(tenantID.Hex() + "/" + email)
+	defer unlock()
+
 	dup, err := s.store.HasRecentByEmail(ctx, tenantID, guideSeason, email, now.Add(-guideDuplicateWindow))
 	if err != nil {
 		return nil, apierr.Internal(err)
@@ -104,6 +148,8 @@ func (s *GuideApplicationService) Submit(ctx context.Context, tenantID primitive
 	for _, u := range uploads {
 		sf, err := s.uploadOne(ctx, tenantID, u)
 		if err != nil {
+			// An object created remotely before a timeout error has no public id
+			// to delete; accepted.
 			rollback()
 			return nil, err
 		}
