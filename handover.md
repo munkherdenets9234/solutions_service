@@ -1,5 +1,9 @@
 # digitalservice — handover (2026-10-01)
 
+## Principle (2026-10-05): tenantcore owns tenants; this service serves them
+
+Tenantcore is responsible for ALL tenant information and management (identity, API key, status, domain, plan, subscription). digitalservice provides its service (tours, bookings, content, users) to tenants identified by API key and is not meant to manage tenants. Today it still keeps a duplicate `tenants` collection and resolves `X-API-Key` locally (`internal/middleware/tenant.go` -> `TenantService.Resolve`), so the two copies can differ, which is why a key rotated in tenantcore does not change what this service accepts. Do not add new tenant-management features here. Planned fix: `tenantcore/docs/superpowers/specs/2026-10-05-central-tenant-resolution-design.md` (resolve through tenantcore, cache 60 s fresh / 24 h stale, tenantcore wins and keys are re-issued).
+
 ## Update 2026-10-02 (latest; supersedes the status above where they differ)
 
 - Branch `refactor/backend-core`, working tree clean, 13 commits unpushed. Check: `go build ./... && go vet ./internal/... ./pkg/... && go test ./internal/... ./pkg/... -count=1` (never `go test ./...`). Start with `PORT=8080` (this repo's `.env` has `APP_PORT=8081`; the launch config handles it).
