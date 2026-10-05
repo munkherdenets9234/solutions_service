@@ -57,11 +57,13 @@ func SniffPrivateType(head []byte) (string, bool) {
 	return mime, true
 }
 
+// resourceTypeFor returns the Cloudinary resource type objects are stored
+// under. The SDK's Upload always posts to the auto-detect endpoint and ignores
+// UploadParams.ResourceType, so Cloudinary stores PDFs as "image" too (the
+// earlier "PDFs are raw" assumption was wrong and made downloads 404).
 func resourceTypeFor(mime string) (string, bool) {
 	switch mime {
-	case "application/pdf":
-		return "raw", true
-	case "image/jpeg", "image/png":
+	case "application/pdf", "image/jpeg", "image/png":
 		return "image", true
 	}
 	return "", false
@@ -97,6 +99,13 @@ func NewPrivateFileService(cloudinaryURL string, maxBytes int64) (*PrivateFileSe
 		}
 		// The SDK reports API-level failures in res.Error with err == nil.
 		if e := uploadResultError(res.Error.Message, res.PublicID); e != nil {
+			return "", e
+		}
+		if e := uploadResultKindError(res.ResourceType, res.Type); e != nil {
+			// Stored somewhere we cannot download from; remove it best-effort.
+			_, _ = cld.Upload.Destroy(ctx, uploader.DestroyParams{
+				PublicID: res.PublicID, Type: res.Type, ResourceType: res.ResourceType,
+			})
 			return "", e
 		}
 		return res.PublicID, nil
@@ -141,7 +150,7 @@ func (s *PrivateFileService) Upload(ctx context.Context, r io.Reader, tenantID p
 	if !ok {
 		return nil, apierr.ValidationFailed("unsupported file type: only jpeg, png and pdf are accepted")
 	}
-	rt, _ := resourceTypeFor(mime)
+	rt, _ := resourceTypeFor(mime) // used for cleanup
 
 	// One byte over the limit is read on purpose so "at the limit" and "over
 	// it" are distinguishable.
@@ -150,7 +159,6 @@ func (s *PrivateFileService) Upload(ctx context.Context, r io.Reader, tenantID p
 
 	publicID, err := s.uploadFunc(ctx, limited, uploader.UploadParams{
 		Type:         "authenticated",
-		ResourceType: rt,
 		Folder:       "tenants/" + tenantID.Hex() + "/guide-applications",
 		PublicID:     uuid.NewString(),
 	})
@@ -245,6 +253,15 @@ func uploadResultError(msg, publicID string) error {
 		return apierr.Upstream(apierr.DomainUpload, errors.New("upload rejected"))
 	}
 	if publicID == "" {
+		return apierr.Upstream(apierr.DomainUpload, errors.New("upload rejected"))
+	}
+	return nil
+}
+
+// uploadResultKindError rejects an upload that did not land as an
+// authenticated image-resource object, since downloads are signed for that.
+func uploadResultKindError(resourceType, deliveryType string) error {
+	if resourceType != "image" || deliveryType != "authenticated" {
 		return apierr.Upstream(apierr.DomainUpload, errors.New("upload rejected"))
 	}
 	return nil

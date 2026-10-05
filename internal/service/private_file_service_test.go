@@ -83,7 +83,7 @@ func newTestSvc(t *testing.T, max int64) *PrivateFileService {
 
 func TestDownloadURLShape(t *testing.T) {
 	s := newTestSvc(t, 1024)
-	for mime, rt := range map[string]string{"application/pdf": "raw", "image/jpeg": "image", "image/png": "image"} {
+	for mime, rt := range map[string]string{"application/pdf": "image", "image/jpeg": "image", "image/png": "image"} {
 		raw, exp, err := s.DownloadURL("tenants/abc/guide-applications/f1", mime, 5*time.Minute)
 		if err != nil {
 			t.Fatal(err)
@@ -160,7 +160,7 @@ func TestUploadRejectsOverLimitStream(t *testing.T) {
 	if f.Mime != "application/pdf" || f.Size != 100 || f.PublicID == "" {
 		t.Fatalf("bad result %+v", f)
 	}
-	if gotParams.Type != "authenticated" || gotParams.ResourceType != "raw" ||
+	if gotParams.Type != "authenticated" || gotParams.ResourceType != "" ||
 		gotParams.Folder != "tenants/"+tid.Hex()+"/guide-applications" || gotParams.PublicID == "" {
 		t.Fatalf("bad params %+v", gotParams)
 	}
@@ -235,5 +235,22 @@ func TestDeleteEmptyPublicIDIsNoop(t *testing.T) {
 	}
 	if err := s.Delete(context.Background(), "", "application/pdf"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestUploadResultKindError(t *testing.T) {
+	cases := []struct {
+		rt, typ string
+		wantErr bool
+	}{
+		{"image", "authenticated", false},
+		{"raw", "authenticated", true},
+		{"image", "upload", true},
+		{"", "", true},
+	}
+	for _, c := range cases {
+		if err := uploadResultKindError(c.rt, c.typ); (err != nil) != c.wantErr {
+			t.Errorf("%s/%s: err=%v", c.rt, c.typ, err)
+		}
 	}
 }
