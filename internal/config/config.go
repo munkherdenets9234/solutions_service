@@ -58,6 +58,11 @@ type Config struct {
 	// misconfiguration in production and is reported as one on /readyz.
 	TenantcoreURL        string
 	TenantcoreServiceKey string
+
+	// MailUnsubscribeKey signs the unsubscribe links in request emails
+	// (MAIL_UNSUBSCRIBE_KEY). Required, at least 32 bytes, whenever the mail
+	// link to tenantcore is configured. There is no default.
+	MailUnsubscribeKey string
 	// How long an entitlement is trusted, and how long a stale one may still
 	// be served once tenantcore stops answering. The grace window is the
 	// difference between a platform blip and an outage for every tenant.
@@ -288,6 +293,16 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.TenantcoreServiceKey) == "" {
 		problems = append(problems, "TENANTCORE_SERVICE_KEY is required: API keys are resolved through tenantcore")
 	}
+	// The notifier sends through tenantcore, so it is on exactly when the link
+	// is configured; its unsubscribe links need a signing key. The message
+	// never includes the value.
+	if strings.TrimSpace(c.TenantcoreURL) != "" && strings.TrimSpace(c.TenantcoreServiceKey) != "" &&
+		c.MailUnsubscribeKey == "" {
+		problems = append(problems, "MAIL_UNSUBSCRIBE_KEY is required when TENANTCORE_URL and TENANTCORE_SERVICE_KEY are set (request emails carry a signed unsubscribe link)")
+	}
+	if c.MailUnsubscribeKey != "" && len(c.MailUnsubscribeKey) < 32 {
+		problems = append(problems, "MAIL_UNSUBSCRIBE_KEY must be at least 32 bytes")
+	}
 	if c.TenantResolveRatePerMinute < 1 {
 		problems = append(problems, "TENANT_RESOLVE_RATE_PER_MINUTE must be at least 1")
 	}
@@ -325,6 +340,7 @@ func Load() *Config {
 		EntitlementGraceSeconds: getEnvInt("ENTITLEMENT_GRACE_SECONDS", 900),
 		EntitlementTimeoutMS:    getEnvInt("ENTITLEMENT_TIMEOUT_MS", 3000),
 		TenantcorePublicKey:     getEnv("TENANTCORE_PUBLIC_KEY", ""),
+		MailUnsubscribeKey:      getEnv("MAIL_UNSUBSCRIBE_KEY", ""),
 		TrustedProxies:          ParseTrustedProxies(getEnv("TRUSTED_PROXIES", "")),
 
 		LegacyTenantResolver:       strings.ToLower(getEnv("TENANT_RESOLVER", "")),

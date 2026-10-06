@@ -17,8 +17,10 @@ func validConfig() Config {
 		TokenSecret: strings.Repeat("k", 32),
 		TokenExpiry: 24,
 		// Tenants are resolved through tenantcore, so the link is always required.
-		TenantcoreURL:               "http://localhost:1",
-		TenantcoreServiceKey:        "svc-test",
+		TenantcoreURL:        "http://localhost:1",
+		TenantcoreServiceKey: "svc-test",
+		// Built at run time: a literal that looks like a key trips gitleaks.
+		MailUnsubscribeKey:         strings.Repeat("u", 16) + strings.Repeat("v", 16),
 		TenantResolveRatePerMinute: 600,
 		TenantResolveBurst:         120,
 	}
@@ -409,5 +411,45 @@ func TestValidateTrustedProxies(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "TRUSTED_PROXIES") || !strings.Contains(err.Error(), bad) {
 			t.Errorf("%q: error %v must name TRUSTED_PROXIES and the entry", bad, err)
 		}
+	}
+}
+
+func TestNotifierEnabledRequiresUnsubscribeKey(t *testing.T) {
+	cfg := validConfig()
+	cfg.MailUnsubscribeKey = ""
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "MAIL_UNSUBSCRIBE_KEY") {
+		t.Fatalf("mail link set and key empty: want an error naming MAIL_UNSUBSCRIBE_KEY, got %v", err)
+	}
+
+	// Without the mail link there is no notifier, so no key is needed.
+	cfg.TenantcoreURL, cfg.TenantcoreServiceKey = "", ""
+	err = cfg.Validate()
+	if err != nil && strings.Contains(err.Error(), "MAIL_UNSUBSCRIBE_KEY") {
+		t.Fatalf("no mail link: key must not be required, got %v", err)
+	}
+}
+
+func TestValidateRejectsShortUnsubscribeKeyWithoutEchoing(t *testing.T) {
+	short := strings.Repeat("s", 31)
+	cfg := validConfig()
+	cfg.MailUnsubscribeKey = short
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "MAIL_UNSUBSCRIBE_KEY") {
+		t.Fatalf("short key: want an error naming MAIL_UNSUBSCRIBE_KEY, got %v", err)
+	}
+	if strings.Contains(err.Error(), short) {
+		t.Fatal("error must not echo the key value")
+	}
+	cfg.MailUnsubscribeKey = strings.Repeat("s", 32)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("32-byte key should pass, got %v", err)
+	}
+}
+
+func TestLoadReadsMailUnsubscribeKey(t *testing.T) {
+	t.Setenv("MAIL_UNSUBSCRIBE_KEY", strings.Repeat("m", 40))
+	if got := Load().MailUnsubscribeKey; len(got) != 40 {
+		t.Fatalf("MailUnsubscribeKey length = %d, want 40", len(got))
 	}
 }
