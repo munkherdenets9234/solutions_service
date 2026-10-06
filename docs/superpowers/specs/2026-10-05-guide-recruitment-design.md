@@ -35,7 +35,9 @@ E&S site (eandstravelmongolia)    digitalservice (Go/Gin/Mongo)               ad
 
 The browser never holds the tenant API key. The site route forwards to the backend with the server-only `TENANT_API_KEY`, the same pattern as `src/app/api/contact/route.ts`.
 
-The public route sits beside the other lead routes in `internal/api/tenant/public/leads.go`, outside the subscription gate. A tenant with a lapsed subscription should not silently drop applicants. Admin routes sit behind the normal gate and admin auth, like `contact-messages`.
+The public handler is `internal/api/tenant/public/guide_applications.go`, registered in the lead group in `public.go` (rate limited, outside the subscription gate). A tenant with a lapsed subscription should not silently drop applicants.
+
+The admin routes (`internal/api/tenant/private/guide_applications.go`) require the admin bearer token and the role `admin`. Staff get 403. They are not in `registerAdminReads`, because applicant data is personal and must not be readable by every staff role.
 
 ## Backend (`digitalservice`)
 
@@ -75,21 +77,28 @@ A new `PrivateFileService`. The existing `UploadService` is not touched: it acce
 
 - Config: reuses `CLOUDINARY_URL`. The 2026-10-05 check showed its key and secret can already upload with `type=authenticated`, so no new variable is required. An optional `CLOUDINARY_PRIVATE_URL` overrides it if the agency later wants a separate Cloudinary account. If neither is set the service is nil and reports unavailable, like `UploadService`. `.env.example` gets the variable name only.
 - Type is decided by sniffing the first bytes, never by client content type. Allowed: `image/jpeg`, `image/png`, `application/pdf`. Size cap is `UPLOAD_MAX_BYTES` (10 MiB default), enforced on the stream with the same one-extra-byte technique `UploadService` uses.
-- Upload: `type: authenticated`, folder `tenants/<tenant_id>/guide-applications`, random UUID name. The destination never comes from the request. PDFs go as resource type `raw`; images as `image`.
-- Download: `DownloadURL(publicID, resourceType, ttl)` returns a signed Cloudinary private-download URL (`https://api.cloudinary.com/v1_1/<cloud>/<resource_type>/download`, parameters `public_id`, `type=authenticated`, `timestamp`, `expires_at`, `attachment`, signed with the API secret) valid 5 minutes. The CDN delivery URL is not used: the 2026-10-05 credential check showed the account refuses CDN delivery of authenticated raw files (`401 deny or ACL failure`), while the private-download endpoint returned the PDF. The admin file route checks tenant ownership of the application and the file id before signing.
-- Cleanup: `Delete(publicID)` is used when a submit fails partway.
+- Upload: `type: authenticated`, folder `tenants/<tenant_id>/guide-applications`, random UUID name. The destination never comes from the request. The Cloudinary Go SDK always uploads through the auto endpoint and ignores `UploadParams.ResourceType`, so PDFs and images are all stored as resource type `image` with type `authenticated`. An upload that does not come back as `image` + `authenticated` is destroyed and rejected (502).
+- Cloudinary reports API failures inside the SDK result (`res.Error`) with a nil Go error. The service checks for that and turns it into an error. A corrupt PDF is rejected by Cloudinary as "Invalid PDF file"; the service maps it to 422 "document could not be read; export it again as a valid PDF or image". Provider text is never passed to the client.
+- Download: `DownloadURL(publicID, mime, ttl)` returns a signed Cloudinary download URL, `https://api.cloudinary.com/v1_1/<cloud>/image/download`, with parameters `public_id`, `type=authenticated`, `timestamp`, `expires_at`, `attachment`, `api_key` and `signature`. The signature is the SHA-1 hex of the parameters sorted by key and joined as `k=v&k=v`, with the API secret appended. The secret is never in the URL. The link is valid for 5 minutes. Cloudinary enforces the expiry: an expired link returns 401, and a link to a deleted object returns 404. The CDN delivery URL is not used, because the account refuses CDN delivery of authenticated files. The admin file route checks tenant ownership of the application and the file id before signing.
+- Cleanup: `Delete(ctx, publicID, mime)` is used when a submit fails partway. An empty public id is a no-op and nothing is sent upstream. Cleanup runs on a context that is not cancelled with the request. If a cleanup delete fails, the failure is attached to the internal cause of the returned error so it is logged with the public ids; the client sees the original error only.
 
 ### Submit flow
 
 `POST /guide-applications` accepts `multipart/form-data`: one part `data` holding the JSON document, plus file parts named `file_<kind>` (and `file_guide_certificate_1..3`).
 
+Multipart rules: the only plain form fields are `data` and `website`, each at most once. Any other form field, or a file part without a filename, returns 400. A bare `file_guide_certificate` part (no number) is refused as an unexpected file part (400). At most 8 files; the `data` part is at most 256 KiB; the whole body is at most 8 times the per-file limit plus 1 MiB. The handler extends the server's 15 s read and write deadlines to 3 minutes for this request only, because a submit uploads files one after another.
+
 1. Rate limit per client IP, using the existing `middleware.RateLimiter.Limit`.
 2. Honeypot field `website`. If non-empty the server answers `201` with a fake id and stores nothing.
-3. Validate the JSON. Validate each file (type, size, kind rules) before any upload starts.
+3. Validate the JSON. Validate every file before any upload starts: the controller refuses a file larger than the per-file limit, and the service reads the first bytes of each file and sniffs its type. A bad file fails the whole submit and nothing is uploaded.
 4. Upload files one by one. On any failure, delete the files already uploaded and return the error. Nothing is saved.
 5. Insert the document with `status: new` and an empty `events` list (no staff actor yet).
 6. If the insert fails, delete the uploaded files.
 7. Return `201` with `{id, confirmation_id}` where `confirmation_id` is `GA-` plus the last six characters of the id, uppercase.
+
+`consent_at` must be present in the request, but the stored value is the server's clock at submit time, not the client's. The uploaded file's original name is trimmed to 255 characters and stripped of control characters before it is stored (empty becomes `document`); it is for display only and never chooses a storage path.
+
+The duplicate check (same tenant, season and email within 24 hours) is serialised per process only. Two API instances could still both accept the same email at the same moment; a unique index cannot express a 24 hour window.
 
 ### Admin routes
 
@@ -99,7 +108,9 @@ A new `PrivateFileService`. The existing `UploadService` is not touched: it acce
 - `POST /admin/guide-applications/:id/notes` with `{text}`, 1 to 2000 characters. Appends a note event. Notes are never edited or deleted.
 - `GET /admin/guide-applications/:id/files/:fileId` returns `{url, expires_at}`.
 
-Concurrent changes: last write wins on `status`. Both events stay in `events[]`, so nothing is lost. Appends use Mongo `$push`, not read-modify-write.
+Concurrent changes: last write wins on `status`. The service reads the current status and then writes without a condition, so the recorded `from` can be stale and a duplicate event can be written. Both events stay in `events[]`, so nothing is lost. Appends use Mongo `$push`, not read-modify-write.
+
+The list `meta.page` and `meta.limit` are the values the service used (page at least 1, limit 1 to 100, otherwise 20). The search text `q` is cut to 100 characters.
 
 Indexes (`internal/repository/indexes.go`): `(tenant_id, created_at desc)`, `(tenant_id, status, created_at desc)`, `(tenant_id, season, personal.email, created_at)` for the duplicate check.
 
@@ -131,8 +142,10 @@ Application bodies and file names are not written to logs. Error responses carry
 
 | Case | Result |
 |---|---|
-| Missing or invalid field | 400 `VALIDATION_FAILED`, names the field; form shows it inline |
-| Wrong file type or too big | 422, names the file; nothing saved |
+| Missing or invalid field | 422 `VALIDATION_FAILED`, message `<field.path>: <reason>`; form shows it inline |
+| Malformed multipart, invalid JSON, unexpected form field or file part, missing `data` | 400 `BAD_REQUEST` |
+| Body too large, more than 8 files, `data` part over 256 KiB | 422 `VALIDATION_FAILED` |
+| Wrong file type, empty file, unreadable PDF or too big | 422 `VALIDATION_FAILED`, message `files.<kind>: <reason>`; checked before any upload; nothing saved |
 | Duplicate within 24 h | 409; form says an application with this email was already received |
 | Rate limit | 429; form asks to retry later |
 | Private file storage not configured | 503 `FEATURE_UNAVAILABLE` on submit; nothing saved, so no silent partial applications |
@@ -145,7 +158,7 @@ Application bodies and file names are not written to logs. Error responses carry
 - Go controller tests: multipart parsing, honeypot returns fake success with no row, rate limit, admin auth required, acting user taken from the token.
 - Site: unit tests for the validation module and the conditional-field logic; the route test checks the tenant key is added server-side and not returned.
 - Admin: list and detail render against fixtures; status and note actions call the right endpoints.
-- No test calls Cloudinary. The credential check (upload as authenticated raw, unsigned fetch refused with 401, private-download URL returns a valid PDF, delete) was run by hand on 2026-10-05 and passed; it is repeated once before merge as a manual step. Fallback if Cloudinary ever stops working for this: store files in MongoDB GridFS behind the same `PrivateFileService` interface; no other code changes.
+- The unit and controller tests never call Cloudinary. A separate live check (`private_file_service_live_test.go`, build tag `live`, skipped unless `CLOUDINARY_URL` is set) runs against the real account: it uploads a small PDF as an authenticated image, fetches the signed download link and requires 200 with a PDF body, fetches an expired link and logs its status (observed: 401), deletes the object, and fetches the earlier link again, which must not return 200 (observed: 404). It removes the object even when an assertion fails and never prints the URL or the credential. Fallback if Cloudinary ever stops working for this: store files in MongoDB GridFS behind the same `PrivateFileService` interface; no other code changes.
 
 ## Delivery
 

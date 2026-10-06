@@ -293,3 +293,18 @@ Inputs the spec implies and a person will hit; each is pinned by a named test in
 - [ ] **Step 4:** Submit the same email again. Expected: duplicate message, no new row.
 - [ ] **Step 5:** Submit with a `.txt` renamed to `.pdf`. Expected: file-type error, no row, nothing left in Cloudinary under `tenants/<id>/guide-applications`.
 - [ ] **Step 6:** Report plainly what ran and what did not (Docker integration test, Korean wording, mobile layout if unchecked).
+
+---
+
+## Post-implementation corrections
+
+What changed compared with the plan text above. The plan body is left as written.
+
+- Resource type: PDFs are not stored as `raw`. The Cloudinary Go SDK uploads through the auto endpoint and ignores `UploadParams.ResourceType`, so PDFs and images are all stored as `image` with type `authenticated`, and downloads use `/v1_1/<cloud>/image/download`. An upload that does not land as image + authenticated is destroyed and rejected.
+- `TestDownloadURLShape` expects the path `/v1_1/<cloud>/image/download` for every supported type, not `/raw/download` for PDF.
+- Signatures are `DownloadURL(publicID, mime, ttl)` and `Delete(ctx, publicID, mime)`; `Delete` with an empty id does nothing.
+- Routes: the admin routes are bearer + role `admin` only (staff get 403) and are not in `registerAdminReads`. The public handler is `public/guide_applications.go`, registered in the lead group.
+- Docker test: the testcontainers integration test (`test/api`) was written but not run, because Docker was not available. Container-free tests and the Go dev toolchain were used instead.
+- Live test: the live Cloudinary check uploads an authenticated image, expects a signed download to return 200 with a PDF, logs the status of an expired link (observed 401), and requires the link to stop serving after delete (observed 404). The plan's earlier assertions (raw upload, unsigned fetch refused) no longer apply.
+- Errors: validation failures are HTTP 422 `VALIDATION_FAILED` (the plan said 400); malformed multipart or JSON and unexpected parts are 400. File errors are named `files.<kind>` and files are checked (type, size) before any upload starts.
+- Also added after review: `consent_at` is stamped by the server; the duplicate guard is per process only; the submit handler extends the request deadlines to 3 minutes; list `meta` reports the effective page and limit.
