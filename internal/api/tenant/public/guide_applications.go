@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/eandstravel/digitalservice/internal/api/apictx"
 	"github.com/eandstravel/digitalservice/internal/models"
@@ -27,6 +30,13 @@ const (
 	guideHoneypot     = "website"
 	guideDataMaxBytes = 256 << 10
 	guideMaxUploads   = 8
+
+	// guideSubmitDeadline replaces the server's short read/write timeout for
+	// this one route, since a submit uploads up to 8 files one after another.
+	guideSubmitDeadline = 3 * time.Minute
+
+	guideNameMaxRunes = 255
+	guideDefaultName  = "document"
 )
 
 // guideSubmitter is the one service method the public endpoint needs. A small
@@ -66,6 +76,14 @@ func (h *guideApplicationsController) Submit(c *gin.Context) error {
 	if h.svc == nil {
 		return apierr.FeatureUnavailable("guide applications")
 	}
+
+	// The server-wide Read/WriteTimeout (15 s) is too short for a multi-file
+	// upload plus the sequential storage calls. Extend it for this request
+	// only. A writer that does not support deadlines (tests) returns
+	// ErrNotSupported, which is ignored.
+	rc := http.NewResponseController(c.Writer)
+	_ = rc.SetReadDeadline(time.Now().Add(guideSubmitDeadline))
+	_ = rc.SetWriteDeadline(time.Now().Add(guideSubmitDeadline))
 
 	ceiling := 8*h.maxBytes + guideBodyHeadroom
 	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, ceiling)
@@ -130,9 +148,13 @@ func (h *guideApplicationsController) Submit(c *gin.Context) error {
 			return apierr.BadRequest("unexpected file part")
 		}
 		for _, fh := range form.File[name] {
+			// Refuse an oversized file before anything is uploaded.
+			if h.maxBytes > 0 && fh.Size > h.maxBytes {
+				return apierr.ValidationFailed("files." + string(kind) + ": file is too large")
+			}
 			uploads = append(uploads, service.GuideUpload{
 				Kind:         kind,
-				OriginalName: fh.Filename,
+				OriginalName: cleanFileName(fh.Filename),
 				Open:         openHeader(fh),
 			})
 		}
@@ -144,6 +166,27 @@ func (h *guideApplicationsController) Submit(c *gin.Context) error {
 	}
 	response.Created(c, gin.H{"id": res.ID, "confirmation_id": res.ConfirmationID})
 	return nil
+}
+
+// cleanFileName drops control characters, trims whitespace and keeps at most
+// 255 characters. An empty result becomes a generic name. The name is only
+// stored for display; it never chooses a storage path.
+func cleanFileName(name string) string {
+	name = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, name)
+	name = strings.TrimSpace(name)
+	if utf8.RuneCountInString(name) > guideNameMaxRunes {
+		name = string([]rune(name)[:guideNameMaxRunes])
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return guideDefaultName
+	}
+	return name
 }
 
 func openHeader(fh *multipart.FileHeader) func() (io.ReadCloser, error) {

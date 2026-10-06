@@ -7,6 +7,7 @@ import (
 	"github.com/eandstravel/digitalservice/internal/api/apictx"
 	"github.com/eandstravel/digitalservice/internal/models"
 	"github.com/eandstravel/digitalservice/internal/repository"
+	"github.com/eandstravel/digitalservice/internal/service"
 	"github.com/eandstravel/digitalservice/pkg/apierr"
 	"github.com/eandstravel/digitalservice/pkg/response"
 	"github.com/gin-gonic/gin"
@@ -32,6 +33,8 @@ type guideApplicationsController struct {
 
 func (h *guideApplicationsController) List(c *gin.Context) error {
 	page, limit := apictx.Page(c, 20)
+	// Report the values the service really uses, not the raw query.
+	page, limit = service.ClampPage(page, limit)
 	f := repository.GuideListFilter{
 		Status:   models.GuideStatus(c.Query("status")),
 		Q:        c.Query("q"),

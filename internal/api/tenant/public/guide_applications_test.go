@@ -278,3 +278,71 @@ func TestTooManyFilesAndOversizedDataAreRejected(t *testing.T) {
 		t.Error("service called")
 	}
 }
+
+func TestOversizedFileIsRejectedBeforeSubmit(t *testing.T) {
+	f := &fakeGuideSubmitter{}
+	body, ct := multipartBody(t,
+		part{name: "data", content: `{}`},
+		part{name: "file_cv", filename: "ok.pdf", content: "a"},
+		part{name: "file_photo", filename: "big.png", content: strings.Repeat("a", testGuideMax+1)},
+	)
+	w := post(guideEngine(f), body, ct)
+	if w.Code != http.StatusUnprocessableEntity || !strings.Contains(w.Body.String(), "files.photo") {
+		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	}
+	if f.calls != 0 {
+		t.Error("service called with an oversized file")
+	}
+	// Exactly at the limit is accepted.
+	body, ct = multipartBody(t,
+		part{name: "data", content: `{}`},
+		part{name: "file_photo", filename: "edge.png", content: strings.Repeat("a", testGuideMax)},
+	)
+	if w := post(guideEngine(f), body, ct); w.Code != http.StatusCreated || f.calls != 1 {
+		t.Fatalf("at the limit: got %d, calls %d", w.Code, f.calls)
+	}
+}
+
+func TestSubmitToleratesWriterWithoutDeadlines(t *testing.T) {
+	// httptest.ResponseRecorder does not support deadlines; the handler must
+	// still answer normally.
+	f := &fakeGuideSubmitter{}
+	body, ct := multipartBody(t, part{name: "data", content: `{}`})
+	w := post(guideEngine(f), body, ct)
+	if w.Code != http.StatusCreated || f.calls != 1 {
+		t.Fatalf("got %d, calls %d", w.Code, f.calls)
+	}
+}
+
+func TestCleanFileName(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"cv.pdf", "cv.pdf"},
+		{"  spaced name.pdf  ", "spaced name.pdf"},
+		{"a\x00b\x01c\x7f\u0085d.pdf", "abcd.pdf"},
+		{"line\nbreak\r\t.pdf", "linebreak.pdf"},
+		{"\x01\x02\n", "document"},
+		{"   ", "document"},
+		{"", "document"},
+		{strings.Repeat("\u00e9", 300), strings.Repeat("\u00e9", 255)},
+	}
+	for _, c := range cases {
+		if got := cleanFileName(c.in); got != c.want {
+			t.Errorf("cleanFileName(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestOriginalNameIsCleanedBeforeSubmit(t *testing.T) {
+	f := &fakeGuideSubmitter{}
+	long := strings.Repeat("n", 400) + ".pdf"
+	body, ct := multipartBody(t,
+		part{name: "data", content: `{}`},
+		part{name: "file_cv", filename: long, content: "a"},
+	)
+	if w := post(guideEngine(f), body, ct); w.Code != http.StatusCreated {
+		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	}
+	if len(f.uploads) != 1 || len([]rune(f.uploads[0].OriginalName)) != 255 {
+		t.Fatalf("name length = %d, want 255", len([]rune(f.uploads[0].OriginalName)))
+	}
+}

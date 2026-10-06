@@ -2,6 +2,7 @@ package private
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -20,9 +21,11 @@ import (
 type fakeGuideAdmin struct {
 	statusActor, noteActor *primitive.ObjectID
 	statusCalls, noteCalls int
+	listPage, listLimit    int
 }
 
-func (f *fakeGuideAdmin) List(context.Context, primitive.ObjectID, repository.GuideListFilter, int, int) ([]*models.GuideApplication, int64, error) {
+func (f *fakeGuideAdmin) List(_ context.Context, _ primitive.ObjectID, _ repository.GuideListFilter, page, limit int) ([]*models.GuideApplication, int64, error) {
+	f.listPage, f.listLimit = page, limit
 	return nil, 0, nil
 }
 func (f *fakeGuideAdmin) Counts(context.Context, primitive.ObjectID) (map[models.GuideStatus]int64, error) {
@@ -85,6 +88,46 @@ func TestActorComesFromTheTokenNotTheBody(t *testing.T) {
 		}
 		if got != nil && *got == bogus {
 			t.Errorf("%s actor took the body's value", name)
+		}
+	}
+}
+
+func TestListMetaReportsEffectiveLimitAndPage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	cases := []struct {
+		query               string
+		wantPage, wantLimit int
+	}{
+		{"limit=500", 1, 20},
+		{"limit=100&page=3", 3, 100},
+		{"limit=0&page=-2", 1, 20},
+	}
+	for _, c := range cases {
+		f := &fakeGuideAdmin{}
+		h := &guideApplicationsController{svc: f}
+		e := gin.New()
+		e.Use(middleware.ErrorHandler(zap.NewNop(), false))
+		e.Use(func(c *gin.Context) { c.Set(middleware.CtxTenantID, primitive.NewObjectID()) })
+		httpx.Wrap(&e.RouterGroup).GET("/guide-applications", h.List)
+		w := httptest.NewRecorder()
+		e.ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/guide-applications?"+c.query, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%s: got %d: %s", c.query, w.Code, w.Body.String())
+		}
+		var env struct {
+			Meta struct {
+				Page  int `json:"page"`
+				Limit int `json:"limit"`
+			} `json:"meta"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil {
+			t.Fatal(err)
+		}
+		if env.Meta.Page != c.wantPage || env.Meta.Limit != c.wantLimit {
+			t.Errorf("%s: meta = (%d,%d), want (%d,%d)", c.query, env.Meta.Page, env.Meta.Limit, c.wantPage, c.wantLimit)
+		}
+		if f.listPage != c.wantPage || f.listLimit != c.wantLimit {
+			t.Errorf("%s: service got (%d,%d), want (%d,%d)", c.query, f.listPage, f.listLimit, c.wantPage, c.wantLimit)
 		}
 	}
 }
