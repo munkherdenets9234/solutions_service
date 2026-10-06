@@ -27,14 +27,59 @@ type ListCarsFilter struct {
 	Limit int
 }
 
-func (s *CarService) List(ctx context.Context, tenantID primitive.ObjectID, f ListCarsFilter) ([]*models.Car, int64, error) {
-	filter := bson.M{"is_active": true}
+// publicCarFilter selects what the storefront may see: active cars that are not
+// hidden. A car with no stored is_visible counts as visible.
+func publicCarFilter(f ListCarsFilter) bson.M {
+	filter := bson.M{"is_active": true, "is_visible": bson.M{"$ne": false}}
 	if f.Type != "" {
 		filter["type"] = f.Type
 	}
 	if f.Fuel != "" {
 		filter["fuel"] = f.Fuel
 	}
+	return filter
+}
+
+// adminCarFilter selects every active car, hidden ones included.
+func adminCarFilter() bson.M {
+	return bson.M{"is_active": true}
+}
+
+// ListAdmin lists active cars including hidden ones, for the admin panel.
+func (s *CarService) ListAdmin(ctx context.Context, tenantID primitive.ObjectID, page, limit int) ([]*models.Car, int64, error) {
+	if page < 1 {
+		page = 1
+	}
+	if limit < 1 || limit > 100 {
+		limit = 20
+	}
+	cars, total, err := s.repo.FindAll(ctx, tenantID, adminCarFilter(), page, limit)
+	if err != nil {
+		return nil, 0, err
+	}
+	if err := s.resolveLastEditedBy(ctx, tenantID, cars); err != nil {
+		return nil, 0, apierr.Internal(err)
+	}
+	return cars, total, nil
+}
+
+// GetBySlugAdmin returns an active car by slug even when it is hidden.
+func (s *CarService) GetBySlugAdmin(ctx context.Context, tenantID primitive.ObjectID, slug string) (*models.Car, error) {
+	c, err := s.repo.FindBySlugAny(ctx, tenantID, slug)
+	if err != nil {
+		if err == mongo.ErrNoDocuments {
+			return nil, apierr.NotFound("car")
+		}
+		return nil, apierr.Internal(err)
+	}
+	if err := s.resolveLastEditedBy(ctx, tenantID, []*models.Car{c}); err != nil {
+		return nil, apierr.Internal(err)
+	}
+	return c, nil
+}
+
+func (s *CarService) List(ctx context.Context, tenantID primitive.ObjectID, f ListCarsFilter) ([]*models.Car, int64, error) {
+	filter := publicCarFilter(f)
 
 	if f.Page < 1 {
 		f.Page = 1
@@ -107,6 +152,9 @@ func (s *CarService) Create(ctx context.Context, tenantID primitive.ObjectID, c 
 		return apierr.BadRequest("slug is required")
 	}
 	c.IsActive = true
+	if err := PrepareCarCreate(c); err != nil {
+		return err
+	}
 	return s.repo.Create(ctx, tenantID, c, userID)
 }
 
@@ -115,8 +163,12 @@ func (s *CarService) Update(ctx context.Context, tenantID primitive.ObjectID, id
 	if err != nil {
 		return apierr.BadRequest("invalid id")
 	}
-	if _, err := s.repo.FindByID(ctx, tenantID, id); err != nil {
+	existing, err := s.repo.FindByID(ctx, tenantID, id)
+	if err != nil {
 		return apierr.NotFound("car not found")
+	}
+	if err := NormalizeCarUpdate(existing, update); err != nil {
+		return err
 	}
 	return s.repo.Update(ctx, tenantID, id, update, userID)
 }

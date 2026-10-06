@@ -55,6 +55,17 @@ func (r *CarRepo) FindAll(ctx context.Context, tenantID primitive.ObjectID, filt
 
 func (r *CarRepo) FindBySlug(ctx context.Context, tenantID primitive.ObjectID, slug string) (*models.Car, error) {
 	var c models.Car
+	err := r.col.FindOne(ctx, bson.M{"tenant_id": tenantID, "slug": slug, "is_active": true, "is_visible": bson.M{"$ne": false}}).Decode(&c)
+	if err != nil {
+		return nil, err
+	}
+	return &c, nil
+}
+
+// FindBySlugAny finds an active car by slug whether or not it is hidden. Admin
+// reads only; the storefront must use FindBySlug.
+func (r *CarRepo) FindBySlugAny(ctx context.Context, tenantID primitive.ObjectID, slug string) (*models.Car, error) {
+	var c models.Car
 	err := r.col.FindOne(ctx, bson.M{"tenant_id": tenantID, "slug": slug, "is_active": true}).Decode(&c)
 	if err != nil {
 		return nil, err
