@@ -3,6 +3,7 @@ package notify
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -112,5 +113,15 @@ func TestSendGivesUpOnAServerThatNeverAnswers(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Fatalf("Send took %v; it must give up near its 100ms timeout", elapsed)
+	}
+}
+
+func TestSendWrapsRateLimitSentinel(t *testing.T) {
+	c := newClient(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusTooManyRequests)
+	}), time.Second)
+	err := c.Send(context.Background(), "a@b.c", "password_reset_code", nil)
+	if !errors.Is(err, ErrRateLimited) {
+		t.Fatalf("429 should wrap ErrRateLimited, got %v", err)
 	}
 }

@@ -24,6 +24,9 @@ import (
 // mail relay of its own. Callers that can report it to a person should.
 var ErrMailNotConfigured = errors.New("notify: mail is not configured on tenantcore (503)")
 
+// ErrRateLimited is tenantcore answering 429. Retrying later is the right response.
+var ErrRateLimited = errors.New("notify: tenantcore rate limited the send (429)")
+
 type Config struct {
 	BaseURL    string // e.g. http://localhost:8092
 	ServiceKey string // this service's key, from POST /admin/service-clients on tenantcore
@@ -95,7 +98,7 @@ func (c *Client) Send(ctx context.Context, to, template string, data map[string]
 	case res.StatusCode == http.StatusServiceUnavailable:
 		return ErrMailNotConfigured
 	case res.StatusCode == http.StatusTooManyRequests:
-		return errors.New("notify: tenantcore rate limited the send (429)")
+		return ErrRateLimited
 	default:
 		return fmt.Errorf("notify: tenantcore answered %d", res.StatusCode)
 	}
