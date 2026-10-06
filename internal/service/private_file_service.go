@@ -37,6 +37,14 @@ type PrivateFiles interface {
 	Available() bool
 }
 
+// Client-facing texts for file errors. Constants so no provider text can leak
+// into them.
+const (
+	msgCouldNotReadFile = "could not read file"
+	msgFileEmpty        = "file is empty"
+	msgUnsupportedType  = "unsupported file type: only jpeg, png and pdf are accepted"
+)
+
 // allowedPrivateTypes is the closed set of media accepted for applicant files.
 var allowedPrivateTypes = map[string]bool{
 	"image/jpeg":      true,
@@ -103,7 +111,7 @@ func NewPrivateFileService(cloudinaryURL string, maxBytes int64) (*PrivateFileSe
 		}
 		if e := uploadResultKindError(res.ResourceType, res.Type); e != nil {
 			// Stored somewhere we cannot download from; remove it best-effort.
-			_, _ = cld.Upload.Destroy(ctx, uploader.DestroyParams{
+			_, _ = cld.Upload.Destroy(context.WithoutCancel(ctx), uploader.DestroyParams{
 				PublicID: res.PublicID, Type: res.Type, ResourceType: res.ResourceType,
 			})
 			return "", e
@@ -140,15 +148,15 @@ func (s *PrivateFileService) Upload(ctx context.Context, r io.Reader, tenantID p
 	head := make([]byte, 512)
 	n, err := io.ReadFull(r, head)
 	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
-		return nil, apierr.BadRequest("could not read file")
+		return nil, apierr.BadRequest(msgCouldNotReadFile)
 	}
 	head = head[:n]
 	if n == 0 {
-		return nil, apierr.BadRequest("file is empty")
+		return nil, apierr.BadRequest(msgFileEmpty)
 	}
 	mime, ok := SniffPrivateType(head)
 	if !ok {
-		return nil, apierr.ValidationFailed("unsupported file type: only jpeg, png and pdf are accepted")
+		return nil, apierr.ValidationFailed(msgUnsupportedType)
 	}
 	rt, _ := resourceTypeFor(mime) // used for cleanup
 
@@ -158,9 +166,9 @@ func (s *PrivateFileService) Upload(ctx context.Context, r io.Reader, tenantID p
 	limited := &countingReader{r: body}
 
 	publicID, err := s.uploadFunc(ctx, limited, uploader.UploadParams{
-		Type:         "authenticated",
-		Folder:       "tenants/" + tenantID.Hex() + "/guide-applications",
-		PublicID:     uuid.NewString(),
+		Type:     "authenticated",
+		Folder:   "tenants/" + tenantID.Hex() + "/guide-applications",
+		PublicID: uuid.NewString(),
 	})
 	if err != nil {
 		var ae *apierr.APIError
@@ -173,7 +181,7 @@ func (s *PrivateFileService) Upload(ctx context.Context, r io.Reader, tenantID p
 		return nil, apierr.Upstream(apierr.DomainUpload, errors.New("upload rejected"))
 	}
 	if limited.n > s.maxBytes {
-		_ = s.destroyFunc(ctx, publicID, rt)
+		_ = s.destroyFunc(context.WithoutCancel(ctx), publicID, rt)
 		return nil, apierr.ValidationFailed(fmt.Sprintf("file exceeds the %d byte limit", s.maxBytes))
 	}
 	return &StoredFile{PublicID: publicID, Mime: mime, Size: limited.n}, nil

@@ -127,13 +127,6 @@ func (f *fakeGuideStore) AddNote(_ context.Context, t, id primitive.ObjectID, ev
 	return nil
 }
 
-func (f *fakeGuideStore) Delete(_ context.Context, t, id primitive.ObjectID) error {
-	if a, ok := f.rows[id]; ok && a.TenantID == t {
-		delete(f.rows, id)
-	}
-	return nil
-}
-
 type fakeGuideFiles struct {
 	mu          sync.Mutex
 	delay       time.Duration
@@ -144,6 +137,8 @@ type fakeGuideFiles struct {
 	size        int64
 	uploads     int
 	deleted     []string
+	deleteErr   error // returned by Delete (the call is still recorded)
+	uploadErr   error // returned by every Upload
 	dlPublicID  string
 	dlMime      string
 	dlTTL       time.Duration
@@ -159,6 +154,9 @@ func (f *fakeGuideFiles) Upload(_ context.Context, r io.Reader, _ primitive.Obje
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.uploads++
+	if f.uploadErr != nil {
+		return nil, f.uploadErr
+	}
 	if f.failOnNth != 0 && f.uploads == f.failOnNth {
 		return nil, apierr.ValidationFailed("unsupported file type")
 	}
@@ -179,7 +177,7 @@ func (f *fakeGuideFiles) Delete(_ context.Context, publicID, _ string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.deleted = append(f.deleted, publicID)
-	return nil
+	return f.deleteErr
 }
 
 func (f *fakeGuideFiles) DownloadURL(publicID, mime string, ttl time.Duration) (string, time.Time, error) {
@@ -641,10 +639,11 @@ func TestEventKeepsUserNameAfterRename(t *testing.T) {
 type recordingGuideStore struct {
 	*fakeGuideStore
 	page, limit int
+	filter      repository.GuideListFilter
 }
 
 func (r *recordingGuideStore) List(ctx context.Context, t primitive.ObjectID, f repository.GuideListFilter, page, limit int) ([]*models.GuideApplication, int64, error) {
-	r.page, r.limit = page, limit
+	r.page, r.limit, r.filter = page, limit, f
 	return r.fakeGuideStore.List(ctx, t, f, page, limit)
 }
 
@@ -662,5 +661,190 @@ func TestListClampsPageAndLimit(t *testing.T) {
 		if rec.page != c.wantPage || rec.limit != c.wantLimit {
 			t.Fatalf("(%d,%d) -> (%d,%d), want (%d,%d)", c.page, c.limit, rec.page, rec.limit, c.wantPage, c.wantLimit)
 		}
+	}
+}
+
+func TestClampPage(t *testing.T) {
+	cases := []struct{ page, limit, wantPage, wantLimit int }{
+		{0, 0, 1, 20}, {-1, 500, 1, 20}, {2, 100, 2, 100}, {5, 101, 5, 20},
+	}
+	for _, c := range cases {
+		p, l := ClampPage(c.page, c.limit)
+		if p != c.wantPage || l != c.wantLimit {
+			t.Errorf("ClampPage(%d,%d) = (%d,%d), want (%d,%d)", c.page, c.limit, p, l, c.wantPage, c.wantLimit)
+		}
+	}
+}
+
+func TestListCapsSearchTextAt100Runes(t *testing.T) {
+	e := newGuideSvcEnv()
+	rec := &recordingGuideStore{fakeGuideStore: e.store}
+	svc := NewGuideApplicationService(rec, e.files, e.users, nil)
+	long := strings.Repeat("\u00e9", 250)
+	if _, _, err := svc.List(context.Background(), e.t, repository.GuideListFilter{Q: long}, 1, 20); err != nil {
+		t.Fatal(err)
+	}
+	if rec.filter.Q != strings.Repeat("\u00e9", 100) {
+		t.Fatalf("q = %d runes, want 100", len([]rune(rec.filter.Q)))
+	}
+	if _, _, err := svc.List(context.Background(), e.t, repository.GuideListFilter{Q: "short"}, 1, 20); err != nil {
+		t.Fatal(err)
+	}
+	if rec.filter.Q != "short" {
+		t.Fatalf("q = %q", rec.filter.Q)
+	}
+}
+
+// ── file validation before upload, error naming, cleanup ─────────────────
+
+func guideUpBytes(kind models.GuideFileKind, content string) GuideUpload {
+	return GuideUpload{
+		Kind:         kind,
+		OriginalName: "f.bin",
+		Open:         func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(content)), nil },
+	}
+}
+
+func TestSubmitBadThirdFileUploadsAndDeletesNothing(t *testing.T) {
+	e := newGuideSvcEnv()
+	ups := []GuideUpload{
+		guideUp(models.GuideFileCV),
+		guideUp(models.GuideFilePhoto),
+		guideUpBytes(models.GuideFileIDCard, "just some plain text, not a document"),
+	}
+	_, err := e.svc.Submit(context.Background(), e.t, validGuideApp(), ups)
+	wantAPIStatus(t, err, 422)
+	var ae *apierr.APIError
+	if !errors.As(err, &ae) || ae.Message != "files.id_card: "+msgUnsupportedType {
+		t.Fatalf("message = %v", err)
+	}
+	if e.files.uploads != 0 || len(e.files.deleted) != 0 || len(e.store.rows) != 0 {
+		t.Fatalf("uploads=%d deletes=%d rows=%d, want 0/0/0", e.files.uploads, len(e.files.deleted), len(e.store.rows))
+	}
+}
+
+func TestSubmitEmptyFileIsNamed(t *testing.T) {
+	e := newGuideSvcEnv()
+	_, err := e.svc.Submit(context.Background(), e.t, validGuideApp(), []GuideUpload{guideUpBytes(models.GuideFileCV, "")})
+	var ae *apierr.APIError
+	if !errors.As(err, &ae) || ae.HTTPStatus != 422 || ae.Message != "files.cv: "+msgFileEmpty {
+		t.Fatalf("got %v", err)
+	}
+	if e.files.uploads != 0 {
+		t.Fatal("uploaded an empty file")
+	}
+}
+
+func TestUploadClientErrorsAreNamedWithSameSafeText(t *testing.T) {
+	cases := []struct {
+		err  error
+		want string
+	}{
+		{apierr.ValidationFailed("file exceeds the 10 byte limit"), "files.photo: file exceeds the 10 byte limit"},
+		{apierr.ValidationFailed("document could not be read; export it again as a valid PDF or image"), "files.photo: document could not be read; export it again as a valid PDF or image"},
+		{apierr.BadRequest("could not read file"), "files.photo: could not read file"},
+	}
+	for _, c := range cases {
+		e := newGuideSvcEnv()
+		e.files.uploadErr = c.err
+		ups := []GuideUpload{guideUp(models.GuideFileCV), guideUp(models.GuideFilePhoto)}
+		_, err := e.svc.Submit(context.Background(), e.t, validGuideApp(), ups)
+		_ = err
+		// uploadErr fails the first upload (the cv), so the name is files.cv.
+		var ae *apierr.APIError
+		if !errors.As(err, &ae) || ae.HTTPStatus != 422 {
+			t.Fatalf("got %v", err)
+		}
+		want := strings.Replace(c.want, "files.photo", "files.cv", 1)
+		if ae.Message != want {
+			t.Fatalf("message = %q, want %q", ae.Message, want)
+		}
+		low := strings.ToLower(ae.Message)
+		for _, bad := range []string{"cloudinary", "http", "api_key", "secret"} {
+			if strings.Contains(low, bad) {
+				t.Fatalf("message carries provider text %q: %q", bad, ae.Message)
+			}
+		}
+	}
+}
+
+func TestUploadUpstreamErrorIsNotRenamed(t *testing.T) {
+	e := newGuideSvcEnv()
+	e.files.uploadErr = apierr.Upstream(apierr.DomainUpload, errors.New("provider says no"))
+	_, err := e.svc.Submit(context.Background(), e.t, validGuideApp(), []GuideUpload{guideUp(models.GuideFileCV)})
+	var ae *apierr.APIError
+	if !errors.As(err, &ae) || ae.HTTPStatus != 502 || ae.Message != "upstream service unavailable" {
+		t.Fatalf("got %v", err)
+	}
+	// A plain (non-APIError) error also becomes a 502.
+	e = newGuideSvcEnv()
+	e.files.uploadErr = errors.New("connection reset")
+	_, err = e.svc.Submit(context.Background(), e.t, validGuideApp(), []GuideUpload{guideUp(models.GuideFileCV)})
+	wantAPIStatus(t, err, 502)
+}
+
+func TestSubmitStampsConsentAtFromServerClock(t *testing.T) {
+	e := newGuideSvcEnv()
+	a := validGuideApp()
+	a.ConsentAt = e.now.Add(-72 * time.Hour) // client-supplied, must be replaced
+	res, err := e.svc.Submit(context.Background(), e.t, a, []GuideUpload{guideUp(models.GuideFileCV)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	id, _ := primitive.ObjectIDFromHex(res.ID)
+	if got := e.store.rows[id].ConsentAt; !got.Equal(e.now) {
+		t.Fatalf("consent_at = %v, want %v", got, e.now)
+	}
+	// Missing consent is still refused.
+	b := validGuideApp()
+	b.Personal.Email = "other@example.com"
+	b.ConsentAt = time.Time{}
+	_, err = e.svc.Submit(context.Background(), e.t, b, []GuideUpload{guideUp(models.GuideFileCV)})
+	expectGuideErr(t, err, "consent_at")
+}
+
+func TestFailedCleanupDeletesAreAttachedAsInternalCause(t *testing.T) {
+	run := func(deleteErr error) (*apierr.APIError, *fakeGuideFiles) {
+		e := newGuideSvcEnv()
+		e.files.failOnNth = 3
+		e.files.deleteErr = deleteErr
+		ups := []GuideUpload{guideUp(models.GuideFileCV), guideUp(models.GuideFilePhoto), guideUp(models.GuideFileIDCard)}
+		_, err := e.svc.Submit(context.Background(), e.t, validGuideApp(), ups)
+		var ae *apierr.APIError
+		if !errors.As(err, &ae) {
+			t.Fatalf("got %v", err)
+		}
+		return ae, e.files
+	}
+	clean, _ := run(nil)
+	failed, files := run(errors.New("destroy rejected"))
+	if failed.HTTPStatus != clean.HTTPStatus || failed.Message != clean.Message || failed.Code != clean.Code {
+		t.Fatalf("client-facing error changed: %d %q vs %d %q", failed.HTTPStatus, failed.Message, clean.HTTPStatus, clean.Message)
+	}
+	if len(files.deleted) != 2 {
+		t.Fatalf("deleted = %v, want both attempted", files.deleted)
+	}
+	if failed.Err == nil || !strings.Contains(failed.Err.Error(), "pid-b") || !strings.Contains(failed.Err.Error(), "pid-c") {
+		t.Fatalf("cause does not carry the public ids: %v", failed.Err)
+	}
+	if strings.Contains(failed.Message, "pid-") {
+		t.Fatal("public id leaked into the client message")
+	}
+	if clean.Err != nil {
+		t.Fatalf("clean run has a cause: %v", clean.Err)
+	}
+}
+
+func TestFailedCleanupAfterInsertErrorStillMapsTo500(t *testing.T) {
+	e := newGuideSvcEnv()
+	e.store.createErr = errors.New("boom")
+	e.files.deleteErr = errors.New("destroy rejected")
+	_, err := e.svc.Submit(context.Background(), e.t, validGuideApp(), []GuideUpload{guideUp(models.GuideFileCV)})
+	var ae *apierr.APIError
+	if !errors.As(err, &ae) || ae.HTTPStatus != 500 || ae.Message != "internal server error" {
+		t.Fatalf("got %v", err)
+	}
+	if !strings.Contains(ae.Err.Error(), "boom") || !strings.Contains(ae.Err.Error(), "pid-b") {
+		t.Fatalf("cause = %v", ae.Err)
 	}
 }

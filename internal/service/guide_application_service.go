@@ -3,7 +3,9 @@ package service
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -31,7 +33,6 @@ type guideStore interface {
 	HasRecentByEmail(ctx context.Context, tenantID primitive.ObjectID, season, email string, since time.Time) (bool, error)
 	SetStatus(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID, status models.GuideStatus, ev models.GuideEvent) error
 	AddNote(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID, ev models.GuideEvent) error
-	Delete(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID) error
 }
 
 // guideUsers resolves staff display names for the timeline.
@@ -93,7 +94,9 @@ func NewGuideApplicationService(store guideStore, files PrivateFiles, users guid
 	return &GuideApplicationService{store: store, files: files, users: users, now: now}
 }
 
-// GuideUpload is one file offered with an application. Open is called once.
+// GuideUpload is one file offered with an application. Open may be called
+// more than once (a type check before any upload, then the upload itself), so
+// it must return a fresh reader each time.
 type GuideUpload struct {
 	Kind         models.GuideFileKind
 	OriginalName string
@@ -116,12 +119,23 @@ func (s *GuideApplicationService) Submit(ctx context.Context, tenantID primitive
 	if err := ValidateGuideApplication(a, now); err != nil {
 		return nil, err
 	}
+	// The consent record is stamped by the server; the client value only had
+	// to be present.
+	a.ConsentAt = now
 	kinds := make([]GuideUploadMeta, len(uploads))
 	for i, u := range uploads {
 		kinds[i] = GuideUploadMeta{Kind: u.Kind}
 	}
 	if err := ValidateGuideFiles(kinds); err != nil {
 		return nil, err
+	}
+
+	// Check every file's type before anything is uploaded, so a bad third file
+	// cannot leave the first two stored remotely.
+	for _, u := range uploads {
+		if err := s.sniffUpload(u); err != nil {
+			return nil, err
+		}
 	}
 
 	email := NormalizeEmail(a.Personal.Email)
@@ -142,11 +156,18 @@ func (s *GuideApplicationService) Submit(ctx context.Context, tenantID primitive
 	}
 
 	var stored []models.GuideFile
-	rollback := func() {
+	// rollback removes uploaded files and returns the failures, which are
+	// attached to the returned error's internal cause (logged, never sent to
+	// the client).
+	rollback := func() []error {
 		cctx := context.WithoutCancel(ctx)
+		var errs []error
 		for _, f := range stored {
-			_ = s.files.Delete(cctx, f.PublicID, f.Mime)
+			if err := s.files.Delete(cctx, f.PublicID, f.Mime); err != nil {
+				errs = append(errs, fmt.Errorf("delete %s: %w", f.PublicID, err))
+			}
 		}
+		return errs
 	}
 
 	for _, u := range uploads {
@@ -154,8 +175,7 @@ func (s *GuideApplicationService) Submit(ctx context.Context, tenantID primitive
 		if err != nil {
 			// An object created remotely before a timeout error has no public id
 			// to delete; accepted.
-			rollback()
-			return nil, err
+			return nil, withCleanupErrors(err, rollback())
 		}
 		stored = append(stored, models.GuideFile{
 			ID:           primitive.NewObjectID().Hex(),
@@ -172,36 +192,90 @@ func (s *GuideApplicationService) Submit(ctx context.Context, tenantID primitive
 		real[i] = GuideUploadMeta{Kind: f.Kind, Mime: f.Mime, Size: f.Size}
 	}
 	if err := ValidateGuideFiles(real); err != nil {
-		rollback()
-		return nil, err
+		return nil, withCleanupErrors(err, rollback())
 	}
 
 	a.Personal.Email = email
 	a.Season = guideSeason
 	a.Files = stored
 	if err := s.store.Create(ctx, tenantID, a); err != nil {
-		rollback()
-		return nil, apierr.Internal(err)
+		return nil, withCleanupErrors(apierr.Internal(err), rollback())
 	}
 
 	hexID := a.ID.Hex()
 	return &SubmitResult{ID: hexID, ConfirmationID: "GA-" + upperTail(hexID, 6)}, nil
 }
 
+// sniffUpload reads the first bytes of a file and checks its real type. The
+// result names the file (files.<kind>) so the site can mark the right row.
+func (s *GuideApplicationService) sniffUpload(u GuideUpload) error {
+	rc, err := u.Open()
+	if err != nil {
+		return namedFileError(u.Kind, apierr.BadRequest(msgCouldNotReadFile))
+	}
+	defer rc.Close()
+	head := make([]byte, 512)
+	n, err := io.ReadFull(rc, head)
+	if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+		return namedFileError(u.Kind, apierr.BadRequest(msgCouldNotReadFile))
+	}
+	if n == 0 {
+		return namedFileError(u.Kind, apierr.BadRequest(msgFileEmpty))
+	}
+	if _, ok := SniffPrivateType(head[:n]); !ok {
+		return namedFileError(u.Kind, apierr.ValidationFailed(msgUnsupportedType))
+	}
+	return nil
+}
+
 func (s *GuideApplicationService) uploadOne(ctx context.Context, tenantID primitive.ObjectID, u GuideUpload) (*StoredFile, error) {
 	rc, err := u.Open()
 	if err != nil {
-		return nil, apierr.BadRequest("could not read file")
+		return nil, namedFileError(u.Kind, apierr.BadRequest(msgCouldNotReadFile))
 	}
 	defer rc.Close()
 	sf, err := s.files.Upload(ctx, rc, tenantID)
 	if err != nil {
-		if _, ok := err.(*apierr.APIError); ok {
-			return nil, err
+		var ae *apierr.APIError
+		if errors.As(err, &ae) {
+			return nil, namedFileError(u.Kind, ae)
 		}
 		return nil, apierr.Upstream(apierr.DomainUpload, err)
 	}
 	return sf, nil
+}
+
+// namedFileError re-wraps a client-facing (400/422) file error as a 422 whose
+// message starts with files.<kind>: and keeps the same safe text. Other errors
+// (upstream failures) pass through unchanged.
+func namedFileError(kind models.GuideFileKind, err error) error {
+	var ae *apierr.APIError
+	if !errors.As(err, &ae) {
+		return err
+	}
+	if ae.HTTPStatus != http.StatusBadRequest && ae.HTTPStatus != http.StatusUnprocessableEntity {
+		return err
+	}
+	if strings.HasPrefix(ae.Message, "files.") {
+		return err
+	}
+	return apierr.ValidationFailed("files." + string(kind) + ": " + ae.Message)
+}
+
+// withCleanupErrors attaches failed cleanup deletes to err's internal cause so
+// the error handler logs them. The client-facing status and message do not
+// change.
+func withCleanupErrors(err error, cleanup []error) error {
+	if len(cleanup) == 0 {
+		return err
+	}
+	var ae *apierr.APIError
+	if errors.As(err, &ae) {
+		cp := *ae
+		cp.Err = errors.Join(append([]error{ae.Err}, cleanup...)...)
+		return &cp
+	}
+	return apierr.Internal(errors.Join(append([]error{err}, cleanup...)...))
 }
 
 func upperTail(s string, n int) string {
@@ -223,13 +297,26 @@ const (
 	guideStaffName   = "staff"
 )
 
-// List returns one page of applications for the tenant, newest first.
-func (s *GuideApplicationService) List(ctx context.Context, tenantID primitive.ObjectID, f repository.GuideListFilter, page, limit int) ([]*models.GuideApplication, int64, error) {
+// ClampPage returns the page and limit List actually uses: page at least 1,
+// limit 1..100 (anything else becomes 20). Controllers report these values.
+func ClampPage(page, limit int) (int, int) {
 	if page < 1 {
 		page = 1
 	}
 	if limit < 1 || limit > 100 {
 		limit = 20
+	}
+	return page, limit
+}
+
+const guideSearchMaxRunes = 100
+
+// List returns one page of applications for the tenant, newest first. The
+// search text is cut to 100 characters.
+func (s *GuideApplicationService) List(ctx context.Context, tenantID primitive.ObjectID, f repository.GuideListFilter, page, limit int) ([]*models.GuideApplication, int64, error) {
+	page, limit = ClampPage(page, limit)
+	if r := []rune(f.Q); len(r) > guideSearchMaxRunes {
+		f.Q = string(r[:guideSearchMaxRunes])
 	}
 	rows, total, err := s.store.List(ctx, tenantID, f, page, limit)
 	if err != nil {
@@ -270,6 +357,10 @@ func (s *GuideApplicationService) Get(ctx context.Context, tenantID primitive.Ob
 
 // SetStatus moves an application to a new status and records who did it. A
 // status equal to the current one succeeds without writing anything.
+//
+// The current status is read first and the write is not conditional on it, so
+// two concurrent changes can record a stale "from" and both events are kept.
+// The last write wins for the status, as the spec says.
 func (s *GuideApplicationService) SetStatus(ctx context.Context, tenantID primitive.ObjectID, idHex string, status models.GuideStatus, actor *primitive.ObjectID) error {
 	valid := false
 	for _, st := range models.GuideStatuses {
@@ -356,7 +447,8 @@ func (s *GuideApplicationService) FileDownload(ctx context.Context, tenantID pri
 	}
 	url, exp, err := s.files.DownloadURL(file.PublicID, file.Mime, guideDownloadTTL)
 	if err != nil {
-		if _, ok := err.(*apierr.APIError); ok {
+		var ae *apierr.APIError
+		if errors.As(err, &ae) {
 			return "", time.Time{}, err
 		}
 		return "", time.Time{}, apierr.Upstream(apierr.DomainUpload, err)

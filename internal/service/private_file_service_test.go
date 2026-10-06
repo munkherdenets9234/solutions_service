@@ -257,3 +257,27 @@ func TestUploadResultKindError(t *testing.T) {
 		}
 	}
 }
+
+func TestOverLimitCleanupSurvivesCancelledContext(t *testing.T) {
+	s := newTestSvc(t, 100)
+	s.uploadFunc = func(_ context.Context, r io.Reader, _ uploader.UploadParams) (string, error) {
+		_, _ = io.Copy(io.Discard, r)
+		return "id1", nil
+	}
+	var destroyCtxErr error
+	destroyed := false
+	s.destroyFunc = func(ctx context.Context, _, _ string) error {
+		destroyed = true
+		destroyCtxErr = ctx.Err()
+		return nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	big := append(append([]byte{}, pdfBytes...), bytes.Repeat([]byte("y"), 200)...)
+	if _, err := s.Upload(ctx, bytes.NewReader(big), primitive.NewObjectID()); err == nil {
+		t.Fatal("over-limit accepted")
+	}
+	if !destroyed || destroyCtxErr != nil {
+		t.Fatalf("destroyed=%v ctx err=%v: cleanup must not be cancelled with the request", destroyed, destroyCtxErr)
+	}
+}

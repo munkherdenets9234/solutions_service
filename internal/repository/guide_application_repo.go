@@ -136,6 +136,10 @@ func (r *GuideApplicationRepo) HasRecentByEmail(ctx context.Context, tenantID pr
 // SetStatus changes the status and appends the timeline event in one write, so
 // the two can never disagree. A foreign-tenant or unknown id matches nothing
 // and reads as not found.
+//
+// The write is not conditional on the status the caller read. Under concurrent
+// changes the recorded "from" may be stale and a duplicate event can be
+// written; both events are kept and the last write wins, as the spec says.
 func (r *GuideApplicationRepo) SetStatus(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID, status models.GuideStatus, ev models.GuideEvent) error {
 	res, err := r.col.UpdateOne(ctx,
 		bson.M{"_id": id, "tenant_id": tenantID},
@@ -167,10 +171,4 @@ func (r *GuideApplicationRepo) AddNote(ctx context.Context, tenantID primitive.O
 		return mongo.ErrNoDocuments
 	}
 	return nil
-}
-
-// Delete removes one application. Used only to roll back a failed submit.
-func (r *GuideApplicationRepo) Delete(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID) error {
-	_, err := r.col.DeleteOne(ctx, bson.M{"_id": id, "tenant_id": tenantID})
-	return err
 }
