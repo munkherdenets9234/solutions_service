@@ -58,6 +58,47 @@ type App struct {
 	// passwordReset sends its mail after responding, so shutdown drains it: a
 	// reset requested a moment before a restart should still arrive.
 	passwordReset *service.TenantPasswordResetService
+
+	// mailCancel stops the request-email worker; mailDone closes when its Run
+	// has returned. Both are nil when request email is off.
+	mailCancel context.CancelFunc
+	mailDone   chan struct{}
+}
+
+// mailRunner is the background mail worker. *service.MailWorker is the real one.
+type mailRunner interface {
+	Run(ctx context.Context)
+}
+
+// mailStopTimeout bounds how long Close waits for the worker to return. A var
+// so a test can shorten it.
+var mailStopTimeout = 10 * time.Second
+
+// startMailWorker runs the worker in a goroutine until Close. The context is
+// the app's own, not the startup context, which may end before the app does.
+func (a *App) startMailWorker(r mailRunner) {
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	a.mailCancel, a.mailDone = cancel, done
+	go func() {
+		defer close(done)
+		r.Run(ctx)
+	}()
+}
+
+// stopMailWorker cancels the worker and waits for Run to return, up to
+// mailStopTimeout. Nothing is logged but the outcome.
+func (a *App) stopMailWorker() {
+	if a.mailCancel == nil {
+		return
+	}
+	a.mailCancel()
+	select {
+	case <-a.mailDone:
+	case <-time.After(mailStopTimeout):
+		a.Log.Error("request email worker did not stop in time; shutting down anyway",
+			zap.Duration("waited", mailStopTimeout))
+	}
 }
 
 // New wires everything from cfg.
@@ -179,7 +220,7 @@ func NewForDatabase(ctx context.Context, cfg *config.Config, db *mongo.Database,
 		GuideUploadMaxBytes: cfg.UploadMaxBytes,
 	})
 
-	return &App{
+	app := &App{
 		Config:      cfg,
 		Log:         log,
 		Engine:      srv.Handler(),
@@ -189,7 +230,13 @@ func NewForDatabase(ctx context.Context, cfg *config.Config, db *mongo.Database,
 		tenantResolve: svcs.tenantResolveClient,
 
 		passwordReset: svcs.passwordReset,
-	}, nil
+	}
+	// Compare the concrete pointer: a nil *MailWorker in the mailRunner
+	// interface would be non-nil and Run would be called on it.
+	if svcs.mailWorker != nil {
+		app.startMailWorker(svcs.mailWorker)
+	}
+	return app, nil
 }
 
 // Run serves until SIGINT/SIGTERM, then shuts down cleanly.
@@ -231,6 +278,7 @@ func (a *App) Run() error {
 
 // Close releases everything New acquired.
 func (a *App) Close(ctx context.Context) {
+	a.stopMailWorker() // before anything the worker's sends could still need
 	if a.limiter != nil {
 		a.limiter.Close()
 	}

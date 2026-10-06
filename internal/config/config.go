@@ -158,6 +158,13 @@ func (c Config) PasswordResetEnabled() bool {
 	return c.TenantcoreURL != "" && c.TenantcoreServiceKey != ""
 }
 
+// RequestEmailEnabled reports whether staff are emailed when a request arrives:
+// it needs the tenantcore link (the mail is sent through it) and the key that
+// signs the unsubscribe links.
+func (c Config) RequestEmailEnabled() bool {
+	return c.PasswordResetEnabled() && c.MailUnsubscribeKey != ""
+}
+
 // TenantcoreAdminUsersEnabled reports whether the routes tenantcore's operators
 // call (tenant admin users, password reset) are on. They need the public key
 // to verify those operators' tokens.
@@ -211,6 +218,12 @@ func (c Config) Features() []Feature {
 			Enabled: c.PasswordResetEnabled(),
 			Detail: "TENANTCORE_URL/TENANTCORE_SERVICE_KEY are not both set — a tenant user who forgets their " +
 				"password cannot be sent a reset code, and POST /password-reset/request answers 503",
+		},
+		{
+			Name:    "request_email",
+			Enabled: c.RequestEmailEnabled(),
+			Detail: "TENANTCORE_URL, TENANTCORE_SERVICE_KEY and MAIL_UNSUBSCRIBE_KEY are not all set - staff are " +
+				"not emailed when a booking, rental, transfer or guide application arrives",
 		},
 		{
 			Name:    "tenantcore_admin_users",
