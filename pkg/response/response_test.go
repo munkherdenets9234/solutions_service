@@ -96,6 +96,65 @@ func TestErrIncludesTheStackOnlyInDev(t *testing.T) {
 	}
 }
 
+func renderFrom(err error, devMode bool, remoteAddr string) map[string]any {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	c.Request.RemoteAddr = remoteAddr
+	Err(c, err, devMode)
+	var body map[string]any
+	_ = json.Unmarshal(w.Body.Bytes(), &body)
+	return body
+}
+
+func detailOf(body map[string]any) (string, bool) {
+	e, _ := body["error"].(map[string]any)
+	d, ok := e["detail"].(string)
+	return d, ok
+}
+
+// The public message is the same whatever the cause; the cause is for a
+// developer on this machine only.
+func TestErrDetailOnlyInDevToALoopbackCaller(t *testing.T) {
+	cause := func() error { return apierr.Unauthorized("").WithDetail("no tenant matches this key") }
+
+	for _, c := range []struct {
+		name    string
+		dev     bool
+		remote  string
+		visible bool
+	}{
+		{"dev, loopback v4", true, "127.0.0.1:5555", true},
+		{"dev, loopback v6", true, "[::1]:5555", true},
+		{"dev, remote caller", true, "203.0.113.9:5555", false},
+		{"prod, loopback", false, "127.0.0.1:5555", false},
+		{"prod, remote caller", false, "203.0.113.9:5555", false},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			d, present := detailOf(renderFrom(cause(), c.dev, c.remote))
+			if present != c.visible {
+				t.Fatalf("detail present = %v, want %v", present, c.visible)
+			}
+			if c.visible && d != "no tenant matches this key" {
+				t.Errorf("detail = %q", d)
+			}
+		})
+	}
+}
+
+// With no explicit detail, a development caller on this machine sees the cause
+// of an internal error instead of having to find it in the log.
+func TestErrDetailFallsBackToTheCauseInDev(t *testing.T) {
+	d, ok := detailOf(renderFrom(apierr.Internal(errors.New("mongo: no reachable servers")), true, "127.0.0.1:1"))
+	if !ok || d != "mongo: no reachable servers" {
+		t.Errorf("detail = %q (present %v)", d, ok)
+	}
+	if _, ok := detailOf(renderFrom(apierr.Internal(errors.New("mongo: no reachable servers")), true, "203.0.113.9:1")); ok {
+		t.Error("cause leaked to a non-loopback caller")
+	}
+}
+
 // A 429 without Retry-After leaves a well-behaved client no way to back off.
 func TestErrSetsRetryAfterOnRateLimit(t *testing.T) {
 	w := render(apierr.RateLimited(30), false)

@@ -154,27 +154,29 @@ func NewForDatabase(ctx context.Context, cfg *config.Config, db *mongo.Database,
 		// Nil in local resolver mode; /readyz reads Degraded off it.
 		TenantResolveClient: svcs.tenantResolveClient,
 
-		Destination:     svcs.destination,
-		Blog:            svcs.blog,
-		Car:             svcs.car,
-		Review:          svcs.review,
-		Partner:         svcs.partner,
-		Package:         svcs.pkg,
-		Booking:         svcs.booking,
-		Rental:          svcs.rental,
-		AirportTransfer: svcs.airportTransfer,
-		ContactMessage:  svcs.contactMessage,
-		Newsletter:      svcs.newsletter,
-		Quote:           svcs.quote,
-		Customer:        svcs.customer,
-		Tenants:         svcs.tenant,
-		TenantReview:    svcs.tenantReview,
-		TenantPackage:   svcs.tenantPackage,
-		TenantUser:      svcs.tenantUser,
-		PasswordReset:   svcs.passwordReset,
-		SitePage:        svcs.sitePage,
-		PlatformUser:    svcs.platformUser,
-		Upload:          svcs.upload,
+		Destination:         svcs.destination,
+		Blog:                svcs.blog,
+		Car:                 svcs.car,
+		Review:              svcs.review,
+		Partner:             svcs.partner,
+		Package:             svcs.pkg,
+		Booking:             svcs.booking,
+		Rental:              svcs.rental,
+		AirportTransfer:     svcs.airportTransfer,
+		ContactMessage:      svcs.contactMessage,
+		Newsletter:          svcs.newsletter,
+		Quote:               svcs.quote,
+		Customer:            svcs.customer,
+		Tenants:             svcs.tenant,
+		TenantReview:        svcs.tenantReview,
+		TenantPackage:       svcs.tenantPackage,
+		TenantUser:          svcs.tenantUser,
+		PasswordReset:       svcs.passwordReset,
+		SitePage:            svcs.sitePage,
+		PlatformUser:        svcs.platformUser,
+		Upload:              svcs.upload,
+		GuideApplication:    svcs.guideApplication,
+		GuideUploadMaxBytes: cfg.UploadMaxBytes,
 	})
 
 	return &App{
@@ -261,10 +263,10 @@ func logFeatures(log *zap.Logger, cfg *config.Config) {
 }
 
 // warnUntrustedProxies says, once at startup, that the resolve limiter can be
-// bypassed: in tenantcore mode with TRUSTED_PROXIES unset, gin believes any
-// client-supplied X-Forwarded-For.
+// bypassed: with TRUSTED_PROXIES unset, gin believes any client-supplied
+// X-Forwarded-For.
 func warnUntrustedProxies(log *zap.Logger, cfg *config.Config) {
-	if cfg.TenantResolverTenantcoreEnabled() && !cfg.TrustedProxiesSet() {
+	if !cfg.TrustedProxiesSet() {
 		log.Warn("TRUSTED_PROXIES is not set — the per-IP tenant resolve limiter trusts a client-supplied "+
 			"X-Forwarded-For and can be bypassed with one header; set it to the hosting provider's proxy ranges",
 			zap.String("setting", "TRUSTED_PROXIES"))

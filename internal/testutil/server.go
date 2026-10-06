@@ -44,10 +44,15 @@ type App struct {
 // would still pass.
 func NewApp(t testing.TB, db *mongo.Database) *App {
 	t.Helper()
+	return NewAppWithConfig(t, db, TestConfig())
+}
+
+// NewAppWithConfig is NewApp with an explicit configuration, for tests that
+// need a feature switched off (e.g. no private file storage).
+func NewAppWithConfig(t testing.TB, db *mongo.Database, cfg *config.Config) *App {
+	t.Helper()
 	gin.SetMode(gin.TestMode)
 	initLoggerOnce.Do(func() { logger.Init("test") })
-
-	cfg := TestConfig()
 
 	app, err := bootstrap.NewForDatabase(context.Background(), cfg, db, logger.Log)
 	if err != nil {

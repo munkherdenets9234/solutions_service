@@ -16,6 +16,11 @@ func validConfig() Config {
 		MongoDB:     "app",
 		TokenSecret: strings.Repeat("k", 32),
 		TokenExpiry: 24,
+		// Tenants are resolved through tenantcore, so the link is always required.
+		TenantcoreURL:               "http://localhost:1",
+		TenantcoreServiceKey:        "svc-test",
+		TenantResolveRatePerMinute: 600,
+		TenantResolveBurst:         120,
 	}
 }
 
@@ -115,6 +120,32 @@ func TestFeaturesTracksUploadConfiguration(t *testing.T) {
 	for _, f := range cfg.Features() {
 		if f.Name == "uploads" && !f.Enabled {
 			t.Error("Features() disagrees with UploadsEnabled()")
+		}
+	}
+}
+
+func TestPrivateFilesURLFallsBackToCloudinaryURL(t *testing.T) {
+	cfg := validConfig()
+	if cfg.PrivateFilesEnabled() {
+		t.Error("private files should be disabled with neither URL set")
+	}
+
+	cfg.CloudinaryURL = "cloudinary://k:s@testcloud"
+	if got := cfg.PrivateFilesURL(); got != cfg.CloudinaryURL {
+		t.Errorf("PrivateFilesURL() = %q, want fallback to CloudinaryURL", got)
+	}
+	if !cfg.PrivateFilesEnabled() {
+		t.Error("private files should be enabled by CloudinaryURL alone")
+	}
+
+	cfg.CloudinaryPrivateURL = "cloudinary://k2:s2@privatecloud"
+	if got := cfg.PrivateFilesURL(); got != cfg.CloudinaryPrivateURL {
+		t.Errorf("PrivateFilesURL() = %q, want the private URL to win", got)
+	}
+
+	for _, f := range cfg.Features() {
+		if f.Name == "private_files" && !f.Enabled {
+			t.Error("Features() disagrees with PrivateFilesEnabled()")
 		}
 	}
 }
@@ -249,90 +280,65 @@ func TestFeaturesReportTenantcoreAdminUsers(t *testing.T) {
 	}
 }
 
-// The resolver switch is a rollout control: the default must be the old
-// behaviour, a typo must be refused by name, and tenantcore mode must not
-// start without the link it needs.
-func TestLoadDefaultsTenantResolverToLocal(t *testing.T) {
-	t.Setenv("TENANT_RESOLVER", "")
+// Tenants are owned by tenantcore: there is no resolver switch any more. The
+// retired TENANT_RESOLVER setting is tolerated only as "tenantcore"; "local"
+// would silently be ignored, so it is refused by name.
+func TestLoadDefaultsTenantResolveRate(t *testing.T) {
 	t.Setenv("TENANT_RESOLVE_RATE_PER_MINUTE", "")
-	cfg := Load()
-	if cfg.TenantResolver != "local" {
-		t.Errorf("TenantResolver = %q, want local", cfg.TenantResolver)
+	if got := Load().TenantResolveRatePerMinute; got != 600 {
+		t.Errorf("TenantResolveRatePerMinute = %d, want 600", got)
 	}
-	if cfg.TenantResolveRatePerMinute != 600 {
-		t.Errorf("TenantResolveRatePerMinute = %d, want 600", cfg.TenantResolveRatePerMinute)
-	}
-}
-
-func TestLoadReadsTenantResolverSettings(t *testing.T) {
-	t.Setenv("TENANT_RESOLVER", " TenantCore ")
 	t.Setenv("TENANT_RESOLVE_RATE_PER_MINUTE", "50")
-	cfg := Load()
-	if cfg.TenantResolver != "tenantcore" || cfg.TenantResolveRatePerMinute != 50 {
-		t.Errorf("got %q / %d", cfg.TenantResolver, cfg.TenantResolveRatePerMinute)
+	if got := Load().TenantResolveRatePerMinute; got != 50 {
+		t.Errorf("TenantResolveRatePerMinute = %d, want 50", got)
 	}
 }
 
-func TestValidateRejectsAnUnknownTenantResolver(t *testing.T) {
-	cfg := validConfig()
-	cfg.TenantResolver = "remote"
-	err := cfg.Validate()
-	if err == nil || !strings.Contains(err.Error(), "TENANT_RESOLVER") {
-		t.Fatalf("want an error naming TENANT_RESOLVER, got %v", err)
-	}
-}
-
-func TestValidateAcceptsLocalAndEmptyResolver(t *testing.T) {
-	for _, v := range []string{"", "local"} {
+func TestValidateRefusesTheRetiredLocalResolver(t *testing.T) {
+	for _, v := range []string{"local", "remote"} {
 		cfg := validConfig()
-		cfg.TenantResolver = v
-		if err := cfg.Validate(); err != nil {
-			t.Errorf("TenantResolver=%q should be valid, got %v", v, err)
+		cfg.LegacyTenantResolver = v
+		err := cfg.Validate()
+		if err == nil || !strings.Contains(err.Error(), "TENANT_RESOLVER") {
+			t.Errorf("TENANT_RESOLVER=%q: want an error naming TENANT_RESOLVER, got %v", v, err)
 		}
 	}
 }
 
-func TestValidateTenantcoreResolverNeedsURLAndKey(t *testing.T) {
+func TestValidateToleratesAnExistingTenantcoreSetting(t *testing.T) {
+	for _, v := range []string{"", "tenantcore"} {
+		cfg := validConfig()
+		cfg.LegacyTenantResolver = v
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("TENANT_RESOLVER=%q should be accepted, got %v", v, err)
+		}
+	}
+}
+
+func TestValidateAlwaysNeedsTenantcoreURLAndKey(t *testing.T) {
 	cfg := validConfig()
-	cfg.TenantResolver = "tenantcore"
+	cfg.TenantcoreURL, cfg.TenantcoreServiceKey = "", ""
 	err := cfg.Validate()
 	if err == nil {
-		t.Fatal("tenantcore without URL and key must not validate")
+		t.Fatal("without TENANTCORE_URL and TENANTCORE_SERVICE_KEY no key can be resolved; must not validate")
 	}
 	for _, want := range []string{"TENANTCORE_URL", "TENANTCORE_SERVICE_KEY"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("error should name %s, got %v", want, err)
 		}
 	}
-
-	cfg.TenantcoreURL = "http://localhost:1"
-	cfg.TenantcoreServiceKey = "svc-test"
-	cfg.TenantResolveRatePerMinute, cfg.TenantResolveBurst = 600, 120
-	if err := cfg.Validate(); err != nil {
-		t.Errorf("tenantcore with URL and key should validate, got %v", err)
-	}
 }
 
-func TestFeaturesListsTenantcoreResolverOnlyInThatMode(t *testing.T) {
-	find := func(c Config) (Feature, bool) {
-		for _, f := range c.Features() {
-			if f.Name == "tenant_resolver_tenantcore" {
-				return f, true
+func TestFeaturesAlwaysListTheTenantcoreResolver(t *testing.T) {
+	for _, f := range validConfig().Features() {
+		if f.Name == "tenant_resolver_tenantcore" {
+			if !f.Enabled {
+				t.Errorf("want enabled, got %+v", f)
 			}
+			return
 		}
-		return Feature{}, false
 	}
-	local := validConfig()
-	local.TenantResolver = "local"
-	if _, ok := find(local); ok {
-		t.Error("local mode must not add a feature entry (default /readyz stays as it was)")
-	}
-	tc := validConfig()
-	tc.TenantResolver = "tenantcore"
-	f, ok := find(tc)
-	if !ok || !f.Enabled {
-		t.Errorf("tenantcore mode should list the feature as enabled, got %+v ok=%v", f, ok)
-	}
+	t.Error("Features() has no tenant_resolver_tenantcore entry")
 }
 
 func TestTenantResolveBurstDefaultAndValidation(t *testing.T) {
@@ -342,18 +348,14 @@ func TestTenantResolveBurstDefaultAndValidation(t *testing.T) {
 	}
 
 	cfg := validConfig()
-	cfg.TenantResolver = "tenantcore"
-	cfg.TenantcoreURL = "http://localhost:1"
-	cfg.TenantcoreServiceKey = "svc-test"
-	cfg.TenantResolveRatePerMinute = 600
 	cfg.TenantResolveBurst = 0
 	err := cfg.Validate()
 	if err == nil || !strings.Contains(err.Error(), "TENANT_RESOLVE_BURST") {
-		t.Fatalf("burst 0 in tenantcore mode should be refused naming the variable, got %v", err)
+		t.Fatalf("burst 0 should be refused naming the variable, got %v", err)
 	}
 	cfg.TenantResolveBurst = 120
 	if err := cfg.Validate(); err != nil {
-		t.Errorf("valid tenantcore config refused: %v", err)
+		t.Errorf("valid config refused: %v", err)
 	}
 }
 

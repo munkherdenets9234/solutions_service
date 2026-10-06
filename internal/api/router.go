@@ -61,26 +61,28 @@ func (s *Server) buildEngine() *gin.Engine {
 		Modules:      d.Modules,
 		// Only in tenantcore mode, where a bad key costs a call to tenantcore.
 		// In local mode the scoped group is exactly what it was before.
-		ResolveRateLimit: s.resolveLimit(),
-		AuthRateLimit:    s.limit("tenant-auth", d.Config.AuthRatePerMinute),
-		LeadRateLimit:    s.limit("tenant-lead", d.Config.LeadRatePerMinute),
-		Destination:      d.Destination,
-		Blog:             d.Blog,
-		Car:              d.Car,
-		Review:           d.Review,
-		Partner:          d.Partner,
-		Package:          d.Package,
-		Booking:          d.Booking,
-		Rental:           d.Rental,
-		AirportTransfer:  d.AirportTransfer,
-		ContactMessage:   d.ContactMessage,
-		Newsletter:       d.Newsletter,
-		Quote:            d.Quote,
-		Customer:         d.Customer,
-		TenantUser:       d.TenantUser,
-		PasswordReset:    d.PasswordReset,
-		SitePage:         d.SitePage,
-		Upload:           d.Upload,
+		ResolveRateLimit:    s.resolveLimit(),
+		AuthRateLimit:       s.limit("tenant-auth", d.Config.AuthRatePerMinute),
+		LeadRateLimit:       s.limit("tenant-lead", d.Config.LeadRatePerMinute),
+		Destination:         d.Destination,
+		Blog:                d.Blog,
+		Car:                 d.Car,
+		Review:              d.Review,
+		Partner:             d.Partner,
+		Package:             d.Package,
+		Booking:             d.Booking,
+		Rental:              d.Rental,
+		AirportTransfer:     d.AirportTransfer,
+		ContactMessage:      d.ContactMessage,
+		Newsletter:          d.Newsletter,
+		Quote:               d.Quote,
+		Customer:            d.Customer,
+		TenantUser:          d.TenantUser,
+		PasswordReset:       d.PasswordReset,
+		SitePage:            d.SitePage,
+		Upload:              d.Upload,
+		GuideApplication:    d.GuideApplication,
+		GuideUploadMaxBytes: d.GuideUploadMaxBytes,
 	})
 
 	return e
@@ -112,13 +114,12 @@ func (s *Server) limit(name string, perMinute int) gin.HandlerFunc {
 }
 
 // resolveLimit is the limiter in front of tenant resolution, or nil. It is
-// installed only when TENANT_RESOLVER=tenantcore and rate limiting is on, with
-// its own burst (TENANT_RESOLVE_BURST) rather than the global one. Keyed by
+// installed only when rate limiting is on, with its own burst (TENANT_RESOLVE_BURST) rather than the global one. Keyed by
 // ClientIP, so it is only proxy-safe when TRUSTED_PROXIES is set; unset, gin
 // believes any X-Forwarded-For and one forged header per request bypasses it.
 func (s *Server) resolveLimit() gin.HandlerFunc {
 	c := s.deps.Config
-	if !c.TenantResolverTenantcoreEnabled() || !c.RateLimitEnabled || s.deps.RateLimiter == nil {
+	if !c.RateLimitEnabled || s.deps.RateLimiter == nil {
 		return nil
 	}
 	return s.deps.RateLimiter.Limit("tenant-resolve", c.TenantResolveRatePerMinute, c.TenantResolveBurst)
@@ -197,7 +198,7 @@ func (s *Server) registerOperational(e *gin.Engine) {
 		// The resolve limiter keys on ClientIP. Without TRUSTED_PROXIES gin
 		// believes any X-Forwarded-For, so it can be bypassed. Informational
 		// only: readiness status and degraded are deliberately unchanged.
-		if cfg := s.deps.Config; cfg.TenantResolverTenantcoreEnabled() && !cfg.TrustedProxiesSet() {
+		if cfg := s.deps.Config; !cfg.TrustedProxiesSet() {
 			if resolver == nil {
 				resolver = gin.H{}
 			}

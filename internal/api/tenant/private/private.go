@@ -27,21 +27,22 @@ type Deps struct {
 
 	AuthRateLimit gin.HandlerFunc
 
-	Destination     *service.DestinationService
-	Blog            *service.BlogService
-	Car             *service.CarService
-	Review          *service.ReviewService
-	Partner         *service.PartnerService
-	Booking         *service.BookingService
-	Rental          *service.RentalService
-	AirportTransfer *service.AirportTransferService
-	ContactMessage  *service.ContactMessageService
-	Newsletter      *service.NewsletterService
-	Quote           *service.QuoteService
-	Customer        *service.CustomerService
-	TenantUser      *service.TenantUserService
-	SitePage        *service.SitePageService
-	Upload          *service.UploadService
+	Destination      *service.DestinationService
+	Blog             *service.BlogService
+	Car              *service.CarService
+	Review           *service.ReviewService
+	Partner          *service.PartnerService
+	Booking          *service.BookingService
+	Rental           *service.RentalService
+	AirportTransfer  *service.AirportTransferService
+	ContactMessage   *service.ContactMessageService
+	Newsletter       *service.NewsletterService
+	Quote            *service.QuoteService
+	Customer         *service.CustomerService
+	TenantUser       *service.TenantUserService
+	SitePage         *service.SitePageService
+	Upload           *service.UploadService
+	GuideApplication *service.GuideApplicationService
 }
 
 // Register mounts the token-authenticated tenant routes onto base, which the
@@ -67,6 +68,10 @@ func Register(base *gin.RouterGroup, d Deps) {
 	}
 	uploads := &uploadsController{svc: d.Upload}
 	translations := &translationsController{svc: d.SitePage}
+	guides := &guideApplicationsController{}
+	if d.GuideApplication != nil { // keep the interface truly nil otherwise
+		guides.svc = d.GuideApplication
+	}
 
 	// Self-service account routes sit OUTSIDE the subscription gate. A user
 	// locked out by an expired password must still be able to change it
@@ -125,6 +130,16 @@ func Register(base *gin.RouterGroup, d Deps) {
 	customers.GET("/:id", ops.GetCustomer)
 
 	admin.POST("/uploads", uploads.Upload)
+
+	// Applicant data is personal: bearer only, never the key-only reads.
+	// /counts is registered before /:id so it is not read as an id.
+	ga := admin.Group("/guide-applications")
+	ga.GET("", guides.List)
+	ga.GET("/counts", guides.Counts)
+	ga.GET("/:id", guides.Get)
+	ga.PATCH("/:id/status", guides.SetStatus)
+	ga.POST("/:id/notes", guides.AddNote)
+	ga.GET("/:id/files/:fileId", guides.FileLink)
 
 	tr := admin.Group("/translations")
 	tr.GET("", translations.List)

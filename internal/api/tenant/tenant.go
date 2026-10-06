@@ -79,6 +79,9 @@ type Deps struct {
 	PasswordReset   *service.TenantPasswordResetService
 	SitePage        *service.SitePageService
 	Upload          *service.UploadService
+
+	GuideApplication    *service.GuideApplicationService
+	GuideUploadMaxBytes int64
 }
 
 // Register mounts the tenant audience onto base.
@@ -98,24 +101,26 @@ func Register(base *gin.RouterGroup, d Deps) {
 	subscription := d.Subscription.Require()
 
 	publicapi.Register(scoped, publicapi.Deps{
-		Destination:     d.Destination,
-		Blog:            d.Blog,
-		Car:             d.Car,
-		Review:          d.Review,
-		Partner:         d.Partner,
-		Package:         d.Package,
-		Booking:         d.Booking,
-		Rental:          d.Rental,
-		AirportTransfer: d.AirportTransfer,
-		ContactMessage:  d.ContactMessage,
-		Newsletter:      d.Newsletter,
-		Quote:           d.Quote,
-		TenantUser:      d.TenantUser,
-		PasswordReset:   d.PasswordReset,
-		SitePage:        d.SitePage,
-		Subscription:    subscription,
-		AuthRateLimit:   d.AuthRateLimit,
-		LeadRateLimit:   d.LeadRateLimit,
+		Destination:         d.Destination,
+		Blog:                d.Blog,
+		Car:                 d.Car,
+		Review:              d.Review,
+		Partner:             d.Partner,
+		Package:             d.Package,
+		Booking:             d.Booking,
+		Rental:              d.Rental,
+		AirportTransfer:     d.AirportTransfer,
+		ContactMessage:      d.ContactMessage,
+		Newsletter:          d.Newsletter,
+		Quote:               d.Quote,
+		TenantUser:          d.TenantUser,
+		PasswordReset:       d.PasswordReset,
+		SitePage:            d.SitePage,
+		GuideApplication:    d.GuideApplication,
+		GuideUploadMaxBytes: d.GuideUploadMaxBytes,
+		Subscription:        subscription,
+		AuthRateLimit:       d.AuthRateLimit,
+		LeadRateLimit:       d.LeadRateLimit,
 	})
 
 	// Modules first: each gets its own prefix, so a product's route names
@@ -128,23 +133,24 @@ func Register(base *gin.RouterGroup, d Deps) {
 	}
 
 	privateapi.Register(scoped, privateapi.Deps{
-		Auth:            d.Auth.Require,
-		Subscription:    subscription,
-		AuthRateLimit:   d.AuthRateLimit,
-		Destination:     d.Destination,
-		Blog:            d.Blog,
-		Car:             d.Car,
-		Review:          d.Review,
-		Partner:         d.Partner,
-		Booking:         d.Booking,
-		Rental:          d.Rental,
-		AirportTransfer: d.AirportTransfer,
-		ContactMessage:  d.ContactMessage,
-		Newsletter:      d.Newsletter,
-		Quote:           d.Quote,
-		Customer:        d.Customer,
-		TenantUser:      d.TenantUser,
-		SitePage:        d.SitePage,
-		Upload:          d.Upload,
+		Auth:             d.Auth.Require,
+		Subscription:     subscription,
+		AuthRateLimit:    d.AuthRateLimit,
+		Destination:      d.Destination,
+		Blog:             d.Blog,
+		Car:              d.Car,
+		Review:           d.Review,
+		Partner:          d.Partner,
+		Booking:          d.Booking,
+		Rental:           d.Rental,
+		AirportTransfer:  d.AirportTransfer,
+		ContactMessage:   d.ContactMessage,
+		Newsletter:       d.Newsletter,
+		Quote:            d.Quote,
+		Customer:         d.Customer,
+		TenantUser:       d.TenantUser,
+		SitePage:         d.SitePage,
+		Upload:           d.Upload,
+		GuideApplication: d.GuideApplication,
 	})
 }

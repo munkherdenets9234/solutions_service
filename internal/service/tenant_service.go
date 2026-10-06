@@ -268,18 +268,3 @@ func (s *TenantService) UpdateProject(ctx context.Context, idStr string, update 
 	return s.detailRepo.Upsert(ctx, id, update, userID)
 }
 
-// Resolve looks up an active tenant by its raw API key, for request-time
-// tenant resolution (used by TenantMiddleware).
-func (s *TenantService) Resolve(ctx context.Context, rawAPIKey string) (*models.Tenant, error) {
-	t, err := s.repo.FindByAPIKeyHash(ctx, apikey.Hash(rawAPIKey))
-	if err != nil {
-		if err == mongo.ErrNoDocuments {
-			return nil, apierr.Unauthorized("")
-		}
-		return nil, apierr.Internal(err)
-	}
-	if t.Status != models.TenantActive {
-		return nil, apierr.Forbidden("tenant suspended").In(apierr.DomainTenant)
-	}
-	return t, nil
-}

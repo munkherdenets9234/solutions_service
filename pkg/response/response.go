@@ -7,6 +7,7 @@ package response
 
 import (
 	"errors"
+	"net"
 	"net/http"
 	"strconv"
 
@@ -27,6 +28,7 @@ type errBody struct {
 	Domain     string `json:"domain"`
 	Code       string `json:"code"`
 	Message    string `json:"message"`
+	Detail     string `json:"detail,omitempty"`      // development, loopback caller only
 	StackTrace string `json:"stack_trace,omitempty"` // development only
 }
 
@@ -57,6 +59,19 @@ func NoContent(c *gin.Context) {
 	c.Status(http.StatusNoContent)
 }
 
+// isLoopbackPeer reports whether the TCP peer of the request is this machine.
+func isLoopbackPeer(c *gin.Context) bool {
+	if c.Request == nil {
+		return false
+	}
+	host, _, err := net.SplitHostPort(c.Request.RemoteAddr)
+	if err != nil {
+		host = c.Request.RemoteAddr
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // Err writes the error response for err.
 //
 // The top-level "message" field is kept alongside the structured "error"
@@ -83,6 +98,16 @@ func Err(c *gin.Context, err error, devMode bool) {
 	}
 	if devMode && appErr.Stack != "" {
 		body.StackTrace = appErr.Stack
+	}
+	// The public message is the same whatever the cause. The specific cause is
+	// shown only in development and only to a caller on this machine, so a
+	// deployment mistakenly left in development never tells a stranger whether
+	// a key exists. RemoteAddr is the TCP peer, not a forwarded header.
+	if devMode && isLoopbackPeer(c) {
+		body.Detail = appErr.Detail
+		if body.Detail == "" && appErr.Err != nil {
+			body.Detail = appErr.Err.Error()
+		}
 	}
 
 	c.AbortWithStatusJSON(appErr.HTTPStatus, envelope{

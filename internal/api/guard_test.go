@@ -524,3 +524,51 @@ func TestAdminTranslationRoutesAreInTheTokenGroup(t *testing.T) {
 		}
 	}
 }
+
+// fakeResolver lets a request past TenantMiddleware with any non-empty key, so
+// the next gate down (the bearer) is the one under test.
+type fakeResolver struct{}
+
+func (fakeResolver) Resolve(_ context.Context, _ string) (middleware.TenantRef, error) {
+	return middleware.TenantRef{ID: primitive.NewObjectID()}, nil
+}
+
+// TestGuideAdminRoutesRequireBearer: applicant PII sits behind the tenant
+// admin's bearer, not the storefront key alone. The key is published in the
+// storefront's JavaScript, so a key with no token must be refused.
+func TestGuideAdminRoutesRequireBearer(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	maker, err := token.NewMaker(strings.Repeat("k", 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := NewServer(Deps{
+		Log:            zap.NewNop(),
+		Config:         &config.Config{AppEnv: config.EnvTest},
+		Auth:           middleware.NewAuthMiddleware(maker),
+		TenantMW:       middleware.NewTenantMiddleware(fakeResolver{}),
+		SubscriptionMW: middleware.NewSubscriptionMiddleware(entitlement.Unenforced{}),
+	}).Handler()
+
+	const prefix = "/api/v1/admin/guide-applications"
+	checked := 0
+	for _, r := range e.Routes() {
+		if !strings.HasPrefix(r.Path, prefix) {
+			continue
+		}
+		checked++
+		t.Run(r.Method+" "+r.Path, func(t *testing.T) {
+			req := httptest.NewRequest(r.Method, fillParams(r.Path), strings.NewReader(`{}`))
+			req.Header.Set("X-API-Key", "test-key")
+			req.Header.Set("Content-Type", "application/json")
+			w := httptest.NewRecorder()
+			e.ServeHTTP(w, req)
+			if w.Code != http.StatusUnauthorized {
+				t.Fatalf("got %d, want 401 - applicant data reachable with the key alone\nbody: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+	if checked != 6 {
+		t.Fatalf("found %d guide admin routes, want 6", checked)
+	}
+}
