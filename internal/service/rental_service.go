@@ -17,7 +17,12 @@ type RentalService struct {
 	customerRepo   *repository.CustomerRepo
 	carRepo        *repository.CarRepo
 	tenantUserRepo *repository.TenantUserRepo
+	// notifier is nil when staff mail is off.
+	notifier requestNotifier
 }
+
+// WithNotifier sets the staff-mail notifier. Pass an untyped nil to turn it off.
+func (s *RentalService) WithNotifier(n requestNotifier) { s.notifier = n }
 
 func NewRentalService(repo *repository.RentalRepo, customerRepo *repository.CustomerRepo, carRepo *repository.CarRepo, tenantUserRepo *repository.TenantUserRepo) *RentalService {
 	return &RentalService{repo: repo, customerRepo: customerRepo, carRepo: carRepo, tenantUserRepo: tenantUserRepo}
@@ -65,6 +70,9 @@ func (s *RentalService) Create(ctx context.Context, tenantID primitive.ObjectID,
 
 	if err := s.repo.Create(ctx, tenantID, &rt); err != nil {
 		return nil, apierr.Internal(err)
+	}
+	if s.notifier != nil {
+		s.notifier.Notify(ctx, tenantID, NotifyRental, rt.ID.Hex(), notifySummary(input.Customer.Name, "pickup", rt.PickupDate))
 	}
 	return &RentalDetail{Rental: rt, Customer: customer}, nil
 }

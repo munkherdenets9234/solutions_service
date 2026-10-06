@@ -51,7 +51,12 @@ type GuideApplicationService struct {
 	users guideUsers
 	now   func() time.Time
 	locks keyedLock
+	// notifier is nil when staff mail is off.
+	notifier requestNotifier
 }
+
+// WithNotifier sets the staff-mail notifier. Pass an untyped nil to turn it off.
+func (s *GuideApplicationService) WithNotifier(n requestNotifier) { s.notifier = n }
 
 // keyedLock is a mutex per key; idle entries are removed.
 type keyedLock struct {
@@ -203,6 +208,10 @@ func (s *GuideApplicationService) Submit(ctx context.Context, tenantID primitive
 	}
 
 	hexID := a.ID.Hex()
+	if s.notifier != nil {
+		// Name and season only: no phone, email or notes.
+		s.notifier.Notify(ctx, tenantID, NotifyGuide, hexID, notifySummary(a.Personal.FullName, "season", time.Time{})+" ("+guideSeason+")")
+	}
 	return &SubmitResult{ID: hexID, ConfirmationID: "GA-" + upperTail(hexID, 6)}, nil
 }
 

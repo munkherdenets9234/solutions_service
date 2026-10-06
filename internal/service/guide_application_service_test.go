@@ -848,3 +848,87 @@ func TestFailedCleanupAfterInsertErrorStillMapsTo500(t *testing.T) {
 		t.Fatalf("cause = %v", ae.Err)
 	}
 }
+
+// ── notifier ─────────────────────────────────────────────────────────────
+
+type notifyCall struct {
+	tenant   primitive.ObjectID
+	kind     NotifyKind
+	recordID string
+	summary  string
+}
+
+// fakeRequestNotifier records Notify calls. It is shared by the tests of every
+// service that takes a requestNotifier.
+type fakeRequestNotifier struct {
+	mu    sync.Mutex
+	calls []notifyCall
+}
+
+func (f *fakeRequestNotifier) Notify(_ context.Context, tenantID primitive.ObjectID, kind NotifyKind, recordID, summary string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, notifyCall{tenantID, kind, recordID, summary})
+}
+
+func TestSubmitNotifiesAfterSuccessfulWrite(t *testing.T) {
+	e := newGuideSvcEnv()
+	n := &fakeRequestNotifier{}
+	e.svc.WithNotifier(n)
+	a := validGuideApp()
+	a.Personal.Phone = "+976 99112233"
+	a.Personal.Email = "private@example.com"
+	res, err := e.svc.Submit(context.Background(), e.t, a, []GuideUpload{guideUp(models.GuideFileCV)})
+	if err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+	if len(n.calls) != 1 {
+		t.Fatalf("notify calls = %d, want 1", len(n.calls))
+	}
+	c := n.calls[0]
+	if c.tenant != e.t || c.kind != NotifyGuide || c.recordID != res.ID {
+		t.Fatalf("call = %+v, result id %s", c, res.ID)
+	}
+	if !strings.Contains(c.summary, a.Personal.FullName) {
+		t.Fatalf("summary %q lacks the applicant name", c.summary)
+	}
+	for _, secret := range []string{"99112233", "private@example.com", "@"} {
+		if strings.Contains(c.summary, secret) {
+			t.Fatalf("summary %q leaks contact detail %q", c.summary, secret)
+		}
+	}
+}
+
+func TestSubmitDoesNotNotifyOnValidationError(t *testing.T) {
+	e := newGuideSvcEnv()
+	n := &fakeRequestNotifier{}
+	e.svc.WithNotifier(n)
+	a := validGuideApp()
+	a.Personal.Email = "not-an-email"
+	if _, err := e.svc.Submit(context.Background(), e.t, a, []GuideUpload{guideUp(models.GuideFileCV)}); err == nil {
+		t.Fatal("expected validation error")
+	}
+	if len(n.calls) != 0 {
+		t.Fatalf("notify calls = %d, want 0", len(n.calls))
+	}
+}
+
+func TestSubmitDoesNotNotifyOnWriteError(t *testing.T) {
+	e := newGuideSvcEnv()
+	n := &fakeRequestNotifier{}
+	e.svc.WithNotifier(n)
+	e.store.createErr = errors.New("boom")
+	if _, err := e.svc.Submit(context.Background(), e.t, validGuideApp(), []GuideUpload{guideUp(models.GuideFileCV)}); err == nil {
+		t.Fatal("expected error")
+	}
+	if len(n.calls) != 0 {
+		t.Fatalf("notify calls = %d, want 0", len(n.calls))
+	}
+}
+
+func TestSubmitWithoutNotifierStillWorks(t *testing.T) {
+	e := newGuideSvcEnv()
+	if _, err := e.svc.Submit(context.Background(), e.t, validGuideApp(), []GuideUpload{guideUp(models.GuideFileCV)}); err != nil {
+		t.Fatalf("submit: %v", err)
+	}
+}

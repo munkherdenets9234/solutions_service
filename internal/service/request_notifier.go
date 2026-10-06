@@ -37,6 +37,11 @@ const (
 )
 
 type (
+	// requestNotifier is what the request services call after a successful
+	// write. *RequestNotifier satisfies it; nil on a service means mail is off.
+	requestNotifier interface {
+		Notify(ctx context.Context, tenantID primitive.ObjectID, kind NotifyKind, recordID, summary string)
+	}
 	recipientLister interface {
 		FindEmailRecipients(ctx context.Context, tenantID primitive.ObjectID) ([]*models.TenantUser, error)
 	}
@@ -49,6 +54,21 @@ type (
 		Links(ctx context.Context, tenantID primitive.ObjectID, kind NotifyKind, recordID string) (adminURL, siteBase, tenantName string, err error)
 	}
 )
+
+var _ requestNotifier = (*RequestNotifier)(nil)
+
+// notifySummary builds the one-line summary a notification carries: who and
+// when, nothing else. It never takes phone, email or notes.
+func notifySummary(name, label string, when time.Time) string {
+	name = oneLine(name)
+	if name == "" {
+		name = "(no name)"
+	}
+	if when.IsZero() {
+		return name
+	}
+	return name + " - " + label + " " + when.UTC().Format("2006-01-02")
+}
 
 // RequestNotifier queues one email per opted-in tenant user when a storefront
 // request is created. It makes no network call: it only inserts outbox rows,
