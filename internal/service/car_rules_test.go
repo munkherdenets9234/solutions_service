@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 	"time"
@@ -185,6 +186,32 @@ func TestNormalizeCarUpdate(t *testing.T) {
 	}
 }
 
+func TestPrepareCarCreateFromRFC3339JSON(t *testing.T) {
+	body := `{"slug":"x","rental_modes":["self_drive"],"self_drive_from":"2026-07-01T00:00:00Z","self_drive_to":"2026-08-31T00:00:00Z"}`
+	var c models.Car
+	if err := json.Unmarshal([]byte(body), &c); err != nil {
+		t.Fatal(err)
+	}
+	if err := PrepareCarCreate(&c); err != nil {
+		t.Fatal(err)
+	}
+	if c.SelfDriveFrom == nil || !c.SelfDriveFrom.Equal(*d("2026-07-01")) ||
+		c.SelfDriveTo == nil || !c.SelfDriveTo.Equal(*d("2026-08-31")) {
+		t.Fatalf("dates not kept: %v %v", c.SelfDriveFrom, c.SelfDriveTo)
+	}
+}
+
+func TestNormalizeCarUpdateRFC3339Range(t *testing.T) {
+	existing := &models.Car{RentalModes: []string{models.CarModeSelfDrive}}
+	u := bson.M{"self_drive_from": "2026-07-01T00:00:00Z", "self_drive_to": "2026-08-31T00:00:00Z"}
+	if err := NormalizeCarUpdate(existing, u); err != nil {
+		t.Fatal(err)
+	}
+	if u["self_drive_from"] != *d("2026-07-01") || u["self_drive_to"] != *d("2026-08-31") {
+		t.Fatalf("got %v %v", u["self_drive_from"], u["self_drive_to"])
+	}
+}
+
 func TestValidateRentalForCar(t *testing.T) {
 	ranged := func() *models.Car {
 		return &models.Car{IsActive: true, RentalModes: []string{models.CarModeSelfDrive},
@@ -215,6 +242,12 @@ func TestValidateRentalForCar(t *testing.T) {
 		{"inactive", inactive, rental(models.RentalSelfDrive, "2026-07-01", "2026-07-03"), 404},
 		{"legacy car both modes any dates", open, rental(models.RentalSelfDrive, "2030-01-01", "2030-01-05"), 0},
 		{"legacy car with driver", open, rental(models.RentalWithDriver, "2030-01-01", "2030-01-05"), 0},
+		{"pickup time of day inside", ranged(), &models.Rental{Mode: models.RentalSelfDrive,
+			PickupDate: time.Date(2026, 7, 1, 0, 30, 0, 0, time.UTC), ReturnDate: *d("2026-07-03")}, 0},
+		{"return late on last day", ranged(), &models.Rental{Mode: models.RentalSelfDrive,
+			PickupDate: *d("2026-08-30"), ReturnDate: time.Date(2026, 8, 31, 23, 59, 0, 0, time.UTC)}, 0},
+		{"return midnight after last day", ranged(), &models.Rental{Mode: models.RentalSelfDrive,
+			PickupDate: *d("2026-08-30"), ReturnDate: time.Date(2026, 9, 1, 0, 0, 0, 0, time.UTC)}, 400},
 		{"with driver ignores range", &models.Car{IsActive: true, SelfDriveFrom: d("2026-07-01"), SelfDriveTo: d("2026-08-31")},
 			rental(models.RentalWithDriver, "2027-01-01", "2027-01-05"), 0},
 	}
