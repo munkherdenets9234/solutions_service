@@ -37,6 +37,7 @@ func registerAdminReads(scoped *httpx.G, d Deps) {
 		review:      d.Review,
 		booking:     d.Booking,
 		rental:      d.Rental,
+		car:         d.Car,
 		transfer:    d.AirportTransfer,
 		contact:     d.ContactMessage,
 		quote:       d.Quote,
@@ -57,6 +58,8 @@ func registerAdminReads(scoped *httpx.G, d Deps) {
 	g.GET("/bookings/:id", r.GetBooking)
 	g.GET("/rentals", r.ListRentals)
 	g.GET("/rentals/:id", r.GetRental)
+	g.GET("/cars", r.ListCars)
+	g.GET("/cars/:slug", r.GetCar)
 	g.GET("/airport-transfers", r.ListTransfers)
 	g.GET("/airport-transfers/:id", r.GetTransfer)
 	g.GET("/contact-messages", r.ListContactMessages)
@@ -76,6 +79,7 @@ type adminReadsController struct {
 	review      *service.ReviewService
 	booking     *service.BookingService
 	rental      *service.RentalService
+	car         *service.CarService
 	transfer    *service.AirportTransferService
 	contact     *service.ContactMessageService
 	quote       *service.QuoteService
@@ -210,6 +214,25 @@ func (h *adminReadsController) GetRental(c *gin.Context) error {
 		return err
 	}
 	response.OK(c, rt)
+	return nil
+}
+
+func (h *adminReadsController) ListCars(c *gin.Context) error {
+	page, limit := apictx.Page(c, 20)
+	data, total, err := h.car.ListAdmin(c.Request.Context(), apictx.TenantID(c), page, limit)
+	if err != nil {
+		return err
+	}
+	response.List(c, data, response.Meta{Total: total, Page: page, Limit: limit})
+	return nil
+}
+
+func (h *adminReadsController) GetCar(c *gin.Context) error {
+	car, err := h.car.GetBySlugAdmin(c.Request.Context(), apictx.TenantID(c), c.Param("slug"))
+	if err != nil {
+		return err
+	}
+	response.OK(c, car)
 	return nil
 }
 

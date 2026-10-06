@@ -233,3 +233,26 @@ func TestValidateRentalForCar(t *testing.T) {
 		})
 	}
 }
+
+func TestPublicCarFilter(t *testing.T) {
+	got := publicCarFilter(ListCarsFilter{})
+	want := bson.M{"is_active": true, "is_visible": bson.M{"$ne": false}}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+	got = publicCarFilter(ListCarsFilter{Type: "suv"})
+	want = bson.M{"is_active": true, "is_visible": bson.M{"$ne": false}, "type": "suv"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("got %v want %v", got, want)
+	}
+}
+
+func TestAdminCarFilter(t *testing.T) {
+	got := adminCarFilter()
+	if _, ok := got["is_visible"]; ok {
+		t.Fatal("admin filter must not filter on is_visible")
+	}
+	if !reflect.DeepEqual(got, bson.M{"is_active": true}) {
+		t.Fatalf("got %v", got)
+	}
+}

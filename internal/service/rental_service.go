@@ -41,11 +41,16 @@ func (s *RentalService) Create(ctx context.Context, tenantID primitive.ObjectID,
 		return nil, apierr.BadRequest("invalid car id")
 	}
 
-	if _, err := s.carRepo.FindByID(ctx, tenantID, carID); err != nil {
+	car, err := s.carRepo.FindByID(ctx, tenantID, carID)
+	if err != nil {
 		if err == mongo.ErrNoDocuments {
 			return nil, apierr.NotFound("car not found")
 		}
 		return nil, apierr.Internal(err)
+	}
+	// Validate before the customer upsert so a rejected rental creates nothing.
+	if err := ValidateRentalForCar(car, &input.Rental); err != nil {
+		return nil, err
 	}
 
 	customer, err := s.customerRepo.Upsert(ctx, tenantID, &input.Customer)
