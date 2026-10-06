@@ -109,6 +109,11 @@ type Client struct {
 	stop   chan struct{}
 	closer sync.Once
 
+	// byTenant maps a tenant to the cache key of its last-stored positive
+	// entry, so IdentityFor needs no raw key. Kept in step with cache by
+	// setLocked/deleteLocked; both are called with mu held.
+	byTenant map[primitive.ObjectID]string
+
 	// inflight collapses concurrent misses on one key into a single fetch.
 	inflight map[string]*call
 	// backoffUntil: until then, tenantcore is not contacted at all.
@@ -182,6 +187,7 @@ func NewClient(cfg ClientConfig) *Client {
 		now:        time.Now,
 		maxEntries: MaxEntries,
 		cache:      make(map[string]*cacheEntry),
+		byTenant:   make(map[primitive.ObjectID]string),
 		inflight:   make(map[string]*call),
 		stop:       make(chan struct{}),
 	}
@@ -226,7 +232,7 @@ func (c *Client) sweepLocked() {
 	now := c.now()
 	for k, e := range c.cache {
 		if c.expired(e, now) {
-			delete(c.cache, k)
+			c.deleteLocked(k)
 		}
 	}
 }
@@ -482,7 +488,51 @@ func (c *Client) store(key string, e *cacheEntry) {
 			c.evictOneLocked()
 		}
 	}
+	c.setLocked(key, e)
+}
+
+// setLocked writes an entry and keeps the tenant index in step. Caller holds mu.
+func (c *Client) setLocked(key string, e *cacheEntry) {
+	// Overwriting an entry whose tenant changes (or that turns negative) must
+	// not leave the old tenant pointing at this key.
+	if old, ok := c.cache[key]; ok && !old.unknown && c.byTenant[old.ident.TenantID] == key {
+		delete(c.byTenant, old.ident.TenantID)
+	}
 	c.cache[key] = e
+	if !e.unknown && !e.ident.TenantID.IsZero() {
+		c.byTenant[e.ident.TenantID] = key
+	}
+}
+
+// deleteLocked removes an entry and its tenant index. Caller holds mu.
+func (c *Client) deleteLocked(key string) {
+	if e, ok := c.cache[key]; ok && !e.unknown && c.byTenant[e.ident.TenantID] == key {
+		delete(c.byTenant, e.ident.TenantID)
+	}
+	delete(c.cache, key)
+}
+
+// IdentityFor returns the last-known identity of a tenant from this client's
+// own cache. It makes no network call and never sees a raw API key, so it
+// answers only for tenants whose key was resolved recently (within TTL plus the
+// grace window). Safe on a nil receiver. The returned Hosts slice is a copy.
+func (c *Client) IdentityFor(tenantID primitive.ObjectID) (Identity, bool) {
+	if c == nil {
+		return Identity{}, false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	key, ok := c.byTenant[tenantID]
+	if !ok {
+		return Identity{}, false
+	}
+	e, ok := c.cache[key]
+	if !ok || e.unknown || c.expired(e, c.now()) {
+		return Identity{}, false
+	}
+	id := e.ident
+	id.Hosts = append([]string(nil), e.ident.Hosts...)
+	return id, true
 }
 
 func (c *Client) evictOneLocked() {
@@ -497,9 +547,9 @@ func (c *Client) evictOneLocked() {
 		}
 	}
 	if oldestNeg != "" {
-		delete(c.cache, oldestNeg)
+		c.deleteLocked(oldestNeg)
 	} else if oldestAny != "" {
-		delete(c.cache, oldestAny)
+		c.deleteLocked(oldestAny)
 	}
 }
 
