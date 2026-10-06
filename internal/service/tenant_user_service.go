@@ -24,6 +24,8 @@ type TenantUserStore interface {
 	FindAdmins(ctx context.Context, tenantID primitive.ObjectID) ([]*models.TenantUser, error)
 	UpdatePassword(ctx context.Context, tenantID, id primitive.ObjectID, passwordHash string) error
 	UpdateStatus(ctx context.Context, tenantID, id primitive.ObjectID, status models.TenantUserStatus) error
+	FindEmailRecipients(ctx context.Context, tenantID primitive.ObjectID) ([]*models.TenantUser, error)
+	SetReceiveEmails(ctx context.Context, tenantID, id primitive.ObjectID, v bool) error
 }
 
 type TenantUserService struct {
@@ -83,7 +85,7 @@ func (s *TenantUserService) GetAdmin(ctx context.Context, tenantID primitive.Obj
 // Create adds a login profile for the tenant. If rawPassword is empty, one
 // is generated and returned — the only time it is ever available in
 // plaintext, so callers must surface it to the caller immediately.
-func (s *TenantUserService) Create(ctx context.Context, tenantID primitive.ObjectID, name, email, rawPassword string, role models.TenantUserRole) (*models.TenantUser, string, error) {
+func (s *TenantUserService) Create(ctx context.Context, tenantID primitive.ObjectID, name, email, rawPassword string, role models.TenantUserRole, receiveEmails bool) (*models.TenantUser, string, error) {
 	if email == "" {
 		return nil, "", apierr.BadRequest("email is required")
 	}
@@ -110,11 +112,12 @@ func (s *TenantUserService) Create(ctx context.Context, tenantID primitive.Objec
 	}
 
 	u := &models.TenantUser{
-		TenantID:     tenantID,
-		Name:         name,
-		Email:        email,
-		PasswordHash: hash,
-		Role:         role,
+		TenantID:      tenantID,
+		Name:          name,
+		Email:         email,
+		PasswordHash:  hash,
+		Role:          role,
+		ReceiveEmails: receiveEmails,
 	}
 	if err := s.repo.Create(ctx, u); err != nil {
 		if mongo.IsDuplicateKeyError(err) {
@@ -225,4 +228,23 @@ func (s *TenantUserService) ResetPassword(ctx context.Context, tenantID primitiv
 		return "", apierr.Internal(err)
 	}
 	return newPassword, nil
+}
+
+// UpdateReceiveEmails sets the user's request-email opt-in. A nil value means
+// the field was absent from the request and leaves the stored flag untouched.
+func (s *TenantUserService) UpdateReceiveEmails(ctx context.Context, tenantID primitive.ObjectID, idStr string, v *bool) error {
+	id, err := primitive.ObjectIDFromHex(idStr)
+	if err != nil {
+		return apierr.BadRequest("invalid id")
+	}
+	if v == nil {
+		return nil
+	}
+	if err := s.repo.SetReceiveEmails(ctx, tenantID, id, *v); err != nil {
+		if err == mongo.ErrNoDocuments {
+			return apierr.NotFound("login profile not found")
+		}
+		return apierr.Internal(err)
+	}
+	return nil
 }

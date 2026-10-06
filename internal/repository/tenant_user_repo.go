@@ -120,3 +120,37 @@ func (r *TenantUserRepo) UpdateStatus(ctx context.Context, tenantID, id primitiv
 	}})
 	return err
 }
+
+// FindEmailRecipients returns the tenant's active users who opted in to
+// request emails, by email.
+func (r *TenantUserRepo) FindEmailRecipients(ctx context.Context, tenantID primitive.ObjectID) ([]*models.TenantUser, error) {
+	cur, err := r.col.Find(ctx,
+		bson.M{"tenant_id": tenantID, "status": models.TenantUserActive, "receive_emails": true},
+		options.Find().SetSort(bson.D{{Key: "email", Value: 1}}))
+	if err != nil {
+		return nil, err
+	}
+	defer cur.Close(ctx)
+
+	var results []*models.TenantUser
+	if err := cur.All(ctx, &results); err != nil {
+		return nil, err
+	}
+	return results, nil
+}
+
+// SetReceiveEmails sets the request-email opt-in for one user of the tenant.
+// A user that is absent or belongs to another tenant yields ErrNoDocuments.
+func (r *TenantUserRepo) SetReceiveEmails(ctx context.Context, tenantID, id primitive.ObjectID, v bool) error {
+	res, err := r.col.UpdateOne(ctx, bson.M{"_id": id, "tenant_id": tenantID}, bson.M{"$set": bson.M{
+		"receive_emails": v,
+		"updated_at":     time.Now(),
+	}})
+	if err != nil {
+		return err
+	}
+	if res.MatchedCount == 0 {
+		return mongo.ErrNoDocuments
+	}
+	return nil
+}

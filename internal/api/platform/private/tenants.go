@@ -36,7 +36,7 @@ func (h *tenantsController) Create(c *gin.Context) error {
 	resp := gin.H{"tenant": created, "api_key": rawAPIKey}
 
 	if created.ContactEmail != "" {
-		user, rawPassword, err := h.userSvc.Create(c.Request.Context(), created.ID, "", created.ContactEmail, "", models.TenantUserAdmin)
+		user, rawPassword, err := h.userSvc.Create(c.Request.Context(), created.ID, "", created.ContactEmail, "", models.TenantUserAdmin, false)
 		if err != nil {
 			return err
 		}

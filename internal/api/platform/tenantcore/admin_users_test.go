@@ -46,6 +46,12 @@ func (f *fakeStore) UpdatePassword(context.Context, primitive.ObjectID, primitiv
 func (f *fakeStore) UpdateStatus(context.Context, primitive.ObjectID, primitive.ObjectID, models.TenantUserStatus) error {
 	return nil
 }
+func (f *fakeStore) FindEmailRecipients(context.Context, primitive.ObjectID) ([]*models.TenantUser, error) {
+	return nil, nil
+}
+func (f *fakeStore) SetReceiveEmails(context.Context, primitive.ObjectID, primitive.ObjectID, bool) error {
+	return nil
+}
 func (f *fakeStore) FindByID(_ context.Context, _ primitive.ObjectID, id primitive.ObjectID) (*models.TenantUser, error) {
 	for _, u := range f.users {
 		if u.ID == id {

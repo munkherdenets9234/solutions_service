@@ -32,6 +32,8 @@ type TenantUser struct {
 	PasswordHash string             `bson:"password_hash" json:"-"`
 	Role         TenantUserRole     `bson:"role" json:"role"`
 	Status       TenantUserStatus   `bson:"status" json:"status"`
-	CreatedAt    time.Time          `bson:"created_at" json:"created_at"`
-	UpdatedAt    time.Time          `bson:"updated_at" json:"updated_at"`
+	// ReceiveEmails opts the user in to request notification emails. Default false.
+	ReceiveEmails bool      `bson:"receive_emails" json:"receive_emails"`
+	CreatedAt     time.Time `bson:"created_at" json:"created_at"`
+	UpdatedAt     time.Time `bson:"updated_at" json:"updated_at"`
 }

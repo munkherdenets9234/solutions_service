@@ -88,6 +88,7 @@ func Register(base *gin.RouterGroup, d Deps) {
 	// tenant admin's password without holding that tenant's credentials.
 	u := httpx.Wrap(scoped.Group("/admin/users", d.Auth("admin", "superadmin"), d.AuthRateLimit))
 	u.POST("", users.Create)
+	u.PUT("/:id", users.Update)
 	u.PUT("/:id/status", users.UpdateStatus)
 	u.PUT("/:id/password", users.ResetPassword)
 
