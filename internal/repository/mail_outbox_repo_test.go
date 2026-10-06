@@ -154,3 +154,13 @@ func TestMailOutboxIndexes(t *testing.T) {
 		t.Fatalf("TTL index must expire after 2592000s (30 days), got %#v", ttl)
 	}
 }
+
+// A worker that overruns its lease must not overwrite a row another worker
+// already finished: the outcome is written only while the row is still pending.
+func TestMarkFilterOnlyMatchesPending(t *testing.T) {
+	id := primitive.NewObjectID()
+	want := bson.M{"_id": id, "status": models.MailPending}
+	if got := markFilter(id); !reflect.DeepEqual(got, want) {
+		t.Fatalf("markFilter = %#v\nwant %#v", got, want)
+	}
+}

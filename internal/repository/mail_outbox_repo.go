@@ -48,6 +48,13 @@ func claimSort() bson.D {
 	return bson.D{{Key: "next_attempt_at", Value: 1}}
 }
 
+// markFilter matches a row only while it is still pending, so a worker that
+// overran its lease cannot overwrite a row another worker already finished
+// (a late failure flipping a sent row back to pending would send it twice).
+func markFilter(id primitive.ObjectID) bson.M {
+	return bson.M{"_id": id, "status": models.MailPending}
+}
+
 func sentUpdate(now time.Time) bson.M {
 	return bson.M{"$set": bson.M{
 		"status":     models.MailSent,
@@ -140,7 +147,9 @@ func (r *MailOutboxRepo) Enqueue(ctx context.Context, rows []*models.MailOutbox)
 
 // ClaimDue atomically takes the oldest due pending row and leases it, or
 // returns (nil, nil) when there is none. One FindOneAndUpdate, so two workers
-// cannot both get the same row.
+// cannot both get the same row. The lease must exceed the worker's send
+// timeout, otherwise the row becomes due again while the first send is still
+// running and is claimed twice.
 func (r *MailOutboxRepo) ClaimDue(ctx context.Context, now time.Time, lease time.Duration) (*models.MailOutbox, error) {
 	var m models.MailOutbox
 	err := r.col.FindOneAndUpdate(ctx, claimFilter(now), claimUpdate(now, lease),
@@ -155,15 +164,19 @@ func (r *MailOutboxRepo) ClaimDue(ctx context.Context, now time.Time, lease time
 	return &m, nil
 }
 
+// MarkSent records a delivered row. Only a still-pending row is updated, so the
+// lease passed to ClaimDue must exceed the worker's send timeout.
 func (r *MailOutboxRepo) MarkSent(ctx context.Context, id primitive.ObjectID, now time.Time) error {
-	_, err := r.col.UpdateByID(ctx, id, sentUpdate(now))
+	// Zero matches is fine: the row was deleted by unsubscribe or finished by another worker.
+	_, err := r.col.UpdateOne(ctx, markFilter(id), sentUpdate(now))
 	return err
 }
 
 // MarkAttemptFailed stores the outcome of a failed send. errCode is a short
 // code and is truncated to 64 characters.
 func (r *MailOutboxRepo) MarkAttemptFailed(ctx context.Context, id primitive.ObjectID, errCode string, attempts int, nextAt time.Time, final bool) error {
-	_, err := r.col.UpdateByID(ctx, id, attemptFailedUpdate(time.Now(), errCode, attempts, nextAt, final))
+	// Zero matches is fine: the row was deleted by unsubscribe or finished by another worker.
+	_, err := r.col.UpdateOne(ctx, markFilter(id), attemptFailedUpdate(time.Now(), errCode, attempts, nextAt, final))
 	return err
 }
 
