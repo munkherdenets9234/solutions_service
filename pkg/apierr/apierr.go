@@ -89,6 +89,17 @@ type APIError struct {
 	Err        error  // underlying cause; logged, never serialised
 	Stack      string // captured at construction; rendered only in dev
 	RetryAfter int    // seconds, for CodeRateLimited; 0 otherwise
+	// Detail is the specific cause, for a developer on a local machine. It is
+	// rendered only in development to a loopback caller (see response.Err),
+	// because the public Message is deliberately the same whatever the cause.
+	Detail string
+}
+
+// WithDetail attaches the specific cause of e, for development responses only.
+// Never put a secret in it.
+func (e *APIError) WithDetail(detail string) *APIError {
+	e.Detail = detail
+	return e
 }
 
 func (e *APIError) Error() string {

@@ -41,7 +41,6 @@ func TestTenantResolveLimiterRunsBeforeTheResolver(t *testing.T) {
 			RateLimitBurst:             1,
 			AuthRatePerMinute:          10,
 			LeadRatePerMinute:          20,
-			TenantResolver:             config.TenantResolverTenantcore,
 			TenantResolveRatePerMinute: 1,
 			TenantResolveBurst:         1,
 		},
@@ -107,7 +106,6 @@ func flood(e *gin.Engine, n int) map[int]int {
 func TestTenantResolveLimiter_DefaultsAdmitARealisticBurst(t *testing.T) {
 	res := &countingResolver{}
 	e := floodEngine(t, res, config.Config{
-		TenantResolver:             config.TenantResolverTenantcore,
 		TenantResolveRatePerMinute: 600,
 		TenantResolveBurst:         120,
 	})
@@ -122,26 +120,12 @@ func TestTenantResolveLimiter_DefaultsAdmitARealisticBurst(t *testing.T) {
 func TestTenantResolveLimiter_RefusesPastBurstBeforeResolver(t *testing.T) {
 	res := &countingResolver{}
 	e := floodEngine(t, res, config.Config{
-		TenantResolver:             config.TenantResolverTenantcore,
 		TenantResolveRatePerMinute: 1,
 		TenantResolveBurst:         120,
 	})
 	codes := flood(e, 125)
 	if res.calls.Load() != 120 || codes[http.StatusTooManyRequests] != 5 {
 		t.Fatalf("codes=%v resolver calls=%d, want 120 calls and 5 refusals", codes, res.calls.Load())
-	}
-}
-
-// Local mode (the default) has no resolve limiter in the chain at all, even
-// with a tiny global burst and rate limiting on.
-func TestTenantResolveLimiter_AbsentInLocalMode(t *testing.T) {
-	for _, mode := range []string{"", config.TenantResolverLocal} {
-		res := &countingResolver{}
-		e := floodEngine(t, res, config.Config{TenantResolver: mode, TenantResolveRatePerMinute: 1, TenantResolveBurst: 1})
-		codes := flood(e, 300)
-		if codes[http.StatusTooManyRequests] != 0 || res.calls.Load() != 300 {
-			t.Fatalf("mode %q: codes=%v calls=%d, want 300 calls and no 429", mode, codes, res.calls.Load())
-		}
 	}
 }
 
@@ -157,7 +141,7 @@ func readyz(t *testing.T, e *gin.Engine) map[string]any {
 }
 
 // A tenantcore resolver client that cannot reach tenantcore is reported on
-// /readyz by name; local mode's output has no such block.
+// /readyz by name.
 func TestReadyzReportsDegradedTenantResolver(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
@@ -172,17 +156,12 @@ func TestReadyzReportsDegradedTenantResolver(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	deg := NewServer(Deps{
 		Log:                 zap.NewNop(),
-		Config:              &config.Config{AppEnv: config.EnvTest, TenantResolver: config.TenantResolverTenantcore},
+		Config:              &config.Config{AppEnv: config.EnvTest},
 		TenantResolveClient: c,
 	}).Handler()
 	body := readyz(t, deg)
 	block, ok := body["tenant_resolver"].(map[string]any)
 	if body["degraded"] != true || !ok || block["stale"] != true || !strings.Contains(block["detail"].(string), "tenantcore") {
 		t.Fatalf("degraded resolver not reported: %v", body)
-	}
-
-	local := NewServer(Deps{Log: zap.NewNop(), Config: &config.Config{AppEnv: config.EnvTest}}).Handler()
-	if _, present := readyz(t, local)["tenant_resolver"]; present {
-		t.Error("local mode must not emit a tenant_resolver block")
 	}
 }

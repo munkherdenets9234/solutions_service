@@ -59,15 +59,6 @@ func (r *TenantRepo) FindByID(ctx context.Context, id primitive.ObjectID) (*mode
 	return &t, nil
 }
 
-func (r *TenantRepo) FindByAPIKeyHash(ctx context.Context, hash string) (*models.Tenant, error) {
-	var t models.Tenant
-	err := r.col.FindOne(ctx, bson.M{"api_key_hash": hash}).Decode(&t)
-	if err != nil {
-		return nil, err
-	}
-	return &t, nil
-}
-
 func (r *TenantRepo) UpdateStatus(ctx context.Context, id primitive.ObjectID, status models.TenantStatus) error {
 	_, err := r.col.UpdateOne(ctx, bson.M{"_id": id}, bson.M{"$set": bson.M{
 		"status":     status,

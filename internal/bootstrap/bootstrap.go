@@ -263,10 +263,10 @@ func logFeatures(log *zap.Logger, cfg *config.Config) {
 }
 
 // warnUntrustedProxies says, once at startup, that the resolve limiter can be
-// bypassed: in tenantcore mode with TRUSTED_PROXIES unset, gin believes any
-// client-supplied X-Forwarded-For.
+// bypassed: with TRUSTED_PROXIES unset, gin believes any client-supplied
+// X-Forwarded-For.
 func warnUntrustedProxies(log *zap.Logger, cfg *config.Config) {
-	if cfg.TenantResolverTenantcoreEnabled() && !cfg.TrustedProxiesSet() {
+	if !cfg.TrustedProxiesSet() {
 		log.Warn("TRUSTED_PROXIES is not set — the per-IP tenant resolve limiter trusts a client-supplied "+
 			"X-Forwarded-For and can be bypassed with one header; set it to the hosting provider's proxy ranges",
 			zap.String("setting", "TRUSTED_PROXIES"))

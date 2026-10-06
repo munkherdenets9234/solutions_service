@@ -70,7 +70,6 @@ func TestTrustedProxies_SpoofedXFFDoesNotBypassResolveLimiter(t *testing.T) {
 	run := func(trusted []string) int {
 		res := &countingResolver{}
 		e := floodEngine(t, res, config.Config{
-			TenantResolver:             config.TenantResolverTenantcore,
 			TenantResolveRatePerMinute: 1,
 			TenantResolveBurst:         1,
 			TrustedProxies:             trusted,
@@ -97,17 +96,17 @@ func TestTrustedProxies_SpoofedXFFDoesNotBypassResolveLimiter(t *testing.T) {
 	}
 }
 
-func TestReadyz_ProxyDetailOnlyInTenantcoreModeWithoutTrustedProxies(t *testing.T) {
+func TestReadyz_ProxyDetailOnlyWithoutTrustedProxies(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	mk := func(cfg config.Config) map[string]any {
 		cfg.AppEnv = config.EnvTest
 		return readyz(t, NewServer(Deps{Log: zap.NewNop(), Config: &cfg}).Handler())
 	}
 
-	body := mk(config.Config{TenantResolver: config.TenantResolverTenantcore})
+	body := mk(config.Config{})
 	block, ok := body["tenant_resolver"].(map[string]any)
 	if !ok {
-		t.Fatalf("tenantcore mode without TRUSTED_PROXIES must carry a tenant_resolver block: %v", body)
+		t.Fatalf("without TRUSTED_PROXIES must carry a tenant_resolver block: %v", body)
 	}
 	detail, _ := block["detail"].(string)
 	for _, want := range []string{"X-Forwarded-For", "TRUSTED_PROXIES"} {
@@ -117,7 +116,7 @@ func TestReadyz_ProxyDetailOnlyInTenantcoreModeWithoutTrustedProxies(t *testing.
 	}
 	// Other unset optional features already make a bare test config degraded;
 	// the proxy note itself must add nothing to that.
-	with := mk(config.Config{TenantResolver: config.TenantResolverTenantcore, TrustedProxies: []string{"10.0.0.0/8"}})
+	with := mk(config.Config{TrustedProxies: []string{"10.0.0.0/8"}})
 	if body["degraded"] != with["degraded"] {
 		t.Errorf("the proxy note changed degraded: %v vs %v", body["degraded"], with["degraded"])
 	}
@@ -125,10 +124,7 @@ func TestReadyz_ProxyDetailOnlyInTenantcoreModeWithoutTrustedProxies(t *testing.
 		t.Errorf("status = %v", body["status"])
 	}
 
-	if _, present := mk(config.Config{TenantResolver: config.TenantResolverTenantcore, TrustedProxies: []string{"10.0.0.0/8"}})["tenant_resolver"]; present {
+	if _, present := mk(config.Config{TrustedProxies: []string{"10.0.0.0/8"}})["tenant_resolver"]; present {
 		t.Error("with TRUSTED_PROXIES set there must be no tenant_resolver block")
-	}
-	if _, present := mk(config.Config{})["tenant_resolver"]; present {
-		t.Error("local mode must not emit a tenant_resolver block")
 	}
 }

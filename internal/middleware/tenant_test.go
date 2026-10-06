@@ -3,24 +3,20 @@ package middleware
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 
-	"github.com/eandstravel/digitalservice/internal/models"
 	"github.com/eandstravel/digitalservice/internal/tenantresolve"
-	"github.com/eandstravel/digitalservice/pkg/apierr"
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.uber.org/zap"
 )
 
-// These pin the tenant gate's contract for BOTH resolvers. The local one is
-// the default and must behave exactly as it did before the resolver became
-// swappable; the tenantcore one must be indistinguishable to a caller except
-// where tenantcore itself cannot be reached.
+// These pin the tenant gate's contract. X-API-Key is resolved through
+// tenantcore only; this service's own tenants collection is never consulted.
 
 const (
 	tkKey  = "test-key-1"
@@ -53,45 +49,6 @@ func gateStatus(t *testing.T, r TenantResolver, hdr map[string]string) (*httptes
 	w := httptest.NewRecorder()
 	e.ServeHTTP(w, req)
 	return w, seen, reached
-}
-
-func localFn(t *models.Tenant, err error) TenantResolver {
-	return localResolver{lookup: fakeLookup{t: t, err: err}}
-}
-
-func TestTenantMiddleware_LocalResolverBehaviourUnchanged(t *testing.T) {
-	ok := &models.Tenant{ID: tkTenantID, Domain: tkHost}
-
-	t.Run("unknown 401", func(t *testing.T) {
-		w, _, reached := gateStatus(t, localFn(nil, apierr.Unauthorized("")), map[string]string{"X-API-Key": tkKey})
-		if w.Code != http.StatusUnauthorized || reached {
-			t.Fatalf("got %d reached=%v", w.Code, reached)
-		}
-	})
-	t.Run("suspended 403", func(t *testing.T) {
-		w, _, _ := gateStatus(t, localFn(nil, apierr.Forbidden("tenant suspended").In(apierr.DomainTenant)), map[string]string{"X-API-Key": tkKey})
-		if w.Code != http.StatusForbidden {
-			t.Fatalf("got %d", w.Code)
-		}
-	})
-	t.Run("domain mismatch 403", func(t *testing.T) {
-		w, _, reached := gateStatus(t, localFn(ok, nil), map[string]string{"X-API-Key": tkKey, "Origin": "https://evil.example"})
-		if w.Code != http.StatusForbidden || reached {
-			t.Fatalf("got %d reached=%v", w.Code, reached)
-		}
-	})
-	t.Run("ok sets CtxTenantID", func(t *testing.T) {
-		w, id, reached := gateStatus(t, localFn(ok, nil), map[string]string{"X-API-Key": tkKey, "Origin": "https://" + tkHost})
-		if w.Code != http.StatusNoContent || !reached || id != tkTenantID {
-			t.Fatalf("got %d reached=%v id=%v", w.Code, reached, id)
-		}
-	})
-	t.Run("missing header 401", func(t *testing.T) {
-		w, _, _ := gateStatus(t, localFn(ok, nil), nil)
-		if w.Code != http.StatusUnauthorized {
-			t.Fatalf("got %d", w.Code)
-		}
-	})
 }
 
 // fakeTC is an httptest stand-in for tenantcore's resolve route.
@@ -156,13 +113,17 @@ func errBody(t *testing.T, w *httptest.ResponseRecorder) string {
 
 func TestTenantMiddleware_TenantcoreResolver_UnknownKeyBody(t *testing.T) {
 	hdr := map[string]string{"X-API-Key": tkKey}
-	local, _, _ := gateStatus(t, localFn(nil, apierr.Unauthorized("")), hdr)
 	remote, _, reached := gateStatus(t, newFakeTC(t, "unknown", "").resolver(t), hdr)
 	if remote.Code != http.StatusUnauthorized || reached {
 		t.Fatalf("got %d reached=%v", remote.Code, reached)
 	}
-	if local.Body.String() != remote.Body.String() {
-		t.Fatalf("bodies differ:\nlocal  %s\nremote %s", local.Body.String(), remote.Body.String())
+	// The public body is the same generic 401 whatever the cause; the specific
+	// cause (WithDetail) is development-only and must not appear here.
+	if got := errBody(t, remote); got != "UNAUTHORIZED|AUTH|unauthorized" {
+		t.Fatalf("body = %q, want the generic unauthorized", got)
+	}
+	if strings.Contains(remote.Body.String(), "tenantcore does not recognise") {
+		t.Fatalf("the dev-only detail leaked into a non-dev body: %s", remote.Body.String())
 	}
 }
 
@@ -171,9 +132,8 @@ func TestTenantMiddleware_TenantcoreResolver_SuspendedIs403(t *testing.T) {
 	if w.Code != http.StatusForbidden || reached {
 		t.Fatalf("got %d reached=%v", w.Code, reached)
 	}
-	local, _, _ := gateStatus(t, localFn(nil, apierr.Forbidden("tenant suspended").In(apierr.DomainTenant)), map[string]string{"X-API-Key": tkKey})
-	if got, want := errBody(t, w), errBody(t, local); got != want {
-		t.Fatalf("body %q differs from the local resolver's %q", got, want)
+	if got, want := errBody(t, w), "FORBIDDEN|TENANT|tenant suspended"; got != want {
+		t.Fatalf("body %q, want %q", got, want)
 	}
 }
 
@@ -200,44 +160,6 @@ func TestTenantMiddleware_TenantcoreResolver_MissingHeaderStill401(t *testing.T)
 	w, _, reached := gateStatus(t, newFakeTC(t, "ok", "").resolver(t), nil)
 	if w.Code != http.StatusUnauthorized || reached {
 		t.Fatalf("got %d reached=%v", w.Code, reached)
-	}
-}
-
-type fakeLookup struct {
-	t   *models.Tenant
-	err error
-}
-
-func (f fakeLookup) Resolve(context.Context, string) (*models.Tenant, error) { return f.t, f.err }
-
-// The local adapter must pass the service's taxonomy errors through untouched
-// and map a tenant to exactly its ID and Domain.
-func TestLocalResolverAdapter(t *testing.T) {
-	ctx := context.Background()
-
-	got, err := localResolver{lookup: fakeLookup{t: &models.Tenant{ID: tkTenantID, Domain: tkHost}}}.Resolve(ctx, tkKey)
-	if err != nil || got.ID != tkTenantID || got.Domain != tkHost {
-		t.Fatalf("active: got %+v err=%v", got, err)
-	}
-
-	_, err = localResolver{lookup: fakeLookup{err: apierr.Unauthorized("")}}.Resolve(ctx, tkKey)
-	var ae *apierr.APIError
-	if !errors.As(err, &ae) || ae.HTTPStatus != http.StatusUnauthorized || ae.Message != "unauthorized" {
-		t.Fatalf("unknown: got %v", err)
-	}
-
-	_, err = localResolver{lookup: fakeLookup{err: apierr.Forbidden("tenant suspended").In(apierr.DomainTenant)}}.Resolve(ctx, tkKey)
-	if !errors.As(err, &ae) || ae.HTTPStatus != http.StatusForbidden || ae.Domain != apierr.DomainTenant || ae.Message != "tenant suspended" {
-		t.Fatalf("suspended: got %v", err)
-	}
-}
-
-// NewLocalResolver must hand the real service to the adapter; a nil service is
-// fine to construct with (the method value is only bound, never called here).
-func TestNewLocalResolverWrapsTheService(t *testing.T) {
-	r, ok := NewLocalResolver(nil).(localResolver)
-	if !ok || r.lookup == nil {
-		t.Fatalf("NewLocalResolver did not build a localResolver with a lookup: %#v", r)
 	}
 }
 

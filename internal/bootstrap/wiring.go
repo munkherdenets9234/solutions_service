@@ -109,11 +109,10 @@ type services struct {
 	entitlementClient *entitlement.Client
 
 	// tenantResolver is what the tenant gate asks to turn an X-API-Key into a
-	// tenant: this service's own collection by default, tenantcore when
-	// TENANT_RESOLVER=tenantcore.
+	// tenant: always tenantcore, never this service's own collection.
 	tenantResolver middleware.TenantResolver
-	// tenantResolveClient is the tenantcore client behind tenantResolver, nil
-	// in local mode. Kept for Close on shutdown and Degraded for /readyz.
+	// tenantResolveClient is the tenantcore client behind tenantResolver. Kept
+	// for Close on shutdown and Degraded for /readyz.
 	tenantResolveClient *tenantresolve.Client
 
 	// upload is nil when CLOUDINARY_URL is unset. See buildUpload.
@@ -134,7 +133,7 @@ func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.
 	}
 
 	tenantSvc := service.NewTenantService(r.tenant, r.tenantDetail, r.platformUser)
-	tenantResolver, tenantResolveClient, err := buildTenantResolver(cfg, tenantSvc, log)
+	tenantResolver, tenantResolveClient, err := buildTenantResolver(cfg, log)
 	if err != nil {
 		return services{}, err
 	}
@@ -179,28 +178,23 @@ func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.
 	}, nil
 }
 
-// buildTenantResolver picks how X-API-Key becomes a tenant.
+// buildTenantResolver wires how X-API-Key becomes a tenant: always through
+// tenantcore, which owns tenants.
 //
-// Anything other than an explicit "tenantcore" is the local resolver: today's
-// behaviour, no client, nothing to close.
-//
-// Tenantcore mode FAILS CLOSED. If the client cannot be built the deployment
-// does not start, and in particular it never falls back to the local
-// collection: that holds stale hashes after a key is re-issued or revoked, so
-// a fallback would keep accepting keys tenantcore has retired. Validate
-// refuses this configuration first; this is the backstop for callers that
-// reach wiring without it.
-func buildTenantResolver(cfg *config.Config, local *service.TenantService, log *zap.Logger) (middleware.TenantResolver, *tenantresolve.Client, error) {
-	if !cfg.TenantResolverTenantcoreEnabled() {
-		return middleware.NewLocalResolver(local), nil, nil
-	}
+// It FAILS CLOSED. If the client cannot be built the deployment does not
+// start, and it never falls back to this service's own tenants collection:
+// that holds stale hashes after a key is re-issued or revoked, so a fallback
+// would keep accepting keys tenantcore has retired. Validate refuses this
+// configuration first; this is the backstop for callers that reach wiring
+// without it.
+func buildTenantResolver(cfg *config.Config, log *zap.Logger) (middleware.TenantResolver, *tenantresolve.Client, error) {
 	c := tenantresolve.NewClient(tenantresolve.ClientConfig{
 		BaseURL:    cfg.TenantcoreURL,
 		ServiceKey: cfg.TenantcoreServiceKey,
 		Log:        log,
 	})
 	if c == nil {
-		return nil, nil, errors.New("TENANT_RESOLVER=tenantcore needs TENANTCORE_URL and TENANTCORE_SERVICE_KEY; " +
+		return nil, nil, errors.New("tenant resolution needs TENANTCORE_URL and TENANTCORE_SERVICE_KEY; " +
 			"refusing to start rather than fall back to the local tenants collection")
 	}
 	log.Info("tenant resolution ready — API keys are resolved through tenantcore",

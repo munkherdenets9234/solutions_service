@@ -114,13 +114,12 @@ func (s *Server) limit(name string, perMinute int) gin.HandlerFunc {
 }
 
 // resolveLimit is the limiter in front of tenant resolution, or nil. It is
-// installed only when TENANT_RESOLVER=tenantcore and rate limiting is on, with
-// its own burst (TENANT_RESOLVE_BURST) rather than the global one. Keyed by
+// installed only when rate limiting is on, with its own burst (TENANT_RESOLVE_BURST) rather than the global one. Keyed by
 // ClientIP, so it is only proxy-safe when TRUSTED_PROXIES is set; unset, gin
 // believes any X-Forwarded-For and one forged header per request bypasses it.
 func (s *Server) resolveLimit() gin.HandlerFunc {
 	c := s.deps.Config
-	if !c.TenantResolverTenantcoreEnabled() || !c.RateLimitEnabled || s.deps.RateLimiter == nil {
+	if !c.RateLimitEnabled || s.deps.RateLimiter == nil {
 		return nil
 	}
 	return s.deps.RateLimiter.Limit("tenant-resolve", c.TenantResolveRatePerMinute, c.TenantResolveBurst)
@@ -199,7 +198,7 @@ func (s *Server) registerOperational(e *gin.Engine) {
 		// The resolve limiter keys on ClientIP. Without TRUSTED_PROXIES gin
 		// believes any X-Forwarded-For, so it can be bypassed. Informational
 		// only: readiness status and degraded are deliberately unchanged.
-		if cfg := s.deps.Config; cfg.TenantResolverTenantcoreEnabled() && !cfg.TrustedProxiesSet() {
+		if cfg := s.deps.Config; !cfg.TrustedProxiesSet() {
 			if resolver == nil {
 				resolver = gin.H{}
 			}
