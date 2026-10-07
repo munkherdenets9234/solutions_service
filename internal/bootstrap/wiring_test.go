@@ -64,12 +64,12 @@ func TestNotifierIsNilSafeWhenTenantcoreUnset(t *testing.T) {
 	if n != nil || w != nil {
 		t.Fatalf("notifier=%v worker=%v, want both nil", n, w)
 	}
-	// Linked but no signing key: still off.
+	// Linked but none of the three mail variables set: still off (opt-in).
 	cfg := &config.Config{TenantcoreURL: "http://127.0.0.1:1", TenantcoreServiceKey: "svc-test"}
 	cl := notify.NewClient(notify.Config{BaseURL: cfg.TenantcoreURL, ServiceKey: cfg.TenantcoreServiceKey})
 	n, w = buildRequestMail(cfg, repos{}, cl, nil, zap.NewNop())
 	if n != nil || w != nil {
-		t.Fatalf("without MAIL_UNSUBSCRIBE_KEY notifier=%v worker=%v, want both nil", n, w)
+		t.Fatalf("without the mail variables notifier=%v worker=%v, want both nil", n, w)
 	}
 	// A nil notifier is safe to call, and services left unwired stay off.
 	n.Notify(context.Background(), [12]byte{}, "booking", "x", "y")
@@ -83,6 +83,8 @@ func TestBuildRequestMail_BuildsBothWhenConfigured(t *testing.T) {
 	cfg := &config.Config{
 		TenantcoreURL: "http://127.0.0.1:1", TenantcoreServiceKey: "svc-test",
 		MailUnsubscribeKey: strings.Repeat("k", 32),
+		PublicBaseURL:      "https://api.example.com",
+		AdminBaseURL:       "https://admin.example.com",
 	}
 	cl := notify.NewClient(notify.Config{BaseURL: cfg.TenantcoreURL, ServiceKey: cfg.TenantcoreServiceKey})
 	rc := tenantresolve.NewClient(tenantresolve.ClientConfig{BaseURL: cfg.TenantcoreURL, ServiceKey: cfg.TenantcoreServiceKey})
@@ -90,6 +92,20 @@ func TestBuildRequestMail_BuildsBothWhenConfigured(t *testing.T) {
 	n, w := buildRequestMail(cfg, repos{}, cl, rc, zap.NewNop())
 	if n == nil || w == nil {
 		t.Fatalf("notifier=%v worker=%v, want both built", n, w)
+	}
+}
+
+// The config's predicate decides: fully configured mail but no mail client
+// (tenantcore unreachable by config) still builds nothing.
+func TestBuildRequestMail_NoClientMeansOff(t *testing.T) {
+	cfg := &config.Config{
+		TenantcoreURL: "http://127.0.0.1:1", TenantcoreServiceKey: "svc-test",
+		MailUnsubscribeKey: strings.Repeat("k", 32),
+		PublicBaseURL:      "https://api.example.com",
+		AdminBaseURL:       "https://admin.example.com",
+	}
+	if n, w := buildRequestMail(cfg, repos{}, notify.NewClient(notify.Config{}), nil, zap.NewNop()); n != nil || w != nil {
+		t.Fatalf("no client: notifier=%v worker=%v, want both nil", n, w)
 	}
 }
 

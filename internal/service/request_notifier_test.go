@@ -27,13 +27,16 @@ func (f *fakeRecipients) FindEmailRecipients(_ context.Context, _ primitive.Obje
 }
 
 type fakeEnqueuer struct {
-	rows  []*models.MailOutbox
-	calls int
-	err   error
+	rows     []*models.MailOutbox
+	calls    int
+	err      error
+	deadline time.Time
+	hasDL    bool
 }
 
-func (f *fakeEnqueuer) Enqueue(_ context.Context, rows []*models.MailOutbox) error {
+func (f *fakeEnqueuer) Enqueue(ctx context.Context, rows []*models.MailOutbox) error {
 	f.calls++
+	f.deadline, f.hasDL = ctx.Deadline()
 	f.rows = append(f.rows, rows...)
 	return f.err
 }
@@ -224,5 +227,19 @@ func TestOverlongURLSkipsRecipientInsteadOfTruncating(t *testing.T) {
 		Notify(context.Background(), primitive.NewObjectID(), NotifyBooking, primitive.NewObjectID().Hex(), "s")
 	if len(store2.rows) != 0 {
 		t.Fatalf("overlong admin_url must skip the recipients, got %d rows", len(store2.rows))
+	}
+}
+
+// The notify call runs on the visitor's request path, so its budget is short.
+func TestNotifyEnqueueBudgetIsTwoSeconds(t *testing.T) {
+	store := &fakeEnqueuer{}
+	start := time.Now()
+	newTestNotifier(&fakeRecipients{users: twoUsers()[:1]}, store, okLinks()).
+		Notify(context.Background(), primitive.NewObjectID(), NotifyBooking, primitive.NewObjectID().Hex(), "x")
+	if !store.hasDL {
+		t.Fatal("enqueue context has no deadline")
+	}
+	if left := store.deadline.Sub(start); left > 2*time.Second+100*time.Millisecond {
+		t.Fatalf("enqueue budget = %v, want at most 2s", left)
 	}
 }

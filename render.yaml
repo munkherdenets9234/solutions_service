@@ -37,6 +37,23 @@ services:
       - key: SUPERADMIN_PASSWORD
         sync: false
 
+      # Required: API keys are resolved through tenantcore, and startup stops
+      # without both. They also carry password-reset and request mail.
+      - key: TENANTCORE_URL
+        sync: false
+      - key: TENANTCORE_SERVICE_KEY
+        sync: false
+
+      # Request email (staff are mailed when a request arrives) is opt-in: set
+      # all three or none; one without the others stops startup. See
+      # handover.md, "Request email deploy steps".
+      - key: MAIL_UNSUBSCRIBE_KEY
+        sync: false # at least 32 random bytes, generated on the host
+      - key: PUBLIC_BASE_URL
+        sync: false # this service's public https origin, no path
+      - key: ADMIN_BASE_URL
+        sync: false # the admin console's https origin, no path
+
       # Rate limiting. The buckets are per-instance, so these limits hold as
       # written only while this service runs a single replica. Scaling out
       # multiplies the effective limit by the replica count — move the

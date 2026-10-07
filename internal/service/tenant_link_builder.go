@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/eandstravel/digitalservice/internal/config"
 	"github.com/eandstravel/digitalservice/internal/tenantresolve"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 )
@@ -24,19 +25,26 @@ var adminPathSegments = map[NotifyKind]string{
 }
 
 // TenantLinkBuilder builds the links a request email carries: the admin page of
-// the record and the tenant's public site base. Both are always https, because
-// tenantcore refuses any other scheme.
+// the record (on the admin console's origin) and the public base this service
+// serves the unsubscribe page from. Both origins come from configuration
+// (ADMIN_BASE_URL, PUBLIC_BASE_URL), are https, and are global: the tenant
+// only supplies the display name.
 type TenantLinkBuilder struct {
-	ids identityLookup
+	ids        identityLookup
+	publicBase string
+	adminBase  string
 }
 
-func NewTenantLinkBuilder(ids identityLookup) *TenantLinkBuilder {
-	return &TenantLinkBuilder{ids: ids}
+// NewTenantLinkBuilder takes the two validated origins; a trailing slash is
+// trimmed. A value that is not an https origin makes Links fail, so no mail is
+// built with a wrong link.
+func NewTenantLinkBuilder(ids identityLookup, publicBase, adminBase string) *TenantLinkBuilder {
+	return &TenantLinkBuilder{ids: ids, publicBase: strings.TrimSpace(publicBase), adminBase: strings.TrimSpace(adminBase)}
 }
 
 // Links returns an error (so the notifier skips the mail) when the tenant is
-// not in the identity cache, is suspended, or has no usable host. The errors
-// carry no tenant data.
+// not in the identity cache or is suspended, or an origin is unusable. The
+// errors carry no tenant data.
 func (b *TenantLinkBuilder) Links(_ context.Context, tenantID primitive.ObjectID, kind NotifyKind, recordID string) (adminURL, siteBase, tenantName string, err error) {
 	if b == nil || b.ids == nil {
 		return "", "", "", errors.New("link builder: no identity source")
@@ -52,13 +60,13 @@ func (b *TenantLinkBuilder) Links(_ context.Context, tenantID primitive.ObjectID
 	if ident.Suspended {
 		return "", "", "", errors.New("link builder: tenant suspended")
 	}
-	if len(ident.Hosts) == 0 {
-		return "", "", "", errors.New("link builder: tenant has no host")
+	pub, err := config.NormalizeBaseURL(b.publicBase)
+	if err != nil {
+		return "", "", "", errors.New("link builder: public base URL is not usable")
 	}
-	host := strings.TrimRight(strings.TrimSpace(ident.Hosts[0]), "/")
-	if host == "" || strings.ContainsAny(host, " \t\r\n/?#@\\") {
-		return "", "", "", errors.New("link builder: tenant host is not usable")
+	adm, err := config.NormalizeBaseURL(b.adminBase)
+	if err != nil {
+		return "", "", "", errors.New("link builder: admin base URL is not usable")
 	}
-	siteBase = "https://" + host
-	return siteBase + "/admin/" + seg + "/" + recordID, siteBase, ident.Name, nil
+	return adm + "/" + seg + "/" + recordID, pub, ident.Name, nil
 }

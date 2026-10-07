@@ -19,11 +19,17 @@ func (f *fakeIdentityLookup) IdentityFor(id primitive.ObjectID) (tenantresolve.I
 	return f.ident, f.ok
 }
 
+const (
+	testPublicBase = "https://api.example.com"
+	testAdminBase  = "https://admin.example.com"
+)
+
 func TestTenantLinkBuilder_AdminPathPerKind(t *testing.T) {
 	tid := primitive.NewObjectID()
 	rec := primitive.NewObjectID().Hex()
-	fake := &fakeIdentityLookup{ok: true, ident: tenantresolve.Identity{TenantID: tid, Name: "Acme Travel", Hosts: []string{"acme.example", "other.example"}}}
-	b := NewTenantLinkBuilder(fake)
+	// Hosts are present but must not influence any link.
+	fake := &fakeIdentityLookup{ok: true, ident: tenantresolve.Identity{TenantID: tid, Name: "Acme Travel", Hosts: []string{"acme.example"}}}
+	b := NewTenantLinkBuilder(fake, testPublicBase, testAdminBase)
 	cases := map[NotifyKind]string{
 		NotifyBooking:  "bookings",
 		NotifyRental:   "rentals",
@@ -35,10 +41,10 @@ func TestTenantLinkBuilder_AdminPathPerKind(t *testing.T) {
 		if err != nil {
 			t.Fatalf("%s: %v", kind, err)
 		}
-		if want := "https://acme.example/admin/" + seg + "/" + rec; admin != want {
+		if want := testAdminBase + "/" + seg + "/" + rec; admin != want {
 			t.Errorf("%s admin = %q, want %q", kind, admin, want)
 		}
-		if site != "https://acme.example" || name != "Acme Travel" {
+		if site != testPublicBase || name != "Acme Travel" {
 			t.Errorf("%s site=%q name=%q", kind, site, name)
 		}
 	}
@@ -47,14 +53,23 @@ func TestTenantLinkBuilder_AdminPathPerKind(t *testing.T) {
 	}
 }
 
-func TestTenantLinkBuilder_NeverEmitsHTTPOrDoubleSlash(t *testing.T) {
+func TestTenantLinkBuilder_EmptyHostsStillBuildsLinks(t *testing.T) {
 	tid := primitive.NewObjectID()
-	fake := &fakeIdentityLookup{ok: true, ident: tenantresolve.Identity{TenantID: tid, Hosts: []string{" acme.example/ "}}}
-	admin, site, _, err := NewTenantLinkBuilder(fake).Links(context.Background(), tid, NotifyBooking, "abc")
+	fake := &fakeIdentityLookup{ok: true, ident: tenantresolve.Identity{TenantID: tid, Name: "Acme"}}
+	admin, site, name, err := NewTenantLinkBuilder(fake, testPublicBase, testAdminBase).Links(context.Background(), tid, NotifyBooking, "abc")
+	if err != nil || admin != testAdminBase+"/bookings/abc" || site != testPublicBase || name != "Acme" {
+		t.Fatalf("admin=%q site=%q name=%q err=%v", admin, site, name, err)
+	}
+}
+
+func TestTenantLinkBuilder_TrailingSlashAndNoAdminSegment(t *testing.T) {
+	tid := primitive.NewObjectID()
+	fake := &fakeIdentityLookup{ok: true, ident: tenantresolve.Identity{TenantID: tid}}
+	admin, site, _, err := NewTenantLinkBuilder(fake, " https://api.example.com/ ", "https://admin.example.com/").Links(context.Background(), tid, NotifyBooking, "abc")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if site != "https://acme.example" || admin != "https://acme.example/admin/bookings/abc" {
+	if site != "https://api.example.com" || admin != "https://admin.example.com/bookings/abc" {
 		t.Errorf("site=%q admin=%q", site, admin)
 	}
 }
@@ -63,20 +78,24 @@ func TestTenantLinkBuilder_Errors(t *testing.T) {
 	tid := primitive.NewObjectID()
 	cases := map[string]*fakeIdentityLookup{
 		"miss":         {ok: false},
-		"no hosts":     {ok: true, ident: tenantresolve.Identity{TenantID: tid}},
-		"blank host":   {ok: true, ident: tenantresolve.Identity{TenantID: tid, Hosts: []string{"  "}}},
-		"suspended":    {ok: true, ident: tenantresolve.Identity{TenantID: tid, Hosts: []string{"a.example"}, Suspended: true}},
-		"wrong tenant": {ok: true, ident: tenantresolve.Identity{TenantID: primitive.NewObjectID(), Hosts: []string{"a.example"}}},
+		"suspended":    {ok: true, ident: tenantresolve.Identity{TenantID: tid, Suspended: true}},
+		"wrong tenant": {ok: true, ident: tenantresolve.Identity{TenantID: primitive.NewObjectID()}},
 	}
 	for name, fake := range cases {
-		if _, _, _, err := NewTenantLinkBuilder(fake).Links(context.Background(), tid, NotifyBooking, "abc"); err == nil {
+		if _, _, _, err := NewTenantLinkBuilder(fake, testPublicBase, testAdminBase).Links(context.Background(), tid, NotifyBooking, "abc"); err == nil {
 			t.Errorf("%s: want an error", name)
 		}
 	}
-	if _, _, _, err := NewTenantLinkBuilder(nil).Links(context.Background(), tid, NotifyBooking, "abc"); err == nil {
+	if _, _, _, err := NewTenantLinkBuilder(nil, testPublicBase, testAdminBase).Links(context.Background(), tid, NotifyBooking, "abc"); err == nil {
 		t.Error("nil lookup: want an error")
 	}
-	if _, _, _, err := NewTenantLinkBuilder(&fakeIdentityLookup{ok: true, ident: tenantresolve.Identity{TenantID: tid, Hosts: []string{"a.example"}}}).Links(context.Background(), tid, NotifyKind("nope"), "abc"); err == nil {
+	ok := &fakeIdentityLookup{ok: true, ident: tenantresolve.Identity{TenantID: tid}}
+	if _, _, _, err := NewTenantLinkBuilder(ok, testPublicBase, testAdminBase).Links(context.Background(), tid, NotifyKind("nope"), "abc"); err == nil {
 		t.Error("unknown kind: want an error")
+	}
+	for _, bad := range [][2]string{{"", testAdminBase}, {testPublicBase, ""}, {"http://api.example.com", testAdminBase}, {testPublicBase, "https://admin.example.com/x"}} {
+		if _, _, _, err := NewTenantLinkBuilder(ok, bad[0], bad[1]).Links(context.Background(), tid, NotifyBooking, "abc"); err == nil {
+			t.Errorf("bad bases %q: want an error", bad)
+		}
 	}
 }

@@ -33,7 +33,9 @@ const (
 	maxUnsubscribeRunes = 512
 	unsubscribeTTL      = 90 * 24 * time.Hour
 	unsubscribePath     = "/api/v1/public/unsubscribe"
-	enqueueTimeout      = 10 * time.Second
+	// enqueueTimeout bounds the notify call, which runs on the visitor's request
+	// path; a slow database drops the mail rather than the visitor's response.
+	enqueueTimeout = 2 * time.Second
 )
 
 type (
@@ -48,8 +50,9 @@ type (
 	outboxEnqueuer interface {
 		Enqueue(ctx context.Context, rows []*models.MailOutbox) error
 	}
-	// linkBuilder resolves the tenant's admin link for a record, its public site
-	// base (https, no trailing slash) and display name.
+	// linkBuilder resolves the admin link for a record, the public base this
+	// service serves the unsubscribe page from (https, no trailing slash; both
+	// from configuration) and the tenant's display name.
 	linkBuilder interface {
 		Links(ctx context.Context, tenantID primitive.ObjectID, kind NotifyKind, recordID string) (adminURL, siteBase, tenantName string, err error)
 	}

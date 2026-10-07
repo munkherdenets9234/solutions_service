@@ -222,19 +222,20 @@ func wireUnsubscribe(s *services, n *service.RequestNotifier, cfg *config.Config
 const requestMailAppName = "digitalservice"
 
 // buildRequestMail returns the staff-mail notifier and its worker, or two nils
-// when request email is off. It is on only when the shared mail client is
-// available (TENANTCORE_URL and TENANTCORE_SERVICE_KEY) AND MAIL_UNSUBSCRIBE_KEY
-// is set. Off is a supported state: startup succeeds, the services skip the
+// when request email is off. It is on only when the operator opted in
+// (cfg.RequestEmailEnabled: MAIL_UNSUBSCRIBE_KEY, PUBLIC_BASE_URL and
+// ADMIN_BASE_URL, validated at startup) AND the shared mail client is
+// available (TENANTCORE_URL and TENANTCORE_SERVICE_KEY). Off is a supported state: startup succeeds, the services skip the
 // notify call, and the state is logged here and reported by config.Features
 // (the same startup log and /readyz path as password reset).
 func buildRequestMail(cfg *config.Config, r repos, mail *notify.Client, ids *tenantresolve.Client, log *zap.Logger) (*service.RequestNotifier, *service.MailWorker) {
-	if !mail.Available() || cfg.MailUnsubscribeKey == "" {
+	if !cfg.RequestEmailEnabled() || !mail.Available() {
 		log.Warn("request email is OFF - new bookings, rentals, transfers and guide applications will not email staff; " +
-			"needs TENANTCORE_URL, TENANTCORE_SERVICE_KEY and MAIL_UNSUBSCRIBE_KEY")
+			"to turn it on set MAIL_UNSUBSCRIBE_KEY, PUBLIC_BASE_URL and ADMIN_BASE_URL (and TENANTCORE_URL, TENANTCORE_SERVICE_KEY)")
 		return nil, nil
 	}
 	notifier := service.NewRequestNotifier(
-		r.tenantUser, r.mailOutbox, service.NewTenantLinkBuilder(ids),
+		r.tenantUser, r.mailOutbox, service.NewTenantLinkBuilder(ids, cfg.PublicBaseURL, cfg.AdminBaseURL),
 		[]byte(cfg.MailUnsubscribeKey), requestMailAppName, time.Now, log,
 	)
 	worker := service.NewMailWorker(r.mailOutbox, mail, r.tenantUser, time.Now, log)
