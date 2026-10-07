@@ -81,6 +81,7 @@ type Deps struct {
 	Upload          *service.UploadService
 
 	GuideApplication    *service.GuideApplicationService
+	MailOutbox          *service.MailOutboxService
 	GuideUploadMaxBytes int64
 }
 
@@ -151,6 +152,7 @@ func Register(base *gin.RouterGroup, d Deps) {
 		TenantUser:       d.TenantUser,
 		SitePage:         d.SitePage,
 		Upload:           d.Upload,
+		MailOutbox:       d.MailOutbox,
 		GuideApplication: d.GuideApplication,
 	})
 }

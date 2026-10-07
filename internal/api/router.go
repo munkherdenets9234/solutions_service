@@ -83,6 +83,7 @@ func (s *Server) buildEngine() *gin.Engine {
 		SitePage:            d.SitePage,
 		Upload:              d.Upload,
 		GuideApplication:    d.GuideApplication,
+		MailOutbox:          d.MailOutbox,
 		GuideUploadMaxBytes: d.GuideUploadMaxBytes,
 	})
 

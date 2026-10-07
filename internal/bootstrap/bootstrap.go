@@ -217,6 +217,7 @@ func NewForDatabase(ctx context.Context, cfg *config.Config, db *mongo.Database,
 		PlatformUser:        svcs.platformUser,
 		Upload:              svcs.upload,
 		GuideApplication:    svcs.guideApplication,
+		MailOutbox:          svcs.mailOutbox,
 		GuideUploadMaxBytes: cfg.UploadMaxBytes,
 
 		UnsubscribeKey:    svcs.unsubKey,

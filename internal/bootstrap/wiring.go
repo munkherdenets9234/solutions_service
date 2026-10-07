@@ -85,6 +85,7 @@ type services struct {
 	airportTransfer  *service.AirportTransferService
 	contactMessage   *service.ContactMessageService
 	guideApplication *service.GuideApplicationService
+	mailOutbox       *service.MailOutboxService
 	newsletter       *service.NewsletterService
 	customer         *service.CustomerService
 	review           *service.ReviewService
@@ -165,6 +166,7 @@ func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.
 		airportTransfer:  service.NewAirportTransferService(r.airportTransfer, r.customer, r.tenantUser),
 		contactMessage:   service.NewContactMessageService(r.contactMessage, r.tenantUser),
 		guideApplication: service.NewGuideApplicationService(r.guideApplication, buildPrivateFiles(cfg, log), r.tenantUser, time.Now),
+		mailOutbox:       service.NewMailOutboxService(r.mailOutbox),
 		newsletter:       service.NewNewsletterService(r.newsletter),
 		customer:         service.NewCustomerService(r.customer, r.booking, r.rental, r.airportTransfer, r.tenantUser),
 		review:           service.NewReviewService(r.review, r.tenantUser),
