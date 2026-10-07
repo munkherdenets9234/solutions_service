@@ -33,6 +33,18 @@ type fakeWorkStore struct {
 	sent     []primitive.ObjectID
 	failed   []failedMark
 	claimErr error
+	// markCtxErr / markDeadline record what the context looked like at each Mark* call.
+	markCtxErr   []error
+	markDeadline []time.Duration
+}
+
+func (f *fakeWorkStore) noteCtx(ctx context.Context) {
+	f.markCtxErr = append(f.markCtxErr, ctx.Err())
+	if dl, ok := ctx.Deadline(); ok {
+		f.markDeadline = append(f.markDeadline, time.Until(dl))
+	} else {
+		f.markDeadline = append(f.markDeadline, -1)
+	}
 }
 
 func (f *fakeWorkStore) ClaimDue(_ context.Context, _ time.Time, lease time.Duration) (*models.MailOutbox, error) {
@@ -49,12 +61,14 @@ func (f *fakeWorkStore) ClaimDue(_ context.Context, _ time.Time, lease time.Dura
 	return r, nil
 }
 
-func (f *fakeWorkStore) MarkSent(_ context.Context, id primitive.ObjectID, _ time.Time) error {
+func (f *fakeWorkStore) MarkSent(ctx context.Context, id primitive.ObjectID, _ time.Time) error {
+	f.noteCtx(ctx)
 	f.sent = append(f.sent, id)
 	return nil
 }
 
-func (f *fakeWorkStore) MarkAttemptFailed(_ context.Context, id primitive.ObjectID, code string, attempts int, nextAt time.Time, final bool) error {
+func (f *fakeWorkStore) MarkAttemptFailed(ctx context.Context, id primitive.ObjectID, code string, attempts int, nextAt time.Time, final bool) error {
+	f.noteCtx(ctx)
 	f.failed = append(f.failed, failedMark{id, code, attempts, nextAt, final})
 	return nil
 }
@@ -267,5 +281,55 @@ func TestRunTicksImmediatelyAndStopsWhenContextDone(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("Run did not return after cancel")
+	}
+}
+
+// A send that succeeded just as the worker is told to stop must still be
+// recorded, or the row comes back after its lease and the email goes out twice.
+func TestSentRowIsMarkedEvenWhenShutdownCancelsContext(t *testing.T) {
+	row := dueRow(0)
+	store := &fakeWorkStore{queue: []*models.MailOutbox{row}}
+	ctx, cancel := context.WithCancel(context.Background())
+	mail := &fakeMail{onSend: cancel} // shutdown arrives during the send, which still succeeds
+	newWorker(store, mail, activeUser()).Tick(ctx)
+
+	if len(store.sent) != 1 || store.sent[0] != row.ID {
+		t.Fatalf("a delivered mail must be marked sent, got sent=%v", store.sent)
+	}
+	if store.markCtxErr[0] != nil {
+		t.Fatalf("MarkSent ran on a cancelled context: %v", store.markCtxErr[0])
+	}
+	if d := store.markDeadline[0]; d <= 0 || d > 5*time.Second {
+		t.Fatalf("MarkSent deadline = %v, want within 5s", d)
+	}
+}
+
+// A send that was aborted only because the worker is shutting down says nothing
+// about the recipient or the provider, so it must not burn an attempt.
+func TestShutdownAbortedSendDoesNotBurnAnAttempt(t *testing.T) {
+	row := dueRow(2)
+	store := &fakeWorkStore{queue: []*models.MailOutbox{row}}
+	ctx, cancel := context.WithCancel(context.Background())
+	mail := &fakeMail{onSend: cancel, err: fmt.Errorf("send: %w", context.Canceled)}
+	newWorker(store, mail, activeUser()).Tick(ctx)
+
+	if len(store.failed) != 0 || len(store.sent) != 0 {
+		t.Fatalf("row must be left for its lease: failed=%v sent=%v", store.failed, store.sent)
+	}
+}
+
+// A real failure while the worker is running is still recorded, and on a
+// context that outlives shutdown with its own short deadline.
+func TestFailureIsRecordedOnDetachedContextWithTimeout(t *testing.T) {
+	row := dueRow(0)
+	store := &fakeWorkStore{queue: []*models.MailOutbox{row}}
+	mail := &fakeMail{err: errors.New("boom")}
+	newWorker(store, mail, activeUser()).Tick(context.Background())
+
+	if len(store.failed) != 1 {
+		t.Fatalf("want one recorded failure, got %v", store.failed)
+	}
+	if d := store.markDeadline[0]; d <= 0 || d > 5*time.Second {
+		t.Fatalf("MarkAttemptFailed deadline = %v, want within 5s", d)
 	}
 }

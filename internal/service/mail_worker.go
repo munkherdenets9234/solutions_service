@@ -16,6 +16,10 @@ import (
 const (
 	workerPollInterval = 15 * time.Second
 	workerSendTimeout  = 30 * time.Second
+	// workerMarkTimeout bounds the store write that records a send's outcome.
+	// That write runs on a context detached from shutdown, so a mail that went
+	// out is recorded even while the worker is stopping.
+	workerMarkTimeout = 5 * time.Second
 	// workerLease must exceed workerSendTimeout, or a row becomes due again
 	// while its first send is still running.
 	workerLease      = 5 * time.Minute
@@ -165,9 +169,19 @@ func (w *MailWorker) process(ctx context.Context, row *models.MailOutbox) {
 	err = w.mail.Send(sendCtx, row.To, notifyTemplate, row.Data)
 	cancel()
 	if err == nil {
-		if mErr := w.store.MarkSent(ctx, row.ID, w.now()); mErr != nil {
+		markCtx, markCancel := context.WithTimeout(context.WithoutCancel(ctx), workerMarkTimeout)
+		mErr := w.store.MarkSent(markCtx, row.ID, w.now())
+		markCancel()
+		if mErr != nil {
 			rowLog.Error("mail mark sent failed", zap.String("outcome", "mark_sent_failed"))
 		}
+		return
+	}
+	if ctx.Err() != nil {
+		// The worker is shutting down and aborted the send: that says nothing
+		// about the recipient or the provider. Leave the row; its lease expires
+		// and it is retried without an attempt burned.
+		rowLog.Info("mail send interrupted by shutdown", zap.String("outcome", "shutdown"))
 		return
 	}
 	code := errorCode(err)
@@ -181,7 +195,9 @@ func (w *MailWorker) process(ctx context.Context, row *models.MailOutbox) {
 }
 
 func (w *MailWorker) recordFailure(ctx context.Context, log *zap.Logger, id primitive.ObjectID, code string, attempts int, next time.Time, final bool) {
-	if err := w.store.MarkAttemptFailed(ctx, id, code, attempts, next, final); err != nil {
+	markCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), workerMarkTimeout)
+	defer cancel()
+	if err := w.store.MarkAttemptFailed(markCtx, id, code, attempts, next, final); err != nil {
 		log.Error("mail mark failed failed", zap.String("outcome", "mark_failed_error"))
 	}
 }
