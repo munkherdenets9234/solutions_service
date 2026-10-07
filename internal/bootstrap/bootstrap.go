@@ -218,6 +218,10 @@ func NewForDatabase(ctx context.Context, cfg *config.Config, db *mongo.Database,
 		Upload:              svcs.upload,
 		GuideApplication:    svcs.guideApplication,
 		GuideUploadMaxBytes: cfg.UploadMaxBytes,
+
+		UnsubscribeKey:    svcs.unsubKey,
+		UnsubscribeUsers:  svcs.unsubUsers,
+		UnsubscribeOutbox: svcs.unsubOutbox,
 	})
 
 	app := &App{

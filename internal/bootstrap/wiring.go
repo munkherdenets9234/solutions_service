@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	unsubscribeapi "github.com/eandstravel/digitalservice/internal/api/unsubscribe"
 	"github.com/eandstravel/digitalservice/internal/config"
 	"github.com/eandstravel/digitalservice/internal/entitlement"
 	"github.com/eandstravel/digitalservice/internal/middleware"
@@ -123,6 +124,13 @@ type services struct {
 	// mailWorker is nil when request email is off (see buildRequestMail).
 	// Held so NewForDatabase can start it and App.Close stop it.
 	mailWorker *service.MailWorker
+
+	// unsubKey, unsubUsers and unsubOutbox back the public unsubscribe route.
+	// Set only when request email is on (see wireUnsubscribe); otherwise the
+	// key is nil and the interfaces are true nils, so the route is not mounted.
+	unsubKey    []byte
+	unsubUsers  unsubscribeapi.UserOptOut
+	unsubOutbox unsubscribeapi.OutboxCanceller
 }
 
 func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.Logger) (services, error) {
@@ -189,7 +197,20 @@ func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.
 		mailWorker: mailWorker,
 	}
 	wireNotifier(&s, reqNotifier)
+	wireUnsubscribe(&s, reqNotifier, cfg, r)
 	return s, nil
+}
+
+// wireUnsubscribe enables the public unsubscribe route exactly when the
+// notifier exists, i.e. when mail links are being generated. Off, the fields
+// stay zero and the route 404s.
+func wireUnsubscribe(s *services, n *service.RequestNotifier, cfg *config.Config, r repos) {
+	if n == nil {
+		return
+	}
+	s.unsubKey = []byte(cfg.MailUnsubscribeKey)
+	s.unsubUsers = r.tenantUser
+	s.unsubOutbox = r.mailOutbox
 }
 
 // requestMailAppName is the product name shown in request emails.

@@ -83,24 +83,94 @@ func testEngine(t *testing.T) *gin.Engine {
 // hand-written list, so a route added tomorrow is covered without anyone
 // remembering to add it here.
 func TestEveryTenantRouteRequiresAPIKey(t *testing.T) {
-	e := testEngine(t)
-
-	checked := 0
-	for _, r := range e.Routes() {
-		if !strings.HasPrefix(r.Path, "/api/v1/") || strings.HasPrefix(r.Path, "/api/v1/platform/") {
-			continue
+	// Both engines: the plain one, and one with request email on, which mounts
+	// the exempt unsubscribe routes below. Every OTHER route in the mail engine
+	// must still refuse a caller with no key.
+	for name, e := range map[string]*gin.Engine{"mail off": testEngine(t), "mail on": mailEngine(t)} {
+		checked := 0
+		for _, r := range e.Routes() {
+			if !strings.HasPrefix(r.Path, "/api/v1/") || strings.HasPrefix(r.Path, "/api/v1/platform/") {
+				continue
+			}
+			if publicUnauthenticatedRoutes[r.Method+" "+r.Path] != "" {
+				continue
+			}
+			checked++
+			t.Run(name+" "+r.Method+" "+r.Path, func(t *testing.T) {
+				// No X-API-Key. TenantMiddleware must refuse before any
+				// controller or service is touched.
+				assertUnauthorized(t, e, r.Method, fillParams(r.Path), nil)
+			})
 		}
-		checked++
-		t.Run(r.Method+" "+r.Path, func(t *testing.T) {
-			// No X-API-Key. TenantMiddleware must refuse before any
-			// controller or service is touched.
-			assertUnauthorized(t, e, r.Method, fillParams(r.Path), nil)
-		})
+		if checked == 0 {
+			t.Fatalf("%s: no tenant routes were checked — the route table or the prefix filter is wrong", name)
+		}
+		t.Logf("%s: checked %d tenant routes", name, checked)
 	}
-	if checked == 0 {
-		t.Fatal("no tenant routes were checked — the route table or the prefix filter is wrong")
+}
+
+// publicUnauthenticatedRoutes are routes outside /platform that are reachable
+// with neither an X-API-Key nor a session, each with the written reason.
+// Adding to this list needs the same justification in the pull request.
+var publicUnauthenticatedRoutes = map[string]string{
+	"GET /api/v1/public/unsubscribe":  unsubscribeJustification,
+	"POST /api/v1/public/unsubscribe": unsubscribeJustification,
+}
+
+const unsubscribeJustification = "unauthenticated by necessity: the mail recipient's browser has no session and sends no " +
+	"X-API-Key. It changes only the receive_emails flag (and cancels queued mail) of the one user named in a signed token; " +
+	"the tenant comes only from that token. The token is HMAC-signed and expires, the route is rate limited on the real " +
+	"visitor, GET changes nothing, and every invalid token gets an identical response. Not mounted when mail is off."
+
+// mailEngine is the engine with request email on. The key is built at run time
+// so no secret-looking literal is committed.
+func mailEngine(t *testing.T) *gin.Engine {
+	t.Helper()
+	gin.SetMode(gin.TestMode)
+	return NewServer(Deps{
+		Log:               zap.NewNop(),
+		Config:            &config.Config{AppEnv: config.EnvTest},
+		UnsubscribeKey:    []byte(strings.Repeat("k", 32)),
+		UnsubscribeUsers:  noopOptOut{},
+		UnsubscribeOutbox: noopOptOut{},
+	}).Handler()
+}
+
+type noopOptOut struct{}
+
+func (noopOptOut) SetReceiveEmails(context.Context, primitive.ObjectID, primitive.ObjectID, bool) error {
+	return nil
+}
+func (noopOptOut) CancelPendingForUser(context.Context, primitive.ObjectID, primitive.ObjectID) (int64, error) {
+	return 0, nil
+}
+
+// The unsubscribe routes exist only with mail on, and when they do exist they
+// are reachable with no X-API-Key (the tenant gate is not on them).
+func TestUnsubscribeRoutesMountOnlyWithMailAndNeedNoAPIKey(t *testing.T) {
+	has := func(e *gin.Engine, key string) bool {
+		for _, r := range e.Routes() {
+			if r.Method+" "+r.Path == key {
+				return true
+			}
+		}
+		return false
 	}
-	t.Logf("checked %d tenant routes", checked)
+	off, on := testEngine(t), mailEngine(t)
+	for key := range publicUnauthenticatedRoutes {
+		if has(off, key) {
+			t.Errorf("%s registered with mail off", key)
+		}
+		if !has(on, key) {
+			t.Errorf("%s not registered with mail on", key)
+		}
+	}
+	if w := do(off, http.MethodGet, "/api/v1/public/unsubscribe", nil); w.Code != http.StatusNotFound && w.Code != http.StatusUnauthorized {
+		t.Errorf("mail off: got %d", w.Code)
+	}
+	if w := do(on, http.MethodGet, "/api/v1/public/unsubscribe?token=x", nil); w.Code != http.StatusOK {
+		t.Errorf("mail on, no API key: got %d, want 200", w.Code)
+	}
 }
 
 // TestPrivatePlatformRoutesRequireToken is the same assertion for the

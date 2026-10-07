@@ -8,6 +8,7 @@ package api
 
 import (
 	"github.com/eandstravel/digitalservice/internal/api/tenant"
+	unsubscribeapi "github.com/eandstravel/digitalservice/internal/api/unsubscribe"
 	"github.com/eandstravel/digitalservice/internal/config"
 	"github.com/eandstravel/digitalservice/internal/entitlement"
 	"github.com/eandstravel/digitalservice/internal/middleware"
@@ -70,6 +71,12 @@ type Deps struct {
 	PasswordReset   *service.TenantPasswordResetService
 	SitePage        *service.SitePageService
 	PlatformUser    *service.PlatformUserService
+
+	// Unsubscribe* feed the public one-click unsubscribe route. They are set
+	// only when request email is on; with an empty key the route is not mounted.
+	UnsubscribeKey    []byte
+	UnsubscribeUsers  unsubscribeapi.UserOptOut
+	UnsubscribeOutbox unsubscribeapi.OutboxCanceller
 
 	// Upload is nil-safe: a nil service means uploads were not configured,
 	// and the route says so rather than disappearing.
