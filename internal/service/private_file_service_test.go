@@ -84,7 +84,7 @@ func newTestSvc(t *testing.T, max int64) *PrivateFileService {
 func TestDownloadURLShape(t *testing.T) {
 	s := newTestSvc(t, 1024)
 	for mime, rt := range map[string]string{"application/pdf": "image", "image/jpeg": "image", "image/png": "image"} {
-		raw, exp, err := s.DownloadURL("tenants/abc/guide-applications/f1", mime, 5*time.Minute)
+		raw, exp, err := s.DownloadURL("tenants/abc/guide-applications/f1", mime, 5*time.Minute, DispositionAttachment)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -107,7 +107,7 @@ func TestDownloadURLShape(t *testing.T) {
 			t.Errorf("expiry not in future")
 		}
 	}
-	if _, _, err := s.DownloadURL("x", "text/plain", time.Minute); err == nil {
+	if _, _, err := s.DownloadURL("x", "text/plain", time.Minute, DispositionAttachment); err == nil {
 		t.Error("unsupported mime should error")
 	}
 }
@@ -279,5 +279,83 @@ func TestOverLimitCleanupSurvivesCancelledContext(t *testing.T) {
 	}
 	if !destroyed || destroyCtxErr != nil {
 		t.Fatalf("destroyed=%v ctx err=%v: cleanup must not be cancelled with the request", destroyed, destroyCtxErr)
+	}
+}
+
+func TestDownloadURLInlineOmitsAttachmentParam(t *testing.T) {
+	s := newTestSvc(t, 1024)
+	const pid = "tenants/abc/guide-applications/f1"
+	inl, _, err := s.DownloadURL(pid, "image/png", 5*time.Minute, DispositionInline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	att, _, err := s.DownloadURL(pid, "image/png", 5*time.Minute, DispositionAttachment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	iu, _ := url.Parse(inl)
+	au, _ := url.Parse(att)
+	if _, ok := iu.Query()["attachment"]; ok {
+		t.Fatalf("inline URL carries an attachment param: %s", inl)
+	}
+	if au.Query().Get("attachment") != "true" {
+		t.Fatalf("attachment URL lost attachment=true")
+	}
+	if iu.Query().Get("signature") == "" || iu.Query().Get("signature") == au.Query().Get("signature") {
+		t.Fatalf("inline signature must exist and differ from the attachment one")
+	}
+
+	// Deterministic: same inputs, only the disposition differs.
+	now := time.Unix(1700000000, 0)
+	exp := now.Add(5 * time.Minute)
+	pi, err := downloadParams(pid, now, exp, DispositionInline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pa, err := downloadParams(pid, now, exp, DispositionAttachment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := pi["attachment"]; ok || len(pi) != 4 {
+		t.Fatalf("inline params = %v", pi)
+	}
+	if signDownloadParams(pi, "testsecret") == signDownloadParams(pa, "testsecret") {
+		t.Fatal("signatures equal")
+	}
+}
+
+func TestDownloadURLAttachmentUnchanged(t *testing.T) {
+	now := time.Unix(1700000000, 0)
+	p, err := downloadParams("tenants/abc/guide-applications/f1", now, now.Add(5*time.Minute), DispositionAttachment)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{
+		"public_id":  "tenants/abc/guide-applications/f1",
+		"type":       "authenticated",
+		"timestamp":  "1700000000",
+		"expires_at": "1700000300",
+		"attachment": "true",
+	}
+	if len(p) != len(want) {
+		t.Fatalf("params = %v", p)
+	}
+	for k, v := range want {
+		if p[k] != v {
+			t.Fatalf("param %s = %q, want %q", k, p[k], v)
+		}
+	}
+	// Same vector as TestSignDownloadParamsMatchesKnownVector, taken before the change.
+	if got := signDownloadParams(p, "testsecret"); got != "cb343cea60cadb353304d962e7e3235b11805741" {
+		t.Fatalf("signature = %s", got)
+	}
+}
+
+func TestDownloadURLRejectsUnknownDisposition(t *testing.T) {
+	s := newTestSvc(t, 1024)
+	for _, d := range []Disposition{"", "INLINE", "inline,attachment", "download"} {
+		if u, _, err := s.DownloadURL("x", "image/png", time.Minute, d); err == nil || u != "" {
+			t.Errorf("disposition %q accepted: %q", d, u)
+		}
 	}
 }

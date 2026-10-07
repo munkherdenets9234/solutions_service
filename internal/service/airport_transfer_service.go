@@ -22,7 +22,12 @@ type AirportTransferService struct {
 	repo           *repository.AirportTransferRepo
 	customerRepo   *repository.CustomerRepo
 	tenantUserRepo *repository.TenantUserRepo
+	// notifier is nil when staff mail is off.
+	notifier requestNotifier
 }
+
+// WithNotifier sets the staff-mail notifier. Pass an untyped nil to turn it off.
+func (s *AirportTransferService) WithNotifier(n requestNotifier) { s.notifier = n }
 
 func NewAirportTransferService(repo *repository.AirportTransferRepo, customerRepo *repository.CustomerRepo, tenantUserRepo *repository.TenantUserRepo) *AirportTransferService {
 	return &AirportTransferService{repo: repo, customerRepo: customerRepo, tenantUserRepo: tenantUserRepo}
@@ -56,6 +61,9 @@ func (s *AirportTransferService) Create(ctx context.Context, tenantID primitive.
 
 	if err := s.repo.Create(ctx, tenantID, &t); err != nil {
 		return nil, apierr.Internal(err)
+	}
+	if s.notifier != nil {
+		s.notifier.Notify(ctx, tenantID, NotifyTransfer, t.ID.Hex(), notifySummary(input.Customer.Name, "arrival", t.ArrivalAt))
 	}
 	return &AirportTransferDetail{AirportTransfer: t, Customer: customer}, nil
 }

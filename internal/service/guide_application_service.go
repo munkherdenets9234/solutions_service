@@ -51,7 +51,12 @@ type GuideApplicationService struct {
 	users guideUsers
 	now   func() time.Time
 	locks keyedLock
+	// notifier is nil when staff mail is off.
+	notifier requestNotifier
 }
+
+// WithNotifier sets the staff-mail notifier. Pass an untyped nil to turn it off.
+func (s *GuideApplicationService) WithNotifier(n requestNotifier) { s.notifier = n }
 
 // keyedLock is a mutex per key; idle entries are removed.
 type keyedLock struct {
@@ -203,6 +208,10 @@ func (s *GuideApplicationService) Submit(ctx context.Context, tenantID primitive
 	}
 
 	hexID := a.ID.Hex()
+	if s.notifier != nil {
+		// Name and season only: no phone, email or notes.
+		s.notifier.Notify(ctx, tenantID, NotifyGuide, hexID, notifySummary(a.Personal.FullName, "season", time.Time{})+" ("+guideSeason+")")
+	}
 	return &SubmitResult{ID: hexID, ConfirmationID: "GA-" + upperTail(hexID, 6)}, nil
 }
 
@@ -293,6 +302,7 @@ func upperTail(s string, n int) string {
 
 const (
 	guideDownloadTTL = 5 * time.Minute
+	guidePreviewTTL  = 5 * time.Minute
 	guideNoteMaxLen  = 2000
 	guideStaffName   = "staff"
 )
@@ -427,7 +437,15 @@ func (s *GuideApplicationService) AddNote(ctx context.Context, tenantID primitiv
 
 // FileDownload returns a short-lived signed URL for one stored file. The
 // storage public id never leaves the service.
-func (s *GuideApplicationService) FileDownload(ctx context.Context, tenantID primitive.ObjectID, idHex, fileID string) (string, time.Time, error) {
+func (s *GuideApplicationService) FileDownload(ctx context.Context, tenantID primitive.ObjectID, idHex, fileID string, d Disposition) (string, time.Time, error) {
+	ttl := guideDownloadTTL
+	switch d {
+	case DispositionAttachment:
+	case DispositionInline:
+		ttl = guidePreviewTTL
+	default:
+		return "", time.Time{}, apierr.BadRequest("invalid disposition")
+	}
 	a, err := s.Get(ctx, tenantID, idHex)
 	if err != nil {
 		return "", time.Time{}, err
@@ -442,10 +460,14 @@ func (s *GuideApplicationService) FileDownload(ctx context.Context, tenantID pri
 	if file == nil {
 		return "", time.Time{}, apierr.NotFound("file")
 	}
+	// Only images are rendered by the browser; a PDF is never served inline.
+	if d == DispositionInline && file.Mime != "image/jpeg" && file.Mime != "image/png" {
+		return "", time.Time{}, apierr.BadRequest("only images can be previewed")
+	}
 	if s.files == nil || !s.files.Available() {
 		return "", time.Time{}, apierr.FeatureUnavailable("document downloads")
 	}
-	url, exp, err := s.files.DownloadURL(file.PublicID, file.Mime, guideDownloadTTL)
+	url, exp, err := s.files.DownloadURL(file.PublicID, file.Mime, ttl, d)
 	if err != nil {
 		var ae *apierr.APIError
 		if errors.As(err, &ae) {

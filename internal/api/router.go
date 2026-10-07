@@ -7,6 +7,7 @@ import (
 	"github.com/eandstravel/digitalservice/internal/api/docs"
 	"github.com/eandstravel/digitalservice/internal/api/platform"
 	"github.com/eandstravel/digitalservice/internal/api/tenant"
+	unsubscribeapi "github.com/eandstravel/digitalservice/internal/api/unsubscribe"
 	"github.com/eandstravel/digitalservice/internal/config"
 	"github.com/eandstravel/digitalservice/internal/middleware"
 	"github.com/gin-gonic/gin"
@@ -82,7 +83,19 @@ func (s *Server) buildEngine() *gin.Engine {
 		SitePage:            d.SitePage,
 		Upload:              d.Upload,
 		GuideApplication:    d.GuideApplication,
+		MailOutbox:          d.MailOutbox,
 		GuideUploadMaxBytes: d.GuideUploadMaxBytes,
+	})
+
+	// Public one-click unsubscribe, linked from request emails. Deliberately NOT
+	// under tenant.Register: the recipient's browser sends no X-API-Key, and the
+	// tenant comes only from the signed token. Not mounted when mail is off.
+	unsubscribeapi.Register(api.Group("/public"), unsubscribeapi.Deps{
+		Key:       d.UnsubscribeKey,
+		Users:     d.UnsubscribeUsers,
+		Outbox:    d.UnsubscribeOutbox,
+		RateLimit: s.limit("unsubscribe", d.Config.AuthRatePerMinute),
+		Log:       d.Log,
 	})
 
 	return e

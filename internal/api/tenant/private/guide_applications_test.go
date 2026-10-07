@@ -12,6 +12,8 @@ import (
 	"github.com/eandstravel/digitalservice/internal/middleware"
 	"github.com/eandstravel/digitalservice/internal/models"
 	"github.com/eandstravel/digitalservice/internal/repository"
+	"github.com/eandstravel/digitalservice/internal/service"
+	"github.com/eandstravel/digitalservice/pkg/apierr"
 	"github.com/eandstravel/digitalservice/pkg/httpx"
 	"github.com/gin-gonic/gin"
 	"go.mongodb.org/mongo-driver/bson/primitive"
@@ -22,6 +24,9 @@ type fakeGuideAdmin struct {
 	statusActor, noteActor *primitive.ObjectID
 	statusCalls, noteCalls int
 	listPage, listLimit    int
+	dlDisp                 service.Disposition
+	dlCalls                int
+	dlErr                  error
 }
 
 func (f *fakeGuideAdmin) List(_ context.Context, _ primitive.ObjectID, _ repository.GuideListFilter, page, limit int) ([]*models.GuideApplication, int64, error) {
@@ -44,8 +49,13 @@ func (f *fakeGuideAdmin) AddNote(_ context.Context, _ primitive.ObjectID, _, _ s
 	f.noteActor = actor
 	return nil
 }
-func (f *fakeGuideAdmin) FileDownload(context.Context, primitive.ObjectID, string, string) (string, time.Time, error) {
-	return "", time.Time{}, nil
+func (f *fakeGuideAdmin) FileDownload(_ context.Context, _ primitive.ObjectID, _, _ string, d service.Disposition) (string, time.Time, error) {
+	f.dlCalls++
+	f.dlDisp = d
+	if f.dlErr != nil {
+		return "", time.Time{}, f.dlErr
+	}
+	return "https://files.test/signed", time.Date(2027, 1, 1, 0, 5, 0, 0, time.UTC), nil
 }
 
 func TestActorComesFromTheTokenNotTheBody(t *testing.T) {
@@ -129,5 +139,66 @@ func TestListMetaReportsEffectiveLimitAndPage(t *testing.T) {
 		if f.listPage != c.wantPage || f.listLimit != c.wantLimit {
 			t.Errorf("%s: service got (%d,%d), want (%d,%d)", c.query, f.listPage, f.listLimit, c.wantPage, c.wantLimit)
 		}
+	}
+}
+
+func fileLinkEngine(f *fakeGuideAdmin) *gin.Engine {
+	gin.SetMode(gin.TestMode)
+	h := &guideApplicationsController{svc: f}
+	e := gin.New()
+	e.Use(middleware.ErrorHandler(zap.NewNop(), false))
+	e.Use(func(c *gin.Context) { c.Set(middleware.CtxTenantID, primitive.NewObjectID()) })
+	httpx.Wrap(&e.RouterGroup).GET("/guide-applications/:id/files/:fileId", h.FileLink)
+	return e
+}
+
+func TestFileLinkRejectsUnknownDisposition(t *testing.T) {
+	for _, q := range []string{"disposition=", "disposition=INLINE", "disposition=Attachment", "disposition=inline,attachment", "disposition=download", "disposition=inline&disposition=attachment"} {
+		f := &fakeGuideAdmin{}
+		w := httptest.NewRecorder()
+		fileLinkEngine(f).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/guide-applications/abc/files/f1?"+q, nil))
+		if w.Code != http.StatusBadRequest {
+			t.Errorf("%s: got %d: %s", q, w.Code, w.Body.String())
+		}
+		if f.dlCalls != 0 {
+			t.Errorf("%s: service was called", q)
+		}
+	}
+}
+
+func TestFileLinkDefaultsToAttachment(t *testing.T) {
+	cases := map[string]service.Disposition{
+		"":                        service.DispositionAttachment,
+		"?disposition=attachment": service.DispositionAttachment,
+		"?disposition=inline":     service.DispositionInline,
+	}
+	for q, want := range cases {
+		f := &fakeGuideAdmin{}
+		w := httptest.NewRecorder()
+		fileLinkEngine(f).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/guide-applications/abc/files/f1"+q, nil))
+		if w.Code != http.StatusOK {
+			t.Fatalf("%q: got %d: %s", q, w.Code, w.Body.String())
+		}
+		if f.dlDisp != want {
+			t.Errorf("%q: disposition = %q, want %q", q, f.dlDisp, want)
+		}
+		var env struct {
+			Data map[string]any `json:"data"`
+		}
+		if err := json.Unmarshal(w.Body.Bytes(), &env); err != nil || env.Data["url"] == nil || env.Data["expires_at"] == nil || len(env.Data) != 2 {
+			t.Errorf("%q: response shape changed: %s", q, w.Body.String())
+		}
+	}
+}
+
+func TestFileLinkOtherTenantFileIs404(t *testing.T) {
+	f := &fakeGuideAdmin{dlErr: apierr.NotFound("file")}
+	w := httptest.NewRecorder()
+	fileLinkEngine(f).ServeHTTP(w, httptest.NewRequest(http.MethodGet, "/guide-applications/abc/files/other?disposition=inline", nil))
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("got %d: %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "files.test") {
+		t.Fatal("url leaked on 404")
 	}
 }

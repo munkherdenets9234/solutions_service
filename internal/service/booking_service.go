@@ -16,7 +16,12 @@ type BookingService struct {
 	customerRepo   *repository.CustomerRepo
 	destRepo       *repository.DestinationRepo
 	tenantUserRepo *repository.TenantUserRepo
+	// notifier is nil when staff mail is off.
+	notifier requestNotifier
 }
+
+// WithNotifier sets the staff-mail notifier. Pass an untyped nil to turn it off.
+func (s *BookingService) WithNotifier(n requestNotifier) { s.notifier = n }
 
 func NewBookingService(repo *repository.BookingRepo, customerRepo *repository.CustomerRepo, destRepo *repository.DestinationRepo, tenantUserRepo *repository.TenantUserRepo) *BookingService {
 	return &BookingService{repo: repo, customerRepo: customerRepo, destRepo: destRepo, tenantUserRepo: tenantUserRepo}
@@ -58,6 +63,9 @@ func (s *BookingService) Create(ctx context.Context, tenantID primitive.ObjectID
 
 	if err := s.repo.Create(ctx, tenantID, &b); err != nil {
 		return nil, apierr.Internal(err)
+	}
+	if s.notifier != nil {
+		s.notifier.Notify(ctx, tenantID, NotifyBooking, b.ID.Hex(), notifySummary(input.Customer.Name, "from", b.TravelDates.Start))
 	}
 	return &BookingDetail{Booking: b, Customer: customer}, nil
 }

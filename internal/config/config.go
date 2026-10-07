@@ -18,6 +18,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -58,6 +59,16 @@ type Config struct {
 	// misconfiguration in production and is reported as one on /readyz.
 	TenantcoreURL        string
 	TenantcoreServiceKey string
+
+	// Request email is opt-in: it is on when ANY of the next three is set, and
+	// then all three must be valid (see Validate). None set means it is off.
+	// MailUnsubscribeKey signs the unsubscribe links (MAIL_UNSUBSCRIBE_KEY,
+	// at least 32 bytes, no default). PublicBaseURL is this service's own
+	// public https origin (the unsubscribe link goes there); AdminBaseURL is
+	// the admin console's https origin (the record link goes there).
+	MailUnsubscribeKey string
+	PublicBaseURL      string
+	AdminBaseURL       string
 	// How long an entitlement is trusted, and how long a stale one may still
 	// be served once tenantcore stops answering. The grace window is the
 	// difference between a platform blip and an outage for every tenant.
@@ -153,6 +164,50 @@ func (c Config) PasswordResetEnabled() bool {
 	return c.TenantcoreURL != "" && c.TenantcoreServiceKey != ""
 }
 
+// MailRequested reports whether any request-email variable is set. Mail is
+// opt-in: setting one of them demands the other two (see Validate).
+func (c Config) MailRequested() bool {
+	return strings.TrimSpace(c.MailUnsubscribeKey) != "" ||
+		strings.TrimSpace(c.PublicBaseURL) != "" ||
+		strings.TrimSpace(c.AdminBaseURL) != ""
+}
+
+// RequestEmailEnabled reports whether staff are emailed when a request arrives:
+// the operator opted in (MailRequested) and the tenantcore link, which sends
+// the mail, is configured. Validate guarantees the rest is well formed.
+func (c Config) RequestEmailEnabled() bool {
+	return c.MailRequested() && c.PasswordResetEnabled()
+}
+
+// NormalizeBaseURL checks that raw is an https origin (scheme https, a host,
+// no userinfo, no path other than "/", no query, no fragment) and returns it
+// without a trailing slash. The error never contains the value.
+func NormalizeBaseURL(raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", errors.New("is empty")
+	}
+	u, err := url.Parse(raw)
+	if err != nil {
+		return "", errors.New("is not a valid URL")
+	}
+	switch {
+	case u.Scheme != "https":
+		return "", errors.New("must use https")
+	case u.Hostname() == "":
+		return "", errors.New("must include a host")
+	case u.User != nil:
+		return "", errors.New("must not contain credentials")
+	case u.Path != "" && u.Path != "/":
+		return "", errors.New("must be an origin only, with no path")
+	case u.RawQuery != "" || u.ForceQuery:
+		return "", errors.New("must not contain a query")
+	case u.Fragment != "" || strings.Contains(raw, "#"):
+		return "", errors.New("must not contain a fragment")
+	}
+	return strings.TrimRight(raw, "/"), nil
+}
+
 // TenantcoreAdminUsersEnabled reports whether the routes tenantcore's operators
 // call (tenant admin users, password reset) are on. They need the public key
 // to verify those operators' tokens.
@@ -206,6 +261,12 @@ func (c Config) Features() []Feature {
 			Enabled: c.PasswordResetEnabled(),
 			Detail: "TENANTCORE_URL/TENANTCORE_SERVICE_KEY are not both set — a tenant user who forgets their " +
 				"password cannot be sent a reset code, and POST /password-reset/request answers 503",
+		},
+		{
+			Name:    "request_email",
+			Enabled: c.RequestEmailEnabled(),
+			Detail: "MAIL_UNSUBSCRIBE_KEY, PUBLIC_BASE_URL and ADMIN_BASE_URL are not set (request email is opt-in; " +
+				"set all three) - staff are not emailed when a booking, rental, transfer or guide application arrives",
 		},
 		{
 			Name:    "tenantcore_admin_users",
@@ -288,6 +349,24 @@ func (c Config) Validate() error {
 	if strings.TrimSpace(c.TenantcoreServiceKey) == "" {
 		problems = append(problems, "TENANTCORE_SERVICE_KEY is required: API keys are resolved through tenantcore")
 	}
+	// Request email is opt-in: if any of the three is set, all three must be
+	// valid. Messages name the variable, never the value.
+	if c.MailRequested() {
+		if len(c.MailUnsubscribeKey) < 32 {
+			if strings.TrimSpace(c.MailUnsubscribeKey) == "" {
+				problems = append(problems, "MAIL_UNSUBSCRIBE_KEY is required when request email is configured (the three request email variables go together)")
+			} else {
+				problems = append(problems, "MAIL_UNSUBSCRIBE_KEY must be at least 32 bytes")
+			}
+		}
+		for _, v := range []struct{ name, val string }{{"PUBLIC_BASE_URL", c.PublicBaseURL}, {"ADMIN_BASE_URL", c.AdminBaseURL}} {
+			if strings.TrimSpace(v.val) == "" {
+				problems = append(problems, v.name+" is required when request email is configured (the three request email variables go together)")
+			} else if _, err := NormalizeBaseURL(v.val); err != nil {
+				problems = append(problems, v.name+" "+err.Error()+" (an https origin such as https://example.com)")
+			}
+		}
+	}
 	if c.TenantResolveRatePerMinute < 1 {
 		problems = append(problems, "TENANT_RESOLVE_RATE_PER_MINUTE must be at least 1")
 	}
@@ -325,6 +404,9 @@ func Load() *Config {
 		EntitlementGraceSeconds: getEnvInt("ENTITLEMENT_GRACE_SECONDS", 900),
 		EntitlementTimeoutMS:    getEnvInt("ENTITLEMENT_TIMEOUT_MS", 3000),
 		TenantcorePublicKey:     getEnv("TENANTCORE_PUBLIC_KEY", ""),
+		MailUnsubscribeKey:      getEnv("MAIL_UNSUBSCRIBE_KEY", ""),
+		PublicBaseURL:           getEnv("PUBLIC_BASE_URL", ""),
+		AdminBaseURL:            getEnv("ADMIN_BASE_URL", ""),
 		TrustedProxies:          ParseTrustedProxies(getEnv("TRUSTED_PROXIES", "")),
 
 		LegacyTenantResolver:       strings.ToLower(getEnv("TENANT_RESOLVER", "")),

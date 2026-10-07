@@ -4,6 +4,7 @@ import (
 	"errors"
 	"time"
 
+	unsubscribeapi "github.com/eandstravel/digitalservice/internal/api/unsubscribe"
 	"github.com/eandstravel/digitalservice/internal/config"
 	"github.com/eandstravel/digitalservice/internal/entitlement"
 	"github.com/eandstravel/digitalservice/internal/middleware"
@@ -44,6 +45,7 @@ type repos struct {
 	passwordReset    *repository.TenantPasswordResetRepo
 	sitePage         *repository.SitePageRepo
 	platformUser     *repository.PlatformUserRepo
+	mailOutbox       *repository.MailOutboxRepo
 }
 
 func newRepos(db *mongo.Database) repos {
@@ -70,6 +72,7 @@ func newRepos(db *mongo.Database) repos {
 		passwordReset:    repository.NewTenantPasswordResetRepo(db),
 		sitePage:         repository.NewSitePageRepo(db),
 		platformUser:     repository.NewPlatformUserRepo(db),
+		mailOutbox:       repository.NewMailOutboxRepo(db),
 	}
 }
 
@@ -82,6 +85,7 @@ type services struct {
 	airportTransfer  *service.AirportTransferService
 	contactMessage   *service.ContactMessageService
 	guideApplication *service.GuideApplicationService
+	mailOutbox       *service.MailOutboxService
 	newsletter       *service.NewsletterService
 	customer         *service.CustomerService
 	review           *service.ReviewService
@@ -117,6 +121,17 @@ type services struct {
 
 	// upload is nil when CLOUDINARY_URL is unset. See buildUpload.
 	upload *service.UploadService
+
+	// mailWorker is nil when request email is off (see buildRequestMail).
+	// Held so NewForDatabase can start it and App.Close stop it.
+	mailWorker *service.MailWorker
+
+	// unsubKey, unsubUsers and unsubOutbox back the public unsubscribe route.
+	// Set only when request email is on (see wireUnsubscribe); otherwise the
+	// key is nil and the interfaces are true nils, so the route is not mounted.
+	unsubKey    []byte
+	unsubUsers  unsubscribeapi.UserOptOut
+	unsubOutbox unsubscribeapi.OutboxCanceller
 }
 
 func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.Logger) (services, error) {
@@ -138,7 +153,14 @@ func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.
 		return services{}, err
 	}
 
-	return services{
+	// ONE mail client, shared by password reset and request email.
+	mailClient := notify.NewClient(notify.Config{BaseURL: cfg.TenantcoreURL, ServiceKey: cfg.TenantcoreServiceKey})
+	reqNotifier, mailWorker := buildRequestMail(cfg, r, mailClient, tenantResolveClient, log)
+
+	// ONE upload service, shared by POST /admin/uploads and manual customers.
+	uploadSvc := buildUpload(cfg, log)
+
+	s := services{
 		destination:      service.NewDestinationService(r.destination, r.tenantUser),
 		booking:          service.NewBookingService(r.booking, r.customer, r.destination, r.tenantUser),
 		blog:             service.NewBlogService(r.blog, r.tenantUser),
@@ -147,9 +169,10 @@ func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.
 		airportTransfer:  service.NewAirportTransferService(r.airportTransfer, r.customer, r.tenantUser),
 		contactMessage:   service.NewContactMessageService(r.contactMessage, r.tenantUser),
 		guideApplication: service.NewGuideApplicationService(r.guideApplication, buildPrivateFiles(cfg, log), r.tenantUser, time.Now),
+		mailOutbox:       service.NewMailOutboxService(r.mailOutbox),
 		newsletter:       service.NewNewsletterService(r.newsletter),
-		customer:         service.NewCustomerService(r.customer, r.booking, r.rental, r.airportTransfer, r.tenantUser),
-		review:           service.NewReviewService(r.review, r.tenantUser),
+		customer:         service.NewCustomerService(r.customer, r.booking, r.rental, r.airportTransfer, r.tenantUser).WithAvatarUploader(uploadSvc),
+		review:           service.NewReviewService(r.review, r.tenantUser).WithCustomers(r.customer).WithLogger(log),
 		partner:          service.NewPartnerService(r.partner, r.tenantUser),
 		pkg:              service.NewPackageService(r.pkg, r.tenantPackage, r.platformUser),
 		quote:            service.NewQuoteService(r.quote, r.tenantUser, r.platformUser),
@@ -162,7 +185,7 @@ func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.
 		// then answers 503 rather than pretending to send.
 		passwordReset: service.NewTenantPasswordResetService(
 			r.tenantUser, r.passwordReset, r.tenant,
-			notify.NewClient(notify.Config{BaseURL: cfg.TenantcoreURL, ServiceKey: cfg.TenantcoreServiceKey}),
+			mailClient,
 			log,
 		),
 		sitePage:     service.NewSitePageService(r.sitePage),
@@ -174,8 +197,63 @@ func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.
 		tenantResolver:      tenantResolver,
 		tenantResolveClient: tenantResolveClient,
 
-		upload: buildUpload(cfg, log),
-	}, nil
+		upload: uploadSvc,
+
+		mailWorker: mailWorker,
+	}
+	wireNotifier(&s, reqNotifier)
+	wireUnsubscribe(&s, reqNotifier, cfg, r)
+	return s, nil
+}
+
+// wireUnsubscribe enables the public unsubscribe route exactly when the
+// notifier exists, i.e. when mail links are being generated. Off, the fields
+// stay zero and the route 404s.
+func wireUnsubscribe(s *services, n *service.RequestNotifier, cfg *config.Config, r repos) {
+	if n == nil {
+		return
+	}
+	s.unsubKey = []byte(cfg.MailUnsubscribeKey)
+	s.unsubUsers = r.tenantUser
+	s.unsubOutbox = r.mailOutbox
+}
+
+// requestMailAppName is the product name shown in request emails.
+const requestMailAppName = "digitalservice"
+
+// buildRequestMail returns the staff-mail notifier and its worker, or two nils
+// when request email is off. It is on only when the operator opted in
+// (cfg.RequestEmailEnabled: MAIL_UNSUBSCRIBE_KEY, PUBLIC_BASE_URL and
+// ADMIN_BASE_URL, validated at startup) AND the shared mail client is
+// available (TENANTCORE_URL and TENANTCORE_SERVICE_KEY). Off is a supported state: startup succeeds, the services skip the
+// notify call, and the state is logged here and reported by config.Features
+// (the same startup log and /readyz path as password reset).
+func buildRequestMail(cfg *config.Config, r repos, mail *notify.Client, ids *tenantresolve.Client, log *zap.Logger) (*service.RequestNotifier, *service.MailWorker) {
+	if !cfg.RequestEmailEnabled() || !mail.Available() {
+		log.Warn("request email is OFF - new bookings, rentals, transfers and guide applications will not email staff; " +
+			"to turn it on set MAIL_UNSUBSCRIBE_KEY, PUBLIC_BASE_URL and ADMIN_BASE_URL (and TENANTCORE_URL, TENANTCORE_SERVICE_KEY)")
+		return nil, nil
+	}
+	notifier := service.NewRequestNotifier(
+		r.tenantUser, r.mailOutbox, service.NewTenantLinkBuilder(ids, cfg.PublicBaseURL, cfg.AdminBaseURL),
+		[]byte(cfg.MailUnsubscribeKey), requestMailAppName, time.Now, log,
+	)
+	worker := service.NewMailWorker(r.mailOutbox, mail, r.tenantUser, time.Now, log)
+	log.Info("request email ready - staff are emailed through tenantcore when a request arrives")
+	return notifier, worker
+}
+
+// wireNotifier hands the notifier to the four request services. A nil notifier
+// leaves them with a true nil interface (mail off): the guard is on the
+// concrete pointer, so a typed nil is never stored in an interface.
+func wireNotifier(s *services, n *service.RequestNotifier) {
+	if n == nil {
+		return
+	}
+	s.booking.WithNotifier(n)
+	s.rental.WithNotifier(n)
+	s.airportTransfer.WithNotifier(n)
+	s.guideApplication.WithNotifier(n)
 }
 
 // buildTenantResolver wires how X-API-Key becomes a tenant: always through

@@ -55,6 +55,12 @@ func EnsureIndexes(ctx context.Context, db *mongo.Database) error {
 		{"tenant_packages", mongo.IndexModel{Keys: bson.D{{Key: "tenant_id", Value: 1}, {Key: "package_id", Value: 1}}, Options: options.Index().SetUnique(true)}},
 	}
 
+	for _, m := range mailOutboxIndexes() {
+		if _, err := db.Collection("mail_outbox").Indexes().CreateOne(ctx, m); err != nil {
+			return err
+		}
+	}
+
 	for _, s := range specs {
 		if _, err := db.Collection(s.collection).Indexes().CreateOne(ctx, s.model); err != nil {
 			return err

@@ -43,6 +43,7 @@ type Deps struct {
 	SitePage         *service.SitePageService
 	Upload           *service.UploadService
 	GuideApplication *service.GuideApplicationService
+	MailOutbox       *service.MailOutboxService
 }
 
 // Register mounts the token-authenticated tenant routes onto base, which the
@@ -72,6 +73,10 @@ func Register(base *gin.RouterGroup, d Deps) {
 	if d.GuideApplication != nil { // keep the interface truly nil otherwise
 		guides.svc = d.GuideApplication
 	}
+	mailLog := &mailOutboxController{}
+	if d.MailOutbox != nil {
+		mailLog.svc = d.MailOutbox
+	}
 
 	// Self-service account routes sit OUTSIDE the subscription gate. A user
 	// locked out by an expired password must still be able to change it
@@ -88,6 +93,7 @@ func Register(base *gin.RouterGroup, d Deps) {
 	// tenant admin's password without holding that tenant's credentials.
 	u := httpx.Wrap(scoped.Group("/admin/users", d.Auth("admin", "superadmin"), d.AuthRateLimit))
 	u.POST("", users.Create)
+	u.PUT("/:id", users.Update)
 	u.PUT("/:id/status", users.UpdateStatus)
 	u.PUT("/:id/password", users.ResetPassword)
 
@@ -127,6 +133,7 @@ func Register(base *gin.RouterGroup, d Deps) {
 
 	customers := admin.Group("/customers")
 	customers.GET("", ops.ListCustomers)
+	customers.POST("", ops.CreateCustomer)
 	customers.GET("/:id", ops.GetCustomer)
 
 	admin.POST("/uploads", uploads.Upload)
@@ -140,6 +147,10 @@ func Register(base *gin.RouterGroup, d Deps) {
 	ga.PATCH("/:id/status", guides.SetStatus)
 	ga.POST("/:id/notes", guides.AddNote)
 	ga.GET("/:id/files/:fileId", guides.FileLink)
+
+	// Mail log and retry: admin only, because this group is Auth("admin") and
+	// does not admit staff. Recipients are masked in the service.
+	registerMailOutbox(admin, mailLog)
 
 	tr := admin.Group("/translations")
 	tr.GET("", translations.List)

@@ -29,11 +29,20 @@ type StoredFile struct {
 	Size     int64
 }
 
+// Disposition says whether a signed download is rendered by the browser
+// (inline) or saved (attachment).
+type Disposition string
+
+const (
+	DispositionInline     Disposition = "inline"
+	DispositionAttachment Disposition = "attachment"
+)
+
 // PrivateFiles stores applicant documents that must never have a public URL.
 type PrivateFiles interface {
 	Upload(ctx context.Context, r io.Reader, tenantID primitive.ObjectID) (*StoredFile, error)
 	Delete(ctx context.Context, publicID, mime string) error
-	DownloadURL(publicID, mime string, ttl time.Duration) (string, time.Time, error)
+	DownloadURL(publicID, mime string, ttl time.Duration, d Disposition) (string, time.Time, error)
 	Available() bool
 }
 
@@ -205,7 +214,10 @@ func (s *PrivateFileService) Delete(ctx context.Context, publicID, mime string) 
 // DownloadURL returns a short-lived signed URL for Cloudinary's private
 // download endpoint (CDN delivery of authenticated PDFs is refused by the
 // account, this endpoint is not). The secret signs but is never in the URL.
-func (s *PrivateFileService) DownloadURL(publicID, mime string, ttl time.Duration) (string, time.Time, error) {
+//
+// Attachment signs attachment=true; inline sends no attachment param at all
+// (the signature covers exactly the params sent). Any other value is an error.
+func (s *PrivateFileService) DownloadURL(publicID, mime string, ttl time.Duration, d Disposition) (string, time.Time, error) {
 	if !s.Available() {
 		return "", time.Time{}, apierr.FeatureUnavailable("document uploads")
 	}
@@ -216,12 +228,9 @@ func (s *PrivateFileService) DownloadURL(publicID, mime string, ttl time.Duratio
 	cfg := s.cld.Config.Cloud
 	now := time.Now()
 	exp := now.Add(ttl)
-	p := map[string]string{
-		"public_id":  publicID,
-		"type":       "authenticated",
-		"timestamp":  strconv.FormatInt(now.Unix(), 10),
-		"expires_at": strconv.FormatInt(exp.Unix(), 10),
-		"attachment": "true",
+	p, err := downloadParams(publicID, now, exp, d)
+	if err != nil {
+		return "", time.Time{}, err
 	}
 	sig := signDownloadParams(p, cfg.APISecret)
 
@@ -233,6 +242,25 @@ func (s *PrivateFileService) DownloadURL(publicID, mime string, ttl time.Duratio
 	q.Set("signature", sig)
 	u := "https://api.cloudinary.com/v1_1/" + url.PathEscape(cfg.CloudName) + "/" + rt + "/download?" + q.Encode()
 	return u, exp, nil
+}
+
+// downloadParams builds the exact param set that is signed and sent.
+func downloadParams(publicID string, now, exp time.Time, d Disposition) (map[string]string, error) {
+	p := map[string]string{
+		"public_id":  publicID,
+		"type":       "authenticated",
+		"timestamp":  strconv.FormatInt(now.Unix(), 10),
+		"expires_at": strconv.FormatInt(exp.Unix(), 10),
+	}
+	switch d {
+	case DispositionAttachment:
+		p["attachment"] = "true"
+	case DispositionInline:
+		// no attachment param
+	default:
+		return nil, fmt.Errorf("unknown disposition %q", string(d))
+	}
+	return p, nil
 }
 
 // signDownloadParams is Cloudinary's API signature: SHA-1 hex of the params

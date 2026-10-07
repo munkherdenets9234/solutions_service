@@ -16,6 +16,18 @@
 **Local setup that works (verified 2026-10-06):** tenantcore :8092, digitalservice :8080 (start with `PORT=8080`; `.env` has `APP_PORT=8081`), E&S site :3000 with `API_BASE_URL=http://localhost:8080/api/v1` (it had `https://`, which gave `ERR_SSL_WRONG_VERSION_NUMBER`), travel admin :3001, inno admin :3011 (autoPort may pick another). The E&S key in the site `.env.local`, this `.env` and tenantcore all end `4d1b`; the site gets 200 and a bogus key gets 401 `tenantcore does not recognise this key`.
 
 **State of the tree:** branch `feat/guide-recruitment`, uncommitted, NOT pushed. Check: `go build ./... && go vet ./internal/... ./pkg/... && go test ./internal/... ./pkg/... -count=1` is green (20 packages, 2026-10-06). Besides the work above, the tree also holds changes made earlier that this session did not touch: `internal/api/tenant/private/{account,content,operations,translations,translations_test,uploads,users}.go` and an untracked `cmd/zz-throwaway/` (throwaway helper from the password-reset verification; delete when done). Superadmin login with the `.env` credentials returns 401 (see Open items).
+## Request email deploy steps (2026-10-07)
+
+Request email is opt-in: with `MAIL_UNSUBSCRIBE_KEY`, `PUBLIC_BASE_URL` and `ADMIN_BASE_URL` all unset the service starts with the feature off (one WARN, `request_email` disabled on `/readyz`, unsubscribe routes 404, `/admin/mail-outbox` still reads existing rows). Set one and startup fails unless all three are valid. Order matters:
+
+1. Deploy tenantcore first, at the commit that contains the `request_notification` template (branch `feat/request-notification-template`, `9e30e6c`). Without it every send fails.
+2. On the digitalservice host (Render), generate a random `MAIL_UNSUBSCRIBE_KEY` of at least 32 bytes (never commit it). Set `PUBLIC_BASE_URL` to this service's public https origin and `ADMIN_BASE_URL` to the admin console's https origin: scheme https, host only, no path, query or fragment. `TENANTCORE_URL` and `TENANTCORE_SERVICE_KEY` must already be set.
+3. Deploy digitalservice.
+4. Check `/readyz`: `request_email` must show enabled.
+5. Real delivery still needs the Gmail App Password configured in tenantcore.
+
+Links in the mail: unsubscribe is `PUBLIC_BASE_URL/api/v1/public/unsubscribe?token=...`; the record link is `ADMIN_BASE_URL/<bookings|rentals|airport-transfers|guide-applications>/<id>`. Both origins are global (the admin app is single-tenant per deployment); per-tenant admin hosts are future work. Untested live.
+
 ## Update 2026-10-02 (latest; supersedes the status above where they differ)
 
 - Branch `refactor/backend-core`, working tree clean, 13 commits unpushed. Check: `go build ./... && go vet ./internal/... ./pkg/... && go test ./internal/... ./pkg/... -count=1` (never `go test ./...`). Start with `PORT=8080` (this repo's `.env` has `APP_PORT=8081`; the launch config handles it).

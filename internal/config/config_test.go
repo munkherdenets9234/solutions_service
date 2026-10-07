@@ -17,8 +17,12 @@ func validConfig() Config {
 		TokenSecret: strings.Repeat("k", 32),
 		TokenExpiry: 24,
 		// Tenants are resolved through tenantcore, so the link is always required.
-		TenantcoreURL:               "http://localhost:1",
-		TenantcoreServiceKey:        "svc-test",
+		TenantcoreURL:        "http://localhost:1",
+		TenantcoreServiceKey: "svc-test",
+		// Built at run time: a literal that looks like a key trips gitleaks.
+		MailUnsubscribeKey:         strings.Repeat("u", 16) + strings.Repeat("v", 16),
+		PublicBaseURL:              "https://api.example.com",
+		AdminBaseURL:               "https://admin.example.com",
 		TenantResolveRatePerMinute: 600,
 		TenantResolveBurst:         120,
 	}
@@ -409,5 +413,129 @@ func TestValidateTrustedProxies(t *testing.T) {
 		if err == nil || !strings.Contains(err.Error(), "TRUSTED_PROXIES") || !strings.Contains(err.Error(), bad) {
 			t.Errorf("%q: error %v must name TRUSTED_PROXIES and the entry", bad, err)
 		}
+	}
+}
+
+func TestMailOffWhenNoneOfTheThreeIsSet(t *testing.T) {
+	cfg := validConfig()
+	cfg.MailUnsubscribeKey, cfg.PublicBaseURL, cfg.AdminBaseURL = "", "", ""
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("none of the mail variables set: startup must succeed, got %v", err)
+	}
+	if cfg.RequestEmailEnabled() {
+		t.Fatal("none set: request email must be off")
+	}
+}
+
+func TestMailPartiallyConfiguredFailsNamingEachMissing(t *testing.T) {
+	cfg := validConfig()
+	cfg.PublicBaseURL, cfg.AdminBaseURL = "", ""
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "PUBLIC_BASE_URL") || !strings.Contains(err.Error(), "ADMIN_BASE_URL") {
+		t.Fatalf("only the key set: want an error naming both URLs, got %v", err)
+	}
+
+	cfg = validConfig()
+	cfg.MailUnsubscribeKey, cfg.AdminBaseURL = "", ""
+	err = cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "MAIL_UNSUBSCRIBE_KEY") || !strings.Contains(err.Error(), "ADMIN_BASE_URL") ||
+		strings.Contains(err.Error(), "PUBLIC_BASE_URL") {
+		t.Fatalf("only PUBLIC_BASE_URL set: want an error naming the key and ADMIN_BASE_URL only, got %v", err)
+	}
+
+	cfg = validConfig()
+	cfg.MailUnsubscribeKey, cfg.PublicBaseURL = "", ""
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "MAIL_UNSUBSCRIBE_KEY") || !strings.Contains(err.Error(), "PUBLIC_BASE_URL") {
+		t.Fatalf("only ADMIN_BASE_URL set: want an error naming the key and PUBLIC_BASE_URL, got %v", err)
+	}
+}
+
+func TestMailBaseURLsMustBeHTTPSOrigins(t *testing.T) {
+	bad := []string{
+		"http://api.example.com",
+		"api.example.com",
+		"https://",
+		"https://api.example.com/app",
+		"https://api.example.com/?x=1",
+		"https://api.example.com?x=1",
+		"https://api.example.com#frag",
+		"https://user:pw@api.example.com",
+		"https://user@api.example.com",
+		"ftp://api.example.com",
+	}
+	for _, v := range bad {
+		for _, name := range []string{"PUBLIC_BASE_URL", "ADMIN_BASE_URL"} {
+			cfg := validConfig()
+			if name == "PUBLIC_BASE_URL" {
+				cfg.PublicBaseURL = v
+			} else {
+				cfg.AdminBaseURL = v
+			}
+			err := cfg.Validate()
+			if err == nil || !strings.Contains(err.Error(), name) {
+				t.Errorf("%s=%q: want an error naming %s, got %v", name, v, name, err)
+			}
+			if err != nil && strings.Contains(err.Error(), v) && strings.Contains(v, "pw@") {
+				t.Errorf("error must not echo userinfo: %v", err)
+			}
+		}
+	}
+	for _, v := range []string{"https://api.example.com", "https://api.example.com/", "https://api.example.com:8443"} {
+		cfg := validConfig()
+		cfg.PublicBaseURL, cfg.AdminBaseURL = v, v
+		if err := cfg.Validate(); err != nil {
+			t.Errorf("%q should be valid, got %v", v, err)
+		}
+	}
+}
+
+func TestMailAllValidIsEnabledAndNeedsTenantcore(t *testing.T) {
+	cfg := validConfig()
+	if err := cfg.Validate(); err != nil || !cfg.RequestEmailEnabled() {
+		t.Fatalf("all three valid: want enabled and valid, got enabled=%v err=%v", cfg.RequestEmailEnabled(), err)
+	}
+	cfg.TenantcoreURL, cfg.TenantcoreServiceKey = "", ""
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "TENANTCORE_URL") {
+		t.Fatalf("mail enabled without the tenantcore link must still fail, got %v", err)
+	}
+}
+
+func TestLoadReadsMailBaseURLs(t *testing.T) {
+	t.Setenv("PUBLIC_BASE_URL", "https://api.example.com")
+	t.Setenv("ADMIN_BASE_URL", "https://admin.example.com")
+	c := Load()
+	if c.PublicBaseURL != "https://api.example.com" || c.AdminBaseURL != "https://admin.example.com" {
+		t.Fatalf("base URLs not loaded: %q %q", c.PublicBaseURL, c.AdminBaseURL)
+	}
+}
+
+func TestNormalizeBaseURLTrimsTrailingSlash(t *testing.T) {
+	got, err := NormalizeBaseURL(" https://api.example.com/ ")
+	if err != nil || got != "https://api.example.com" {
+		t.Fatalf("got %q, %v", got, err)
+	}
+}
+
+func TestValidateRejectsShortUnsubscribeKeyWithoutEchoing(t *testing.T) {
+	short := strings.Repeat("s", 31)
+	cfg := validConfig()
+	cfg.MailUnsubscribeKey = short
+	err := cfg.Validate()
+	if err == nil || !strings.Contains(err.Error(), "MAIL_UNSUBSCRIBE_KEY") {
+		t.Fatalf("short key: want an error naming MAIL_UNSUBSCRIBE_KEY, got %v", err)
+	}
+	if strings.Contains(err.Error(), short) {
+		t.Fatal("error must not echo the key value")
+	}
+	cfg.MailUnsubscribeKey = strings.Repeat("s", 32)
+	if err := cfg.Validate(); err != nil {
+		t.Fatalf("32-byte key should pass, got %v", err)
+	}
+}
+
+func TestLoadReadsMailUnsubscribeKey(t *testing.T) {
+	t.Setenv("MAIL_UNSUBSCRIBE_KEY", strings.Repeat("m", 40))
+	if got := Load().MailUnsubscribeKey; len(got) != 40 {
+		t.Fatalf("MailUnsubscribeKey length = %d, want 40", len(got))
 	}
 }

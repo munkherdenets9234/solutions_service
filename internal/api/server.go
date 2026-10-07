@@ -8,6 +8,7 @@ package api
 
 import (
 	"github.com/eandstravel/digitalservice/internal/api/tenant"
+	unsubscribeapi "github.com/eandstravel/digitalservice/internal/api/unsubscribe"
 	"github.com/eandstravel/digitalservice/internal/config"
 	"github.com/eandstravel/digitalservice/internal/entitlement"
 	"github.com/eandstravel/digitalservice/internal/middleware"
@@ -71,13 +72,22 @@ type Deps struct {
 	SitePage        *service.SitePageService
 	PlatformUser    *service.PlatformUserService
 
+	// Unsubscribe* feed the public one-click unsubscribe route. They are set
+	// only when request email is on; with an empty key the route is not mounted.
+	UnsubscribeKey    []byte
+	UnsubscribeUsers  unsubscribeapi.UserOptOut
+	UnsubscribeOutbox unsubscribeapi.OutboxCanceller
+
 	// Upload is nil-safe: a nil service means uploads were not configured,
 	// and the route says so rather than disappearing.
 	Upload *service.UploadService
 
 	// GuideApplication is the guide recruitment service. It is always built;
 	// with private file storage off its Submit answers 503 on its own.
-	GuideApplication    *service.GuideApplicationService
+	GuideApplication *service.GuideApplicationService
+	// MailOutbox backs the admin mail log. It is always built; the log reads
+	// rows whether or not request email is currently on.
+	MailOutbox          *service.MailOutboxService
 	GuideUploadMaxBytes int64
 }
 

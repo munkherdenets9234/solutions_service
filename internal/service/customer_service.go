@@ -1,7 +1,15 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"errors"
+	"io"
+	"net/http"
+	"net/mail"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	"github.com/eandstravel/digitalservice/internal/models"
 	"github.com/eandstravel/digitalservice/internal/repository"
@@ -22,10 +30,117 @@ type CustomerService struct {
 	rentalRepo     *repository.RentalRepo
 	transferRepo   *repository.AirportTransferRepo
 	tenantUserRepo *repository.TenantUserRepo
+
+	// creator and uploader back CreateManual. They are narrow interfaces so
+	// the manual-create path is testable without MongoDB or Cloudinary.
+	creator  customerCreator
+	uploader avatarUploader
 }
 
+type customerCreator interface {
+	Create(ctx context.Context, tenantID primitive.ObjectID, c *models.Customer) error
+}
+
+type avatarUploader interface {
+	Upload(ctx context.Context, file io.Reader, tenantID primitive.ObjectID) (*UploadResult, error)
+	Available() bool
+}
+
+// Field limits for an admin-entered customer.
+const (
+	maxCustomerNameRunes        = 200
+	maxCustomerEmailRunes       = 254
+	maxCustomerPhoneRunes       = 64
+	maxCustomerNationalityRunes = 100
+)
+
 func NewCustomerService(repo *repository.CustomerRepo, bookingRepo *repository.BookingRepo, rentalRepo *repository.RentalRepo, transferRepo *repository.AirportTransferRepo, tenantUserRepo *repository.TenantUserRepo) *CustomerService {
-	return &CustomerService{repo: repo, bookingRepo: bookingRepo, rentalRepo: rentalRepo, transferRepo: transferRepo, tenantUserRepo: tenantUserRepo}
+	return &CustomerService{repo: repo, bookingRepo: bookingRepo, rentalRepo: rentalRepo, transferRepo: transferRepo, tenantUserRepo: tenantUserRepo, creator: repo}
+}
+
+// WithAvatarUploader enables avatar uploads for CreateManual. A nil
+// *UploadService is fine: it reports itself unavailable.
+func (s *CustomerService) WithAvatarUploader(u *UploadService) *CustomerService {
+	s.uploader = u
+	return s
+}
+
+// CreateManual creates a NEW customer from an admin form, optionally with an
+// avatar. The avatar is accepted only if its leading bytes sniff as jpeg or
+// png; the client's declared Content-Type is never consulted. Validation and
+// sniffing both run before anything is uploaded or stored.
+//
+// If the insert fails after a successful upload, the uploaded image is left
+// orphaned at the image host (accepted; there is no row to point at it).
+func (s *CustomerService) CreateManual(ctx context.Context, tenantID primitive.ObjectID, c *models.Customer, avatar io.Reader, userID *primitive.ObjectID) (*models.Customer, error) {
+	name := strings.TrimSpace(c.Name)
+	email := NormalizeEmail(c.Email)
+	phone := strings.TrimSpace(c.Phone)
+	nationality := strings.TrimSpace(c.Nationality)
+	switch {
+	case name == "":
+		return nil, apierr.ValidationFailed("name is required")
+	case utf8.RuneCountInString(name) > maxCustomerNameRunes:
+		return nil, apierr.ValidationFailed("name is too long")
+	case utf8.RuneCountInString(email) > maxCustomerEmailRunes:
+		return nil, apierr.ValidationFailed("email is too long")
+	case utf8.RuneCountInString(phone) > maxCustomerPhoneRunes:
+		return nil, apierr.ValidationFailed("phone is too long")
+	case utf8.RuneCountInString(nationality) > maxCustomerNationalityRunes:
+		return nil, apierr.ValidationFailed("nationality is too long")
+	}
+	if email == "" {
+		return nil, apierr.ValidationFailed("email is required")
+	}
+	// ParseAddress also accepts "Name <a@b>"; require the bare address.
+	if addr, err := mail.ParseAddress(email); err != nil || addr.Address != email {
+		return nil, apierr.ValidationFailed("email is not valid")
+	}
+	for _, f := range []string{name, phone, nationality} {
+		if strings.IndexFunc(f, unicode.IsControl) >= 0 {
+			return nil, apierr.ValidationFailed("fields must not contain control characters")
+		}
+	}
+
+	var head []byte
+	if avatar != nil {
+		buf := make([]byte, 512)
+		n, err := io.ReadFull(avatar, buf)
+		if err != nil && !errors.Is(err, io.EOF) && !errors.Is(err, io.ErrUnexpectedEOF) {
+			return nil, apierr.BadRequest("could not read avatar")
+		}
+		head = buf[:n]
+		switch stripCharset(http.DetectContentType(head)) {
+		case "image/jpeg", "image/png":
+		default:
+			return nil, apierr.ValidationFailed("avatar must be a jpeg or png image")
+		}
+		if s.uploader == nil || !s.uploader.Available() {
+			return nil, apierr.FeatureUnavailable("image uploads")
+		}
+	}
+
+	cust := &models.Customer{
+		Name:        name,
+		Email:       email,
+		Phone:       phone,
+		Nationality: nationality,
+		UserID:      userID,
+	}
+	if avatar != nil {
+		res, err := s.uploader.Upload(ctx, io.MultiReader(bytes.NewReader(head), avatar), tenantID)
+		if err != nil {
+			return nil, err
+		}
+		cust.AvatarURL = res.URL
+	}
+	if err := s.creator.Create(ctx, tenantID, cust); err != nil {
+		if mongo.IsDuplicateKeyError(err) {
+			return nil, apierr.Conflict("a customer with this email already exists")
+		}
+		return nil, apierr.Internal(err)
+	}
+	return cust, nil
 }
 
 // CustomerSummary is a customer with counts of its related records, for the

@@ -2,6 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
+	"fmt"
+	"strings"
 
 	"github.com/eandstravel/digitalservice/internal/i18n"
 	"github.com/eandstravel/digitalservice/internal/models"
@@ -10,11 +13,104 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.uber.org/zap"
 )
 
+// reviewStore is the slice of the review repository this service uses.
+type reviewStore interface {
+	Create(ctx context.Context, tenantID primitive.ObjectID, rev *models.Review, userID *primitive.ObjectID) error
+	FindAll(ctx context.Context, tenantID primitive.ObjectID, filter bson.M, page, limit int) ([]*models.Review, int64, error)
+	FindByID(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID) (*models.Review, error)
+	Update(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID, update bson.M, userID *primitive.ObjectID) error
+	Delete(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID) (int64, error)
+}
+
+// customerFinder looks one customer up inside one tenant.
+type customerFinder interface {
+	FindByID(ctx context.Context, tenantID, id primitive.ObjectID) (*models.Customer, error)
+}
+
+// customerLookup adds the batch read used for public avatars.
+type customerLookup interface {
+	customerFinder
+	FindByIDs(ctx context.Context, tenantID primitive.ObjectID, ids []primitive.ObjectID) ([]*models.Customer, error)
+}
+
 type ReviewService struct {
-	repo           *repository.ReviewRepo
+	repo           reviewStore
 	tenantUserRepo *repository.TenantUserRepo
+	customers      customerLookup
+	log            *zap.Logger
+}
+
+// WithLogger sets the logger used for degraded-read warnings.
+func (s *ReviewService) WithLogger(l *zap.Logger) *ReviewService {
+	s.log = l
+	return s
+}
+
+// PublicAvatars is AvatarsFor for the public list: a failed lookup must not
+// take the review list down, so it logs an id-only warning and returns no
+// avatars.
+func (s *ReviewService) PublicAvatars(ctx context.Context, tenantID primitive.ObjectID, reviews []*models.Review) map[primitive.ObjectID]string {
+	avatars, err := s.AvatarsFor(ctx, tenantID, reviews)
+	if err != nil {
+		if s.log != nil {
+			s.log.Warn("review avatar lookup failed", zap.String("tenant_id", tenantID.Hex()), zap.String("outcome", "avatar_lookup_failed"))
+		}
+		return nil
+	}
+	return avatars
+}
+
+// WithCustomers enables linking reviews to customers.
+func (s *ReviewService) WithCustomers(c customerLookup) *ReviewService {
+	s.customers = c
+	return s
+}
+
+// resolveCustomer returns the customer in this tenant, or a 404 that is the
+// same whether the id is unknown or belongs to another tenant.
+func (s *ReviewService) resolveCustomer(ctx context.Context, tenantID, id primitive.ObjectID) (*models.Customer, error) {
+	if s.customers == nil {
+		return nil, apierr.NotFound("customer")
+	}
+	c, err := s.customers.FindByID(ctx, tenantID, id)
+	if err != nil {
+		if errors.Is(err, mongo.ErrNoDocuments) {
+			return nil, apierr.NotFound("customer")
+		}
+		return nil, apierr.Internal(err)
+	}
+	return c, nil
+}
+
+// AvatarsFor maps customer id to avatar URL for the reviews that link a
+// customer, with ONE tenant-scoped batch query. Customers without an avatar
+// are omitted.
+func (s *ReviewService) AvatarsFor(ctx context.Context, tenantID primitive.ObjectID, reviews []*models.Review) (map[primitive.ObjectID]string, error) {
+	ids := make([]primitive.ObjectID, 0, len(reviews))
+	seen := make(map[primitive.ObjectID]bool, len(reviews))
+	for _, r := range reviews {
+		if r.CustomerID != nil && !seen[*r.CustomerID] {
+			seen[*r.CustomerID] = true
+			ids = append(ids, *r.CustomerID)
+		}
+	}
+	if len(ids) == 0 || s.customers == nil {
+		return nil, nil
+	}
+	rows, err := s.customers.FindByIDs(ctx, tenantID, ids)
+	if err != nil {
+		return nil, apierr.Internal(err)
+	}
+	out := make(map[primitive.ObjectID]string, len(rows))
+	for _, c := range rows {
+		if c.AvatarURL != "" {
+			out[c.ID] = c.AvatarURL
+		}
+	}
+	return out, nil
 }
 
 func NewReviewService(repo *repository.ReviewRepo, tenantUserRepo *repository.TenantUserRepo) *ReviewService {
@@ -114,6 +210,15 @@ func (s *ReviewService) Create(ctx context.Context, tenantID primitive.ObjectID,
 	if i18n.Resolve(rev.Review, i18n.DefaultLocale) == "" {
 		return apierr.BadRequest("review is required")
 	}
+	if rev.CustomerID != nil {
+		c, err := s.resolveCustomer(ctx, tenantID, *rev.CustomerID)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(rev.RelatedCustomer) == "" {
+			rev.RelatedCustomer = c.Name
+		}
+	}
 	return s.repo.Create(ctx, tenantID, rev, userID)
 }
 
@@ -131,6 +236,34 @@ func (s *ReviewService) Update(ctx context.Context, tenantID primitive.ObjectID,
 	}
 	if _, err := s.repo.FindByID(ctx, tenantID, id); err != nil {
 		return apierr.NotFound("review not found")
+	}
+	// The update is a client-supplied map: refuse operator keys and dotted
+	// paths under customer_id, which would bypass the ownership check below.
+	for k := range update {
+		if strings.HasPrefix(k, "$") || strings.HasPrefix(k, "customer_id.") {
+			return apierr.BadRequest("invalid field")
+		}
+	}
+	if v, ok := update["customer_id"]; ok {
+		switch cv := v.(type) {
+		case nil:
+			// null clears the link
+		case string:
+			cid, perr := primitive.ObjectIDFromHex(cv)
+			if perr != nil {
+				return apierr.BadRequest("invalid customer_id")
+			}
+			c, err := s.resolveCustomer(ctx, tenantID, cid)
+			if err != nil {
+				return err
+			}
+			update["customer_id"] = cid
+			if rc, has := update["related_customer"]; !has || strings.TrimSpace(fmt.Sprint(rc)) == "" {
+				update["related_customer"] = c.Name
+			}
+		default:
+			return apierr.BadRequest("invalid customer_id")
+		}
 	}
 	return s.repo.Update(ctx, tenantID, id, update, userID)
 }
