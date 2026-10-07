@@ -78,6 +78,7 @@ type Deps struct {
 	TenantUser      *service.TenantUserService
 	PasswordReset   *service.TenantPasswordResetService
 	SitePage        *service.SitePageService
+	SubscriptionStatus *service.SubscriptionStatusService
 	Upload          *service.UploadService
 
 	GuideApplication    *service.GuideApplicationService
@@ -116,6 +117,7 @@ func Register(base *gin.RouterGroup, d Deps) {
 		TenantUser:          d.TenantUser,
 		PasswordReset:       d.PasswordReset,
 		SitePage:            d.SitePage,
+		SubscriptionStatus:  d.SubscriptionStatus,
 		GuideApplication:    d.GuideApplication,
 		GuideUploadMaxBytes: d.GuideUploadMaxBytes,
 		Subscription:        subscription,

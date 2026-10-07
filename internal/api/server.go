@@ -69,6 +69,7 @@ type Deps struct {
 	TenantUser      *service.TenantUserService
 	PasswordReset   *service.TenantPasswordResetService
 	SitePage        *service.SitePageService
+	SubscriptionStatus *service.SubscriptionStatusService
 	PlatformUser    *service.PlatformUserService
 
 	// Upload is nil-safe: a nil service means uploads were not configured,

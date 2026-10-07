@@ -80,6 +80,7 @@ func (s *Server) buildEngine() *gin.Engine {
 		TenantUser:          d.TenantUser,
 		PasswordReset:       d.PasswordReset,
 		SitePage:            d.SitePage,
+		SubscriptionStatus:  d.SubscriptionStatus,
 		Upload:              d.Upload,
 		GuideApplication:    d.GuideApplication,
 		GuideUploadMaxBytes: d.GuideUploadMaxBytes,

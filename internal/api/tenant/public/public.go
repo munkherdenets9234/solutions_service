@@ -39,6 +39,10 @@ type Deps struct {
 	PasswordReset   *service.TenantPasswordResetService
 	SitePage        *service.SitePageService
 
+	// SubscriptionStatus backs GET /subscription-status. Nil is allowed and
+	// answers active.
+	SubscriptionStatus *service.SubscriptionStatusService
+
 	// GuideApplication and GuideUploadMaxBytes feed the public guide
 	// application form. GuideUploadMaxBytes is the per-file ceiling; the body
 	// ceiling is derived from it.
@@ -68,6 +72,7 @@ func Register(base *gin.RouterGroup, d Deps) {
 	auth := &authController{svc: d.TenantUser}
 	reset := &passwordResetController{svc: d.PasswordReset}
 	translations := &translationsController{svc: d.SitePage}
+	subStatus := &subscriptionStatusController{svc: d.SubscriptionStatus}
 	guide := &guideApplicationsController{maxBytes: d.GuideUploadMaxBytes}
 	// Assign only a non-nil service: a nil *GuideApplicationService stored in
 	// the interface would be a non-nil interface that panics when called.
@@ -110,6 +115,13 @@ func Register(base *gin.RouterGroup, d Deps) {
 	// being a guess against a six-digit code and the first costing a mail.
 	authLimited.POST("/password-reset/request", reset.Request)
 	authLimited.POST("/password-reset/confirm", reset.Confirm)
+
+	// Subscription status sits beside login, OUTSIDE the gate: a lapsed tenant
+	// is exactly who needs to read it, and it is a GET that reveals one word.
+	// No extra limiter: the tenant-key gate in front of this group already
+	// carries the resolve limiter, and the shared login bucket (AuthRateLimit)
+	// would let a dashboard that polls this lock admins out of login.
+	exempt.GET("/subscription-status", subStatus.Get)
 
 	// ── Behind the subscription gate ─────────────────────────────────────
 	// The gate only blocks mutating methods (see SubscriptionMiddleware), so
