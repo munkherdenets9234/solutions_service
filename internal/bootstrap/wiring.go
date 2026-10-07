@@ -99,6 +99,8 @@ type services struct {
 	passwordReset    *service.TenantPasswordResetService
 	sitePage         *service.SitePageService
 	platformUser     *service.PlatformUserService
+	// subscriptionStatus reads the same provider the subscription gate does.
+	subscriptionStatus *service.SubscriptionStatusService
 
 	// entitlement is the seam the product split runs through. It is an
 	// interface, not a concrete type: the day this went from a local query
@@ -190,6 +192,8 @@ func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.
 		),
 		sitePage:     service.NewSitePageService(r.sitePage),
 		platformUser: service.NewPlatformUserService(r.platformUser, tokenMaker, cfg.TokenExpiry),
+
+		subscriptionStatus: service.NewSubscriptionStatusService(entProvider, log),
 
 		entitlement:       entProvider,
 		entitlementClient: entClient,

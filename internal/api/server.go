@@ -70,6 +70,7 @@ type Deps struct {
 	TenantUser      *service.TenantUserService
 	PasswordReset   *service.TenantPasswordResetService
 	SitePage        *service.SitePageService
+	SubscriptionStatus *service.SubscriptionStatusService
 	PlatformUser    *service.PlatformUserService
 
 	// Unsubscribe* feed the public one-click unsubscribe route. They are set
