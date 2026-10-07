@@ -133,6 +133,7 @@ func Register(base *gin.RouterGroup, d Deps) {
 
 	customers := admin.Group("/customers")
 	customers.GET("", ops.ListCustomers)
+	customers.POST("", ops.CreateCustomer)
 	customers.GET("/:id", ops.GetCustomer)
 
 	admin.POST("/uploads", uploads.Upload)

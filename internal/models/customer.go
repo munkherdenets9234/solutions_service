@@ -14,6 +14,7 @@ type Customer struct {
 	Phone       string             `bson:"phone" json:"phone"`
 	Nationality string             `bson:"nationality" json:"nationality"`
 	Notes       string             `bson:"notes" json:"notes"`
+	AvatarURL   string             `bson:"avatar_url" json:"avatar_url"`
 	CreatedAt   time.Time          `bson:"created_at" json:"created_at"`
 	UpdatedAt   time.Time          `bson:"updated_at" json:"updated_at"`
 	// UserID is the tenant_users._id of whoever last created/updated this

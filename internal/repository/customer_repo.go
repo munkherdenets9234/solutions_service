@@ -53,6 +53,20 @@ func (r *CustomerRepo) Upsert(ctx context.Context, tenantID primitive.ObjectID, 
 	return &existing, nil
 }
 
+// Create always inserts a new customer. Unlike Upsert it never merges into an
+// existing row by email, so an admin form cannot overwrite another record's
+// data. A duplicate (tenant_id, email) surfaces as the driver's duplicate-key
+// error for the caller to map.
+func (r *CustomerRepo) Create(ctx context.Context, tenantID primitive.ObjectID, c *models.Customer) error {
+	now := time.Now()
+	c.ID = primitive.NewObjectID()
+	c.TenantID = tenantID
+	c.CreatedAt = now
+	c.UpdatedAt = now
+	_, err := r.col.InsertOne(ctx, c)
+	return err
+}
+
 func (r *CustomerRepo) FindByID(ctx context.Context, tenantID primitive.ObjectID, id primitive.ObjectID) (*models.Customer, error) {
 	var c models.Customer
 	err := r.col.FindOne(ctx, bson.M{"_id": id, "tenant_id": tenantID}).Decode(&c)

@@ -14,6 +14,9 @@ type Review struct {
 	ID              primitive.ObjectID `bson:"_id,omitempty" json:"id"`
 	TenantID        primitive.ObjectID `bson:"tenant_id" json:"tenant_id"`
 	RelatedCustomer string             `bson:"related_customer" json:"related_customer"`
+	// CustomerID optionally links the review to a customer of the same tenant,
+	// so the public read can show that customer's avatar.
+	CustomerID *primitive.ObjectID `bson:"customer_id,omitempty" json:"customer_id,omitempty"`
 	Star            int                `bson:"star" json:"star"` // 1-5
 	// Review is a locale map (e.g. {"en": "...", "mn": "..."}) — see internal/i18n.
 	Review         map[string]string `bson:"review" json:"review"`

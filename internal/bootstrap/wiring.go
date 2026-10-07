@@ -157,6 +157,9 @@ func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.
 	mailClient := notify.NewClient(notify.Config{BaseURL: cfg.TenantcoreURL, ServiceKey: cfg.TenantcoreServiceKey})
 	reqNotifier, mailWorker := buildRequestMail(cfg, r, mailClient, tenantResolveClient, log)
 
+	// ONE upload service, shared by POST /admin/uploads and manual customers.
+	uploadSvc := buildUpload(cfg, log)
+
 	s := services{
 		destination:      service.NewDestinationService(r.destination, r.tenantUser),
 		booking:          service.NewBookingService(r.booking, r.customer, r.destination, r.tenantUser),
@@ -168,8 +171,8 @@ func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.
 		guideApplication: service.NewGuideApplicationService(r.guideApplication, buildPrivateFiles(cfg, log), r.tenantUser, time.Now),
 		mailOutbox:       service.NewMailOutboxService(r.mailOutbox),
 		newsletter:       service.NewNewsletterService(r.newsletter),
-		customer:         service.NewCustomerService(r.customer, r.booking, r.rental, r.airportTransfer, r.tenantUser),
-		review:           service.NewReviewService(r.review, r.tenantUser),
+		customer:         service.NewCustomerService(r.customer, r.booking, r.rental, r.airportTransfer, r.tenantUser).WithAvatarUploader(uploadSvc),
+		review:           service.NewReviewService(r.review, r.tenantUser).WithCustomers(r.customer),
 		partner:          service.NewPartnerService(r.partner, r.tenantUser),
 		pkg:              service.NewPackageService(r.pkg, r.tenantPackage, r.platformUser),
 		quote:            service.NewQuoteService(r.quote, r.tenantUser, r.platformUser),
@@ -194,7 +197,7 @@ func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.
 		tenantResolver:      tenantResolver,
 		tenantResolveClient: tenantResolveClient,
 
-		upload: buildUpload(cfg, log),
+		upload: uploadSvc,
 
 		mailWorker: mailWorker,
 	}

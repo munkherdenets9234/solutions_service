@@ -1,6 +1,10 @@
 package private
 
 import (
+	"errors"
+	"io"
+	"net/http"
+
 	"github.com/eandstravel/digitalservice/internal/api/apictx"
 	"github.com/eandstravel/digitalservice/internal/models"
 	"github.com/eandstravel/digitalservice/internal/service"
@@ -111,6 +115,47 @@ func (h *operationsController) ListCustomers(c *gin.Context) error {
 		return err
 	}
 	response.List(c, data, response.Meta{Total: total, Page: page, Limit: limit})
+	return nil
+}
+
+// maxCustomerFormBytes bounds the multipart body of POST /admin/customers:
+// the avatar cap plus headroom for the text fields. UploadService enforces
+// its own, tighter per-file cap.
+const maxCustomerFormBytes = 12 << 20
+
+// CreateCustomer creates a customer from a multipart admin form. Fields:
+// name, email, phone, nationality, and an optional image file field "avatar".
+func (h *operationsController) CreateCustomer(c *gin.Context) error {
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxCustomerFormBytes)
+
+	cust := &models.Customer{
+		Name:        c.PostForm("name"),
+		Email:       c.PostForm("email"),
+		Phone:       c.PostForm("phone"),
+		Nationality: c.PostForm("nationality"),
+	}
+
+	var avatar io.Reader
+	fh, err := c.FormFile("avatar")
+	switch {
+	case err == nil:
+		f, oerr := fh.Open()
+		if oerr != nil {
+			return apierr.BadRequest("could not read avatar")
+		}
+		defer f.Close()
+		avatar = f
+	case errors.Is(err, http.ErrMissingFile):
+		// no avatar: fine
+	default:
+		return apierr.BadRequest("invalid form")
+	}
+
+	created, err := h.customer.CreateManual(c.Request.Context(), apictx.TenantID(c), cust, avatar, apictx.ActorID(c))
+	if err != nil {
+		return err
+	}
+	response.Created(c, created)
 	return nil
 }
 

@@ -12,6 +12,7 @@ import (
 type ReviewResponse struct {
 	ID              primitive.ObjectID `json:"id"`
 	RelatedCustomer string             `json:"related_customer"`
+	CustomerAvatar  string             `json:"customer_avatar,omitempty"`
 	Star            int                `json:"star"`
 	Review          string             `json:"review"`
 	RelatedTour     string             `json:"related_tour"`
@@ -47,6 +48,19 @@ func ToReviewResponse(r *models.Review, locale string) ReviewResponse {
 		CreatedAt:       r.CreatedAt,
 		UpdatedAt:       r.UpdatedAt,
 	}
+}
+
+// ToReviewResponsesWithAvatars is ToReviewResponses plus the avatar of each
+// review's linked customer, looked up by customer id in one batch beforehand.
+// Only the avatar URL is exposed: nothing else about the customer is public.
+func ToReviewResponsesWithAvatars(reviews []*models.Review, locale string, avatars map[primitive.ObjectID]string) []ReviewResponse {
+	out := ToReviewResponses(reviews, locale)
+	for i, r := range reviews {
+		if r.CustomerID != nil {
+			out[i].CustomerAvatar = avatars[*r.CustomerID]
+		}
+	}
+	return out
 }
 
 func ToReviewResponses(reviews []*models.Review, locale string) []ReviewResponse {
