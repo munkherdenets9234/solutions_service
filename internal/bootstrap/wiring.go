@@ -172,7 +172,7 @@ func newServices(r repos, tokenMaker *token.Maker, cfg *config.Config, log *zap.
 		mailOutbox:       service.NewMailOutboxService(r.mailOutbox),
 		newsletter:       service.NewNewsletterService(r.newsletter),
 		customer:         service.NewCustomerService(r.customer, r.booking, r.rental, r.airportTransfer, r.tenantUser).WithAvatarUploader(uploadSvc),
-		review:           service.NewReviewService(r.review, r.tenantUser).WithCustomers(r.customer),
+		review:           service.NewReviewService(r.review, r.tenantUser).WithCustomers(r.customer).WithLogger(log),
 		partner:          service.NewPartnerService(r.partner, r.tenantUser),
 		pkg:              service.NewPackageService(r.pkg, r.tenantPackage, r.platformUser),
 		quote:            service.NewQuoteService(r.quote, r.tenantUser, r.platformUser),

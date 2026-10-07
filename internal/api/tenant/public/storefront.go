@@ -177,10 +177,7 @@ func (h *storefrontController) ListReviews(c *gin.Context) error {
 		return err
 	}
 	locale := i18n.ResolveFromRequest(c)
-	avatars, err := h.review.AvatarsFor(c.Request.Context(), apictx.TenantID(c), data)
-	if err != nil {
-		return err
-	}
+	avatars := h.review.PublicAvatars(c.Request.Context(), apictx.TenantID(c), data)
 	response.List(c, dto.ToReviewResponsesWithAvatars(data, locale, avatars), response.Meta{Total: total, Page: page, Limit: limit})
 	return nil
 }

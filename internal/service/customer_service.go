@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/mail"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/eandstravel/digitalservice/internal/models"
@@ -73,7 +74,7 @@ func (s *CustomerService) WithAvatarUploader(u *UploadService) *CustomerService 
 // orphaned at the image host (accepted; there is no row to point at it).
 func (s *CustomerService) CreateManual(ctx context.Context, tenantID primitive.ObjectID, c *models.Customer, avatar io.Reader, userID *primitive.ObjectID) (*models.Customer, error) {
 	name := strings.TrimSpace(c.Name)
-	email := strings.TrimSpace(c.Email)
+	email := NormalizeEmail(c.Email)
 	phone := strings.TrimSpace(c.Phone)
 	nationality := strings.TrimSpace(c.Nationality)
 	switch {
@@ -88,11 +89,16 @@ func (s *CustomerService) CreateManual(ctx context.Context, tenantID primitive.O
 	case utf8.RuneCountInString(nationality) > maxCustomerNationalityRunes:
 		return nil, apierr.ValidationFailed("nationality is too long")
 	}
-	if email != "" {
-		// ParseAddress also accepts "Name <a@b>"; require the bare address.
-		addr, err := mail.ParseAddress(email)
-		if err != nil || addr.Address != email {
-			return nil, apierr.ValidationFailed("email is not valid")
+	if email == "" {
+		return nil, apierr.ValidationFailed("email is required")
+	}
+	// ParseAddress also accepts "Name <a@b>"; require the bare address.
+	if addr, err := mail.ParseAddress(email); err != nil || addr.Address != email {
+		return nil, apierr.ValidationFailed("email is not valid")
+	}
+	for _, f := range []string{name, phone, nationality} {
+		if strings.IndexFunc(f, unicode.IsControl) >= 0 {
+			return nil, apierr.ValidationFailed("fields must not contain control characters")
 		}
 	}
 

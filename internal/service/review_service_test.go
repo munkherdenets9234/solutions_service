@@ -213,3 +213,35 @@ func TestPublicReviewBatchesAvatarLookup(t *testing.T) {
 		t.Fatal("must not query without linked reviews")
 	}
 }
+
+func TestReviewUpdateRejectsDottedCustomerIDKey(t *testing.T) {
+	tenant := primitive.NewObjectID()
+	rev := &models.Review{ID: primitive.NewObjectID(), TenantID: tenant}
+	for _, key := range []string{"customer_id.x", "customer_id.", "$set", "$unset", "$where"} {
+		store := &fakeReviewStore{byID: map[primitive.ObjectID]*models.Review{rev.ID: rev}}
+		svc := &ReviewService{repo: store}
+		svc.WithCustomers(&fakeCustomers{})
+		err := svc.Update(context.Background(), tenant, rev.ID.Hex(), bson.M{key: "x"}, nil)
+		assertStatus(t, err, http.StatusBadRequest)
+		if len(store.updates) != 0 {
+			t.Fatalf("%q must not reach the store", key)
+		}
+	}
+}
+
+type failingCustomers struct{ fakeCustomers }
+
+func (f *failingCustomers) FindByIDs(context.Context, primitive.ObjectID, []primitive.ObjectID) ([]*models.Customer, error) {
+	return nil, mongo.ErrClientDisconnected
+}
+
+func TestPublicReviewListSurvivesAvatarLookupFailure(t *testing.T) {
+	tenant := primitive.NewObjectID()
+	id := primitive.NewObjectID()
+	svc := &ReviewService{repo: &fakeReviewStore{}}
+	svc.WithCustomers(&failingCustomers{})
+	avatars := svc.PublicAvatars(context.Background(), tenant, []*models.Review{{CustomerID: &id}})
+	if len(avatars) != 0 {
+		t.Fatal("expected no avatars on failure")
+	}
+}

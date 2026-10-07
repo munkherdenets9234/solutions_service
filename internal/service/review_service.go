@@ -13,6 +13,7 @@ import (
 	"go.mongodb.org/mongo-driver/bson"
 	"go.mongodb.org/mongo-driver/bson/primitive"
 	"go.mongodb.org/mongo-driver/mongo"
+	"go.uber.org/zap"
 )
 
 // reviewStore is the slice of the review repository this service uses.
@@ -39,6 +40,27 @@ type ReviewService struct {
 	repo           reviewStore
 	tenantUserRepo *repository.TenantUserRepo
 	customers      customerLookup
+	log            *zap.Logger
+}
+
+// WithLogger sets the logger used for degraded-read warnings.
+func (s *ReviewService) WithLogger(l *zap.Logger) *ReviewService {
+	s.log = l
+	return s
+}
+
+// PublicAvatars is AvatarsFor for the public list: a failed lookup must not
+// take the review list down, so it logs an id-only warning and returns no
+// avatars.
+func (s *ReviewService) PublicAvatars(ctx context.Context, tenantID primitive.ObjectID, reviews []*models.Review) map[primitive.ObjectID]string {
+	avatars, err := s.AvatarsFor(ctx, tenantID, reviews)
+	if err != nil {
+		if s.log != nil {
+			s.log.Warn("review avatar lookup failed", zap.String("tenant_id", tenantID.Hex()), zap.String("outcome", "avatar_lookup_failed"))
+		}
+		return nil
+	}
+	return avatars
 }
 
 // WithCustomers enables linking reviews to customers.
@@ -214,6 +236,13 @@ func (s *ReviewService) Update(ctx context.Context, tenantID primitive.ObjectID,
 	}
 	if _, err := s.repo.FindByID(ctx, tenantID, id); err != nil {
 		return apierr.NotFound("review not found")
+	}
+	// The update is a client-supplied map: refuse operator keys and dotted
+	// paths under customer_id, which would bypass the ownership check below.
+	for k := range update {
+		if strings.HasPrefix(k, "$") || strings.HasPrefix(k, "customer_id.") {
+			return apierr.BadRequest("invalid field")
+		}
 	}
 	if v, ok := update["customer_id"]; ok {
 		switch cv := v.(type) {

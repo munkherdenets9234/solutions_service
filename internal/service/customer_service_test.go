@@ -190,3 +190,44 @@ func TestCreateManualValidation(t *testing.T) {
 		})
 	}
 }
+
+func TestCreateManualRequiresEmail(t *testing.T) {
+	for _, email := range []string{"", "   "} {
+		svc, cr, up := newManualSvc()
+		_, err := svc.CreateManual(context.Background(), primitive.NewObjectID(), &models.Customer{Name: "Ana", Email: email}, bytes.NewReader(avatarPNG), nil)
+		assertStatus(t, err, http.StatusUnprocessableEntity)
+		if len(cr.created) != 0 || up.calls != 0 {
+			t.Fatal("must not upload or create")
+		}
+	}
+}
+
+func TestCreateManualNormalisesEmail(t *testing.T) {
+	svc, cr, _ := newManualSvc()
+	got, err := svc.CreateManual(context.Background(), primitive.NewObjectID(), &models.Customer{Name: "Ana", Email: "  Ana@Example.COM "}, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Email != "ana@example.com" || cr.created[0].Email != "ana@example.com" {
+		t.Fatalf("email not normalised: %q", got.Email)
+	}
+}
+
+func TestCreateManualRejectsControlCharacters(t *testing.T) {
+	cases := map[string]*models.Customer{
+		"name":        {Name: "An\x00a", Email: "a@example.com"},
+		"name nl":     {Name: "An\na", Email: "a@example.com"},
+		"phone":       {Name: "Ana", Email: "a@example.com", Phone: "12\x073"},
+		"nationality": {Name: "Ana", Email: "a@example.com", Nationality: "M\tN"},
+	}
+	for name, c := range cases {
+		t.Run(name, func(t *testing.T) {
+			svc, cr, up := newManualSvc()
+			_, err := svc.CreateManual(context.Background(), primitive.NewObjectID(), c, bytes.NewReader(avatarPNG), nil)
+			assertStatus(t, err, http.StatusUnprocessableEntity)
+			if len(cr.created) != 0 || up.calls != 0 {
+				t.Fatal("must not upload or create")
+			}
+		})
+	}
+}
