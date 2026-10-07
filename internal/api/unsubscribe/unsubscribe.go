@@ -90,6 +90,8 @@ func harden(ctx *gin.Context) {
 	h.Set("Cache-Control", "no-store")
 	h.Set("Referrer-Policy", "no-referrer")
 	h.Set("X-Content-Type-Options", "nosniff")
+	// The pages are plain HTML with no script, style or external resource.
+	h.Set("Content-Security-Policy", "default-src 'none'; form-action 'self'; frame-ancestors 'none'")
 }
 
 func wantsJSON(ctx *gin.Context) bool {

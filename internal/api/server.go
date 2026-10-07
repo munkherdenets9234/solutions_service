@@ -84,10 +84,10 @@ type Deps struct {
 
 	// GuideApplication is the guide recruitment service. It is always built;
 	// with private file storage off its Submit answers 503 on its own.
-	GuideApplication    *service.GuideApplicationService
+	GuideApplication *service.GuideApplicationService
 	// MailOutbox backs the admin mail log. It is always built; the log reads
 	// rows whether or not request email is currently on.
-	MailOutbox *service.MailOutboxService
+	MailOutbox          *service.MailOutboxService
 	GuideUploadMaxBytes int64
 }
 

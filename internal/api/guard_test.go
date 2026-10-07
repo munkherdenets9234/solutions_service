@@ -165,8 +165,8 @@ func TestUnsubscribeRoutesMountOnlyWithMailAndNeedNoAPIKey(t *testing.T) {
 			t.Errorf("%s not registered with mail on", key)
 		}
 	}
-	if w := do(off, http.MethodGet, "/api/v1/public/unsubscribe", nil); w.Code != http.StatusNotFound && w.Code != http.StatusUnauthorized {
-		t.Errorf("mail off: got %d", w.Code)
+	if w := do(off, http.MethodGet, "/api/v1/public/unsubscribe", nil); w.Code != http.StatusNotFound {
+		t.Errorf("mail off: got %d, want 404", w.Code)
 	}
 	if w := do(on, http.MethodGet, "/api/v1/public/unsubscribe?token=x", nil); w.Code != http.StatusOK {
 		t.Errorf("mail on, no API key: got %d, want 200", w.Code)

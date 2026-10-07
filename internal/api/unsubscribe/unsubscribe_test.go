@@ -135,12 +135,32 @@ func TestGetDoesNotChangeAnything(t *testing.T) {
 		t.Error("GET page should carry a POST form")
 	}
 	for h, want := range map[string]string{
-		"Cache-Control":          "no-store",
-		"Referrer-Policy":        "no-referrer",
-		"X-Content-Type-Options": "nosniff",
+		"Cache-Control":           "no-store",
+		"Referrer-Policy":         "no-referrer",
+		"X-Content-Type-Options":  "nosniff",
+		"Content-Security-Policy": wantCSP,
 	} {
 		if got := w.Header().Get(h); got != want {
 			t.Errorf("%s = %q, want %q", h, got, want)
+		}
+	}
+	if strings.Contains(w.Body.String(), "<style") || strings.Contains(w.Body.String(), "style=") {
+		t.Error("the page uses inline style, so the CSP must allow it")
+	}
+}
+
+// The page has no inline style, script or external resource, so style-src is omitted.
+const wantCSP = "default-src 'none'; form-action 'self'; frame-ancestors 'none'"
+
+func TestEveryResponseCarriesCSP(t *testing.T) {
+	r := newRig(t, nil)
+	for name, w := range map[string]*httptest.ResponseRecorder{
+		"page":    r.get(r.valid()),
+		"done":    r.postForm(r.valid()),
+		"invalid": r.postForm("bad"),
+	} {
+		if got := w.Header().Get("Content-Security-Policy"); got != wantCSP {
+			t.Errorf("%s: CSP = %q, want %q", name, got, wantCSP)
 		}
 	}
 }
@@ -166,6 +186,39 @@ func TestPostUnsubscribesAndCancelsPending(t *testing.T) {
 	}
 }
 
+// flipOneChar returns tok with one character in the middle replaced by one that
+// is guaranteed to differ. A mid-token character carries all six bits, so the
+// decoded bytes always change (unlike the last one, whose low bits may be padding).
+func flipOneChar(tok string) string {
+	b := []byte(tok)
+	for i := len(b) / 2; i < len(b); i++ {
+		if b[i] == '.' {
+			continue
+		}
+		if b[i] == 'A' {
+			b[i] = 'B'
+		} else {
+			b[i] = 'A'
+		}
+		return string(b)
+	}
+	panic("token has no flippable character")
+}
+
+func TestFlipOneCharAlwaysDiffers(t *testing.T) {
+	r := newRig(t, nil)
+	for i := 0; i < 200; i++ {
+		tok := unsubtoken.Sign(r.key, primitive.NewObjectID(), primitive.NewObjectID(), r.now.Add(time.Hour))
+		bad := flipOneChar(tok)
+		if bad == tok {
+			t.Fatalf("flip left the token unchanged: %q", tok)
+		}
+		if _, _, err := unsubtoken.Verify(r.key, bad, r.now); err == nil {
+			t.Fatalf("flipped token still verifies: %q", tok)
+		}
+	}
+}
+
 func TestInvalidTokensAreIdentical(t *testing.T) {
 	r := newRig(t, nil)
 	good := r.valid()
@@ -175,7 +228,7 @@ func TestInvalidTokensAreIdentical(t *testing.T) {
 		"malformed":    "not-a-token",
 		"empty":        "",
 		"expired":      expired,
-		"tampered":     good[:len(good)-2] + "AA",
+		"tampered":     flipOneChar(good),
 		"wrong key":    otherKey,
 		"unknown user": r.token(r.tenant, primitive.NewObjectID(), r.now.Add(time.Hour)),
 	}
