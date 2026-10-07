@@ -142,6 +142,8 @@ type fakeGuideFiles struct {
 	dlPublicID  string
 	dlMime      string
 	dlTTL       time.Duration
+	dlDisp      Disposition
+	dlCalls     int
 }
 
 func (f *fakeGuideFiles) Available() bool { return !f.unavailable }
@@ -180,10 +182,11 @@ func (f *fakeGuideFiles) Delete(_ context.Context, publicID, _ string) error {
 	return f.deleteErr
 }
 
-func (f *fakeGuideFiles) DownloadURL(publicID, mime string, ttl time.Duration) (string, time.Time, error) {
+func (f *fakeGuideFiles) DownloadURL(publicID, mime string, ttl time.Duration, d Disposition) (string, time.Time, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.dlPublicID, f.dlMime, f.dlTTL = publicID, mime, ttl
+	f.dlPublicID, f.dlMime, f.dlTTL, f.dlDisp = publicID, mime, ttl, d
+	f.dlCalls++
 	return "https://files.test/signed", time.Date(2027, 1, 1, 0, 5, 0, 0, time.UTC), nil
 }
 
@@ -568,7 +571,7 @@ func TestCrossTenantFileDownloadIs404(t *testing.T) {
 	e := newGuideSvcEnv()
 	a := e.seed(e.t)
 	a.Files = []models.GuideFile{{ID: "f1", PublicID: "pid-x", Mime: "application/pdf"}}
-	_, _, err := e.svc.FileDownload(context.Background(), primitive.NewObjectID(), a.ID.Hex(), "f1")
+	_, _, err := e.svc.FileDownload(context.Background(), primitive.NewObjectID(), a.ID.Hex(), "f1", DispositionAttachment)
 	wantAPIStatus(t, err, 404)
 	if e.files.dlPublicID != "" {
 		t.Fatal("signed a URL for a foreign tenant")
@@ -579,9 +582,9 @@ func TestFileDownloadUnknownFileIs404(t *testing.T) {
 	e := newGuideSvcEnv()
 	a := e.seed(e.t)
 	a.Files = []models.GuideFile{{ID: "f1", PublicID: "pid-x", Mime: "application/pdf"}}
-	_, _, err := e.svc.FileDownload(context.Background(), e.t, a.ID.Hex(), "nope")
+	_, _, err := e.svc.FileDownload(context.Background(), e.t, a.ID.Hex(), "nope", DispositionAttachment)
 	wantAPIStatus(t, err, 404)
-	_, _, err = e.svc.FileDownload(context.Background(), e.t, "bad", "f1")
+	_, _, err = e.svc.FileDownload(context.Background(), e.t, "bad", "f1", DispositionAttachment)
 	wantAPIStatus(t, err, 404)
 }
 
@@ -589,7 +592,7 @@ func TestFileDownloadUsesFiveMinuteTTL(t *testing.T) {
 	e := newGuideSvcEnv()
 	a := e.seed(e.t)
 	a.Files = []models.GuideFile{{ID: "f1", PublicID: "pid-x", Mime: "application/pdf"}}
-	url, exp, err := e.svc.FileDownload(context.Background(), e.t, a.ID.Hex(), "f1")
+	url, exp, err := e.svc.FileDownload(context.Background(), e.t, a.ID.Hex(), "f1", DispositionAttachment)
 	if err != nil || url == "" || exp.IsZero() {
 		t.Fatalf("url=%q exp=%v err=%v", url, exp, err)
 	}
@@ -597,7 +600,7 @@ func TestFileDownloadUsesFiveMinuteTTL(t *testing.T) {
 		t.Fatalf("ttl=%v pid=%q mime=%q", e.files.dlTTL, e.files.dlPublicID, e.files.dlMime)
 	}
 	e.files.unavailable = true
-	_, _, err = e.svc.FileDownload(context.Background(), e.t, a.ID.Hex(), "f1")
+	_, _, err = e.svc.FileDownload(context.Background(), e.t, a.ID.Hex(), "f1", DispositionAttachment)
 	var ae *apierr.APIError
 	if !errors.As(err, &ae) || ae.Code != apierr.CodeFeatureUnavailable {
 		t.Fatalf("want FeatureUnavailable, got %v", err)
@@ -930,5 +933,43 @@ func TestSubmitWithoutNotifierStillWorks(t *testing.T) {
 	e := newGuideSvcEnv()
 	if _, err := e.svc.Submit(context.Background(), e.t, validGuideApp(), []GuideUpload{guideUp(models.GuideFileCV)}); err != nil {
 		t.Fatalf("submit: %v", err)
+	}
+}
+
+func TestInlineUsesFiveMinuteTTL(t *testing.T) {
+	e := newGuideSvcEnv()
+	a := e.seed(e.t)
+	a.Files = []models.GuideFile{{ID: "f1", PublicID: "pid-x", Mime: "image/png"}}
+	if _, _, err := e.svc.FileDownload(context.Background(), e.t, a.ID.Hex(), "f1", DispositionInline); err != nil {
+		t.Fatal(err)
+	}
+	if e.files.dlTTL != 5*time.Minute || e.files.dlDisp != DispositionInline || e.files.dlPublicID != "pid-x" {
+		t.Fatalf("ttl=%v disp=%q pid=%q", e.files.dlTTL, e.files.dlDisp, e.files.dlPublicID)
+	}
+}
+
+func TestFileDownloadInlineRejectsPDF(t *testing.T) {
+	e := newGuideSvcEnv()
+	a := e.seed(e.t)
+	a.Files = []models.GuideFile{{ID: "f1", PublicID: "pid-x", Mime: "application/pdf"}}
+	_, _, err := e.svc.FileDownload(context.Background(), e.t, a.ID.Hex(), "f1", DispositionInline)
+	wantAPIStatus(t, err, 400)
+	var ae *apierr.APIError
+	if errors.As(err, &ae) && ae.Message != "only images can be previewed" {
+		t.Fatalf("message = %q", ae.Message)
+	}
+	if e.files.dlCalls != 0 {
+		t.Fatal("DownloadURL was called for an inline PDF")
+	}
+}
+
+func TestFileDownloadRejectsUnknownDisposition(t *testing.T) {
+	e := newGuideSvcEnv()
+	a := e.seed(e.t)
+	a.Files = []models.GuideFile{{ID: "f1", PublicID: "pid-x", Mime: "image/png"}}
+	_, _, err := e.svc.FileDownload(context.Background(), e.t, a.ID.Hex(), "f1", Disposition("weird"))
+	wantAPIStatus(t, err, 400)
+	if e.files.dlCalls != 0 {
+		t.Fatal("DownloadURL was called")
 	}
 }

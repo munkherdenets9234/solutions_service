@@ -98,7 +98,7 @@ func TestPrivateFileServiceLive(t *testing.T) {
 		t.Fatalf("stored mime = %q, want application/pdf", stored.Mime)
 	}
 
-	u, _, err := svc.DownloadURL(stored.PublicID, stored.Mime, 5*time.Minute)
+	u, _, err := svc.DownloadURL(stored.PublicID, stored.Mime, 5*time.Minute, service.DispositionAttachment)
 	if err != nil {
 		t.Fatalf("DownloadURL failed: %s", errClass(err))
 	}
@@ -113,7 +113,7 @@ func TestPrivateFileServiceLive(t *testing.T) {
 	// Expired link. Whether Cloudinary enforces expires_at on this endpoint is
 	// not proven, so a 200 here must not fail the run: it is recorded so the
 	// spec can say the 5-minute bound rests on the signature timestamp only.
-	expired, _, err := svc.DownloadURL(stored.PublicID, stored.Mime, -1*time.Minute)
+	expired, _, err := svc.DownloadURL(stored.PublicID, stored.Mime, -1*time.Minute, service.DispositionAttachment)
 	if err != nil {
 		t.Fatalf("DownloadURL (expired) failed: %s", errClass(err))
 	}

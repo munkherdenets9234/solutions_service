@@ -24,7 +24,7 @@ type guideAdminService interface {
 	Get(ctx context.Context, tenantID primitive.ObjectID, idHex string) (*models.GuideApplication, error)
 	SetStatus(ctx context.Context, tenantID primitive.ObjectID, idHex string, status models.GuideStatus, actor *primitive.ObjectID) error
 	AddNote(ctx context.Context, tenantID primitive.ObjectID, idHex, text string, actor *primitive.ObjectID) error
-	FileDownload(ctx context.Context, tenantID primitive.ObjectID, idHex, fileID string) (string, time.Time, error)
+	FileDownload(ctx context.Context, tenantID primitive.ObjectID, idHex, fileID string, d service.Disposition) (string, time.Time, error)
 }
 
 type guideApplicationsController struct {
@@ -102,7 +102,14 @@ func (h *guideApplicationsController) AddNote(c *gin.Context) error {
 // FileLink answers with a short-lived signed URL. The URL is a credential: it
 // is returned to the authenticated admin and never logged.
 func (h *guideApplicationsController) FileLink(c *gin.Context) error {
-	url, expires, err := h.svc.FileDownload(c.Request.Context(), apictx.TenantID(c), c.Param("id"), c.Param("fileId"))
+	d := service.DispositionAttachment
+	if vals, present := c.GetQueryArray("disposition"); present {
+		if len(vals) != 1 || (vals[0] != string(service.DispositionInline) && vals[0] != string(service.DispositionAttachment)) {
+			return apierr.BadRequest("invalid disposition")
+		}
+		d = service.Disposition(vals[0])
+	}
+	url, expires, err := h.svc.FileDownload(c.Request.Context(), apictx.TenantID(c), c.Param("id"), c.Param("fileId"), d)
 	if err != nil {
 		return err
 	}

@@ -302,6 +302,7 @@ func upperTail(s string, n int) string {
 
 const (
 	guideDownloadTTL = 5 * time.Minute
+	guidePreviewTTL  = 5 * time.Minute
 	guideNoteMaxLen  = 2000
 	guideStaffName   = "staff"
 )
@@ -436,7 +437,15 @@ func (s *GuideApplicationService) AddNote(ctx context.Context, tenantID primitiv
 
 // FileDownload returns a short-lived signed URL for one stored file. The
 // storage public id never leaves the service.
-func (s *GuideApplicationService) FileDownload(ctx context.Context, tenantID primitive.ObjectID, idHex, fileID string) (string, time.Time, error) {
+func (s *GuideApplicationService) FileDownload(ctx context.Context, tenantID primitive.ObjectID, idHex, fileID string, d Disposition) (string, time.Time, error) {
+	ttl := guideDownloadTTL
+	switch d {
+	case DispositionAttachment:
+	case DispositionInline:
+		ttl = guidePreviewTTL
+	default:
+		return "", time.Time{}, apierr.BadRequest("invalid disposition")
+	}
 	a, err := s.Get(ctx, tenantID, idHex)
 	if err != nil {
 		return "", time.Time{}, err
@@ -451,10 +460,14 @@ func (s *GuideApplicationService) FileDownload(ctx context.Context, tenantID pri
 	if file == nil {
 		return "", time.Time{}, apierr.NotFound("file")
 	}
+	// Only images are rendered by the browser; a PDF is never served inline.
+	if d == DispositionInline && file.Mime != "image/jpeg" && file.Mime != "image/png" {
+		return "", time.Time{}, apierr.BadRequest("only images can be previewed")
+	}
 	if s.files == nil || !s.files.Available() {
 		return "", time.Time{}, apierr.FeatureUnavailable("document downloads")
 	}
-	url, exp, err := s.files.DownloadURL(file.PublicID, file.Mime, guideDownloadTTL)
+	url, exp, err := s.files.DownloadURL(file.PublicID, file.Mime, ttl, d)
 	if err != nil {
 		var ae *apierr.APIError
 		if errors.As(err, &ae) {
