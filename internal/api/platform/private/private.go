@@ -36,6 +36,8 @@ func Register(base *gin.RouterGroup, d Deps) {
 	g := httpx.Wrap(base)
 
 	t := g.Group("/tenants")
+	t.GET("", tenants.List)
+	t.GET("/:id", tenants.GetByID)
 	t.POST("", tenants.Create)
 	t.PUT("/:id/status", tenants.UpdateStatus)
 	t.POST("/:id/rotate-key", tenants.RotateAPIKey)
@@ -58,9 +60,12 @@ func Register(base *gin.RouterGroup, d Deps) {
 	p.PUT("/:id", catalog.UpdatePackage)
 	p.DELETE("/:id", catalog.DeletePackage)
 
-	g.Group("/quotes").PUT("/:id/status", catalog.UpdateQuoteStatus)
+	q := g.Group("/quotes")
+	q.GET("", catalog.ListQuotes)
+	q.PUT("/:id/status", catalog.UpdateQuoteStatus)
 
 	a := g.Group("/admins")
+	a.GET("", admins.List)
 	a.POST("", admins.Create)
 	a.PUT("/:id/status", admins.UpdateStatus)
 	a.PUT("/:id/password", admins.ResetPassword)

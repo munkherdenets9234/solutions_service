@@ -123,3 +123,16 @@ func (h *catalogController) UpdateQuoteStatus(c *gin.Context) error {
 	response.OK(c, gin.H{"updated": true})
 	return nil
 }
+
+// ListQuotes is every lead across the platform, tenant-linked and tenant-less
+// alike — the platform admin's consolidated view.
+func (h *catalogController) ListQuotes(c *gin.Context) error {
+	page, limit := apictx.Page(c, 20)
+
+	data, total, err := h.quote.ListAll(c.Request.Context(), page, limit)
+	if err != nil {
+		return err
+	}
+	response.List(c, data, response.Meta{Total: total, Page: page, Limit: limit})
+	return nil
+}

@@ -1,4 +1,4 @@
-package public
+package private
 
 import (
 	"github.com/eandstravel/digitalservice/internal/api/apictx"
@@ -9,26 +9,15 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// These are the tenant admin panel's READ endpoints. They live in the public
-// package because that is the truth about how they are authenticated: they
-// require the tenant's X-API-Key and nothing else — no bearer token, no user.
-//
-// KNOWN EXPOSURE, recorded here rather than hidden by filing them under
-// "private". The X-API-Key is meant to be embedded in the tenant's own
-// storefront JavaScript, so it is public by design. Anyone who reads it can
-// therefore call these routes and read that tenant's bookings, rentals,
-// transfers, contact messages, quotes and newsletter subscribers — which
-// carry customer names, emails and phone numbers. TenantMiddleware's
-// Origin/Referer domain check narrows this for browser traffic but is
-// deliberately skipped when neither header is present, which is exactly the
-// case for curl or Postman.
-//
-// Closing it is a one-line change: move registerAdminReads into
-// tenant/private, where the group already carries Auth.Require(). It is not
-// done here because the admin frontend does not currently send a bearer token
-// on reads, and making that change without the frontend would take the panel
-// down. The structure is arranged so the fix is a move, not a rewrite.
-func registerAdminReads(scoped *httpx.G, d Deps) {
+// These are the tenant admin panel's READ endpoints. They live in the private
+// package so they are authenticated by construction: the groups they are
+// mounted on carry the bearer-token check on top of the tenant's X-API-Key.
+// They used to sit in the public package behind the key alone, which is
+// public by design (it is embedded in the storefront's JavaScript), so anyone
+// holding it could read a tenant's bookings, rentals, transfers, contact
+// messages, quotes and newsletter subscribers — customer names, emails and
+// phone numbers.
+func registerAdminReads(admin, users *httpx.G, d Deps) {
 	r := &adminReadsController{
 		tenantUser:  d.TenantUser,
 		blog:        d.Blog,
@@ -44,8 +33,11 @@ func registerAdminReads(scoped *httpx.G, d Deps) {
 		news:        d.Newsletter,
 	}
 
-	g := scoped.Group("/admin")
-	g.GET("/users", r.ListUsers)
+	// Same roles as the user-management writes: the tenant's admin, or a
+	// platform superadmin acting on that tenant.
+	users.GET("", r.ListUsers)
+
+	g := admin
 	g.GET("/blogs", r.ListBlogs)
 	g.GET("/blogs/:id", r.GetBlog)
 	g.GET("/destinations", r.ListDestinations)

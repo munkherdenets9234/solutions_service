@@ -155,5 +155,4 @@ func Register(base *gin.RouterGroup, d Deps) {
 	// A site visitor submitting a review is a lead form by another name.
 	reviews.Group("", d.LeadRateLimit).POST("", store.CreateReview)
 
-	registerAdminReads(scoped, d)
 }

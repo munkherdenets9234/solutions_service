@@ -124,3 +124,23 @@ func (h *tenantsController) ListQuotes(c *gin.Context) error {
 	response.List(c, data, response.Meta{Total: total, Page: page, Limit: limit})
 	return nil
 }
+
+func (h *tenantsController) List(c *gin.Context) error {
+	page, limit := apictx.Page(c, 20)
+
+	data, total, err := h.svc.List(c.Request.Context(), page, limit)
+	if err != nil {
+		return err
+	}
+	response.List(c, data, response.Meta{Total: total, Page: page, Limit: limit})
+	return nil
+}
+
+func (h *tenantsController) GetByID(c *gin.Context) error {
+	t, err := h.svc.GetByID(c.Request.Context(), c.Param("id"))
+	if err != nil {
+		return err
+	}
+	response.OK(c, t)
+	return nil
+}

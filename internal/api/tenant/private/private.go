@@ -99,6 +99,8 @@ func Register(base *gin.RouterGroup, d Deps) {
 
 	admin := httpx.Wrap(scoped.Group("/admin", d.Auth("admin")))
 
+	registerAdminReads(admin, u, d)
+
 	dest := admin.Group("/destinations")
 	dest.POST("", content.CreateDestination)
 	dest.PUT("/:id", content.UpdateDestination)

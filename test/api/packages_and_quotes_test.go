@@ -328,7 +328,7 @@ func TestQuotes(t *testing.T) {
 	})
 
 	t.Run("platform admin sees it in the consolidated list", func(t *testing.T) {
-		resp := testutil.Do(t, app, http.MethodGet, "/api/v1/platform/quotes?page=1&limit=50", testutil.ReqOpts{})
+		resp := testutil.Do(t, app, http.MethodGet, "/api/v1/platform/quotes?page=1&limit=50", testutil.ReqOpts{Token: superadmin})
 		if resp.Status != http.StatusOK {
 			t.Fatalf("want 200, got %d: %s", resp.Status, resp.Raw)
 		}
@@ -377,7 +377,7 @@ func TestQuotes(t *testing.T) {
 	})
 
 	t.Run("tenant-less quote appears in the platform-wide list", func(t *testing.T) {
-		resp := testutil.Do(t, app, http.MethodGet, "/api/v1/platform/quotes?page=1&limit=50", testutil.ReqOpts{})
+		resp := testutil.Do(t, app, http.MethodGet, "/api/v1/platform/quotes?page=1&limit=50", testutil.ReqOpts{Token: superadmin})
 		if resp.Status != http.StatusOK {
 			t.Fatalf("want 200, got %d: %s", resp.Status, resp.Raw)
 		}
