@@ -178,7 +178,10 @@ func TestBlogs(t *testing.T) {
 	t.Run("create defaults to draft", func(t *testing.T) {
 		resp := testutil.Do(t, app, http.MethodPost, "/api/v1/admin/blogs", testutil.ReqOpts{
 			Token: tenant.AdminToken, APIKey: tenant.APIKey,
-			Body: map[string]string{"title": "Best Time to Visit", "slug": slug, "content": "<p>...</p>"},
+			Body: map[string]interface{}{
+				"title": map[string]string{"en": "Best Time to Visit"}, "slug": slug,
+				"content": map[string]string{"en": "<p>...</p>"},
+			},
 		})
 		if resp.Status != http.StatusCreated {
 			t.Fatalf("want 201, got %d: %s", resp.Status, resp.Raw)
@@ -231,7 +234,7 @@ func TestBlogs(t *testing.T) {
 	t.Run("update (partial)", func(t *testing.T) {
 		resp := testutil.Do(t, app, http.MethodPut, "/api/v1/admin/blogs/"+blogID, testutil.ReqOpts{
 			Token: tenant.AdminToken, APIKey: tenant.APIKey,
-			Body: map[string]interface{}{"title": "Best Time to Visit (Updated)"},
+			Body: map[string]interface{}{"title": map[string]string{"en": "Best Time to Visit (Updated)"}},
 		})
 		if resp.Status != http.StatusOK {
 			t.Fatalf("want 200, got %d: %s", resp.Status, resp.Raw)

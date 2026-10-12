@@ -22,6 +22,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 )
 
 // Env identifies the runtime environment.
@@ -59,6 +60,10 @@ type Config struct {
 	// misconfiguration in production and is reported as one on /readyz.
 	TenantcoreURL        string
 	TenantcoreServiceKey string
+	// TenantResolveTTL overrides how long a resolved tenant key is cached. Zero
+	// means the client default. Not read from the environment: tests set it so a
+	// key change is seen at once instead of after the default 60s.
+	TenantResolveTTL time.Duration
 
 	// Request email is opt-in: it is on when ANY of the next three is set, and
 	// then all three must be valid (see Validate). None set means it is off.

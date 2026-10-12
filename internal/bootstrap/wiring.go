@@ -273,6 +273,7 @@ func buildTenantResolver(cfg *config.Config, log *zap.Logger) (middleware.Tenant
 	c := tenantresolve.NewClient(tenantresolve.ClientConfig{
 		BaseURL:    cfg.TenantcoreURL,
 		ServiceKey: cfg.TenantcoreServiceKey,
+		TTL:        cfg.TenantResolveTTL,
 		Log:        log,
 	})
 	if c == nil {
