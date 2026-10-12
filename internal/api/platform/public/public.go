@@ -51,11 +51,6 @@ func Register(base *gin.RouterGroup, d Deps) {
 	// password guessing target.
 	g.Group("", d.AuthRateLimit).POST("/login", admins.Login)
 
-	g.GET("/admins", admins.List)
-
-	g.GET("/tenants", tenants.List)
-	g.GET("/tenants/:id", tenants.GetByID)
-
 	// Our Projects — public case-study cards/detail, joining active tenants
 	// against their showcase-enabled TenantDetail record. Separate from
 	// /tenants above, which stays the platform's own full-detail tenant
@@ -92,5 +87,4 @@ func Register(base *gin.RouterGroup, d Deps) {
 	// through an existing tenant's own storefront, which does set tenant_id
 	// from its X-API-Key).
 	g.Group("", d.LeadRateLimit).POST("/quotes", catalog.CreateQuote)
-	g.GET("/quotes", catalog.ListQuotes)
 }

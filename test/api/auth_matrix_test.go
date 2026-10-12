@@ -173,7 +173,7 @@ func TestTenantUserCreateRejectsSuperadminRole(t *testing.T) {
 	resp := testutil.Do(t, app, http.MethodPost, "/api/v1/admin/users", testutil.ReqOpts{
 		Token:  tenantA.AdminToken,
 		APIKey: tenantA.APIKey,
-		Body:   map[string]string{"email": "", "role": ""},
+		Body:   map[string]string{"email": "role-check@tenant.test", "role": "superadmin"},
 	})
 	if resp.Status != http.StatusBadRequest {
 		t.Fatalf("want 400 invalid role, got %d: %s", resp.Status, resp.Raw)

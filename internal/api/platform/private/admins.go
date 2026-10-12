@@ -101,3 +101,14 @@ func (h *adminsController) ChangePassword(c *gin.Context) error {
 	response.OK(c, gin.H{"updated": true})
 	return nil
 }
+
+func (h *adminsController) List(c *gin.Context) error {
+	page, limit := apictx.Page(c, 20)
+
+	data, total, err := h.svc.List(c.Request.Context(), page, limit)
+	if err != nil {
+		return err
+	}
+	response.List(c, data, response.Meta{Total: total, Page: page, Limit: limit})
+	return nil
+}

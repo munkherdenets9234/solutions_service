@@ -81,7 +81,7 @@ func TestTenantProjectShowcase(t *testing.T) {
 			t.Fatalf("want 200, got %d: %s", resp.Status, resp.Raw)
 		}
 
-		getResp := testutil.Do(t, app, http.MethodGet, "/api/v1/platform/tenants/"+shown.ID, testutil.ReqOpts{})
+		getResp := testutil.Do(t, app, http.MethodGet, "/api/v1/platform/tenants/"+shown.ID, testutil.ReqOpts{Token: superadmin})
 		project, _ := getResp.Data()["project"].(map[string]interface{})
 		if project["category"] != "E-commerce" {
 			t.Errorf("want category left intact by an unrelated partial update, got %v", project["category"])
@@ -104,7 +104,7 @@ func TestTenantProjectShowcase(t *testing.T) {
 			t.Fatalf("want 200, got %d: %s", resp.Status, resp.Raw)
 		}
 
-		getResp := testutil.Do(t, app, http.MethodGet, "/api/v1/platform/tenants/"+shown.ID, testutil.ReqOpts{})
+		getResp := testutil.Do(t, app, http.MethodGet, "/api/v1/platform/tenants/"+shown.ID, testutil.ReqOpts{Token: superadmin})
 		project, _ := getResp.Data()["project"].(map[string]interface{})
 		tagline, _ := project["tagline"].(map[string]interface{})
 		if tagline["mn"] != "Шинэчилсэн" {
@@ -140,7 +140,7 @@ func TestTenantProjectShowcase(t *testing.T) {
 	})
 
 	t.Run("existing tenant management read is unaffected", func(t *testing.T) {
-		resp := testutil.Do(t, app, http.MethodGet, "/api/v1/platform/tenants/"+hidden.ID, testutil.ReqOpts{})
+		resp := testutil.Do(t, app, http.MethodGet, "/api/v1/platform/tenants/"+hidden.ID, testutil.ReqOpts{Token: superadmin})
 		if resp.Status != http.StatusOK {
 			t.Fatalf("want 200, got %d: %s", resp.Status, resp.Raw)
 		}
@@ -153,7 +153,7 @@ func TestTenantProjectShowcase(t *testing.T) {
 	})
 
 	t.Run("tenant detail is embedded as project on GET /platform/tenants/{id}", func(t *testing.T) {
-		resp := testutil.Do(t, app, http.MethodGet, "/api/v1/platform/tenants/"+shown.ID, testutil.ReqOpts{})
+		resp := testutil.Do(t, app, http.MethodGet, "/api/v1/platform/tenants/"+shown.ID, testutil.ReqOpts{Token: superadmin})
 		if resp.Status != http.StatusOK {
 			t.Fatalf("want 200, got %d: %s", resp.Status, resp.Raw)
 		}

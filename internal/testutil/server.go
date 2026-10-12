@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/eandstravel/digitalservice/internal/bootstrap"
 	"github.com/eandstravel/digitalservice/internal/config"
@@ -54,6 +55,16 @@ func NewAppWithConfig(t testing.TB, db *mongo.Database, cfg *config.Config) *App
 	gin.SetMode(gin.TestMode)
 	initLoggerOnce.Do(func() { logger.Init("test") })
 
+	if cfg.TenantcoreURL == "" {
+		stub := startTenantCoreStub(t, db)
+		cfg.TenantcoreURL = stub.URL
+		cfg.TenantcoreServiceKey = TenantCoreServiceKey
+		// Tenant key changes (suspend, rotate) must show up immediately.
+		if cfg.TenantResolveTTL == 0 {
+			cfg.TenantResolveTTL = time.Millisecond
+		}
+	}
+
 	app, err := bootstrap.NewForDatabase(context.Background(), cfg, db, logger.Log)
 	if err != nil {
 		t.Fatalf("bootstrap: %v", err)
@@ -82,7 +93,7 @@ func TestConfig() *config.Config {
 		AppEnv:      config.EnvTest,
 		AppPort:     "0",
 		MongoURI:    "mongodb://test",
-		MongoDB:     "testdb",
+		MongoDB:     TestDBName,
 		TokenSecret: TokenSecret,
 		TokenExpiry: 24,
 
